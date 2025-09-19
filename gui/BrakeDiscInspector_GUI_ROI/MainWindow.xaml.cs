@@ -1,4 +1,4 @@
-﻿// Dialogs
+// Dialogs
 using Microsoft.Win32;
 using OpenCvSharp;
 using OpenCvSharp.WpfExtensions;
@@ -1760,7 +1760,7 @@ namespace BrakeDiscInspector_GUI_ROI
             var layer = AdornerLayer.GetAdornerLayer(CanvasROI);
             _rotateAdorner = new RoiRotateAdorner(
             CanvasROI,
-                () => new System.Windows.Point(CurrentRoi.X, CurrentRoi.Y),
+                () => ImagePxToCanvasPt(CurrentRoi.X, CurrentRoi.Y),
                 angle =>
                 {
                     CurrentRoi.AngleDeg = angle; // rotación en tiempo real
@@ -1938,34 +1938,31 @@ namespace BrakeDiscInspector_GUI_ROI
         /// Convierte un punto en píxeles de imagen -> punto en CanvasROI
         private System.Windows.Point ImgToCanvas(System.Windows.Point pImg)
         {
-            var r = GetImageDisplayRect();
-            var (pw, ph) = GetImagePixelSize();
-            if (pw <= 0 || ph <= 0) return new System.Windows.Point(0, 0);
-            double sx = r.Width / pw;
-            double sy = r.Height / ph;
-            // El CanvasROI debe cubrir el mismo rectángulo de dibujo del ImgMain.
-            // Si CanvasROI está superpuesto exactamente sobre ImgMain, podemos sumar el offset r.Left/Top:
-            return new System.Windows.Point(r.Left + pImg.X * sx, r.Top + pImg.Y * sy);
-        }
-
-        private System.Windows.Point ImagePxToCanvasPt(double px, double py)
-        {
             var displayRect = GetImageDisplayRect();
             var (pw, ph) = GetImagePixelSize();
             if (pw <= 0 || ph <= 0 || displayRect.Width <= 0 || displayRect.Height <= 0)
                 return new System.Windows.Point(0, 0);
 
-            double scale = displayRect.Width / pw; // escala uniforme empleada al pintar la imagen
-            double x = displayRect.Left + px * scale;
-            double y = displayRect.Top + py * scale;
+            double scale = displayRect.Width / pw; // escala uniforme usada al dibujar la imagen
+            return new System.Windows.Point(
+                displayRect.Left + pImg.X * scale,
+                displayRect.Top + pImg.Y * scale);
+        }
 
-            if (CanvasROI != null)
-            {
-                x -= CanvasROI.Margin.Left;
-                y -= CanvasROI.Margin.Top;
-            }
+        private System.Windows.Point ImagePxToCanvasPt(double px, double py)
+        {
+            var displayRect = GetImageDisplayRect();
+            if (displayRect.Width <= 0 || displayRect.Height <= 0)
+                return new System.Windows.Point(0, 0);
 
-            return new System.Windows.Point(x, y);
+            var (pw, ph) = GetImagePixelSize();
+            if (pw <= 0 || ph <= 0)
+                return new System.Windows.Point(0, 0);
+
+            // Traduce usando el mismo helper que otros cálculos y resta el offset del letterbox
+            // para llevar el punto al sistema local del CanvasROI.
+            var pointInImage = ImgToCanvas(new System.Windows.Point(px, py));
+            return new System.Windows.Point(pointInImage.X - displayRect.Left, pointInImage.Y - displayRect.Top);
         }
 
         // === Sincroniza CanvasROI para que SE ACOMODE EXACTAMENTE al área visible de la imagen (letterbox) ===
