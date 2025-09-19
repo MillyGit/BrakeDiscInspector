@@ -1,11 +1,27 @@
+
+import contextlib
+import importlib.util
 import json
 import sys
+import tempfile
 import types
 from pathlib import Path
+from unittest import mock
 
-import pytest
+BACKEND_DIR = Path(__file__).resolve().parents[1]
 
-sys.path.append(str(Path(__file__).resolve().parents[1]))
+
+def _load_backend_module(name: str):
+    module_path = BACKEND_DIR / f"{name}.py"
+    if name in sys.modules:
+        sys.modules.pop(name)
+    spec = importlib.util.spec_from_file_location(name, module_path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"Cannot load module {name} from {module_path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
 
 try:
     import cv2  # noqa: F401
@@ -60,47 +76,57 @@ except Exception:
     tensorflow_stub.keras = keras_stub
     sys.modules["tensorflow"] = tensorflow_stub
 
-import app as app_module
+
+_load_backend_module("preprocess")
+_load_backend_module("status_utils")
+app_module = _load_backend_module("app")
 
 
-@pytest.fixture
-def client(tmp_path, monkeypatch):
-    model_dir = tmp_path / "model"
-    logs_dir = model_dir / "logs"
-    model_dir.mkdir()
-    logs_dir.mkdir()
+@contextlib.contextmanager
+def app_test_client():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        root = Path(tmpdir)
+        model_dir = root / "model"
+        logs_dir = model_dir / "logs"
+        model_dir.mkdir(parents=True)
+        logs_dir.mkdir()
 
-    monkeypatch.setattr(app_module, "MODEL_DIR", model_dir)
-    monkeypatch.setattr(app_module, "LOGS_DIR", logs_dir)
-    monkeypatch.setattr(app_module, "MODEL_PATH", model_dir / "current_model.h5")
-    monkeypatch.setattr(app_module, "THR_PATH", model_dir / "threshold.txt")
-    monkeypatch.setattr(app_module, "DBG_IMG", model_dir / "last_match_debug.png")
+        patchers = [
+            mock.patch.object(app_module, "MODEL_DIR", model_dir),
+            mock.patch.object(app_module, "LOGS_DIR", logs_dir),
+            mock.patch.object(app_module, "MODEL_PATH", model_dir / "current_model.h5"),
+            mock.patch.object(app_module, "THR_PATH", model_dir / "threshold.txt"),
+            mock.patch.object(app_module, "DBG_IMG", model_dir / "last_match_debug.png"),
+        ]
 
-    def fake_ensure_model():
-        return False, "not loaded"
+        with contextlib.ExitStack() as stack:
+            for patcher in patchers:
+                stack.enter_context(patcher)
+            stack.enter_context(
+                mock.patch.object(app_module, "_ensure_model", lambda: (False, "not loaded"))
+            )
+            client = stack.enter_context(app_module.app.test_client())
+            yield client, model_dir
 
-    monkeypatch.setattr(app_module, "_ensure_model", fake_ensure_model)
 
-    with app_module.app.test_client() as test_client:
-        yield test_client
+def test_train_status_uses_computed_artifacts():
+    with app_test_client() as (client, model_dir):
+        train_status_file = model_dir / "train_status.json"
+        payload = {
+            "state": "running",
+            "artifacts": {"train_status": {"custom": "value"}},
+        }
+        train_status_file.write_text(json.dumps(payload), encoding="utf-8")
 
+        response = client.get("/train_status")
+        assert response.status_code == 200
 
-def test_train_status_uses_computed_artifacts(client):
-    model_dir = Path(app_module.MODEL_DIR)
+        data = response.get_json()
+        assert data["state"] == "running"
 
-    train_status_file = model_dir / "train_status.json"
-    payload = {
-        "state": "running",
-        "artifacts": {"train_status": {"custom": "value"}},
-    }
-    train_status_file.write_text(json.dumps(payload), encoding="utf-8")
+        artifacts = data["artifacts"]
+        assert {"model", "threshold", "train_status", "pid_file", "log"}.issubset(
+            artifacts.keys()
+        )
+        assert artifacts["train_status"]["exists"] is True
 
-    response = client.get("/train_status")
-    assert response.status_code == 200
-
-    data = response.get_json()
-    assert data["state"] == "running"
-
-    artifacts = data["artifacts"]
-    assert {"model", "threshold", "train_status", "pid_file", "log"}.issubset(artifacts.keys())
-    assert artifacts["train_status"]["exists"] is True
