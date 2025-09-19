@@ -11,28 +11,35 @@ namespace BrakeDiscInspector_GUI_ROI
     public class RoiRotateAdorner : Adorner
     {
         private const double HANDLE_RADIUS = 8;
-        private readonly Func<Point> getCenter;
+        private readonly Func<Point> getPivot;
+        private readonly Func<Point> getHandle;
+        private readonly Func<double> getBaselineAngle;
         private readonly Action<double> onAngleChanged;
         private bool dragging = false;
 
         public double AngleDeg { get; private set; }
 
-        public RoiRotateAdorner(UIElement adornedElement, Func<Point> getCenter, Action<double> onAngleChanged, double initialAngle)
+        public RoiRotateAdorner(
+            UIElement adornedElement,
+            Func<Point> getPivot,
+            Func<Point> getHandle,
+            Func<double> getBaselineAngle,
+            Action<double> onAngleChanged,
+            double initialAngle)
             : base(adornedElement)
         {
-            this.getCenter = getCenter;
+            this.getPivot = getPivot ?? throw new ArgumentNullException(nameof(getPivot));
+            this.getHandle = getHandle ?? throw new ArgumentNullException(nameof(getHandle));
+            this.getBaselineAngle = getBaselineAngle ?? throw new ArgumentNullException(nameof(getBaselineAngle));
             this.onAngleChanged = onAngleChanged;
-            this.AngleDeg = initialAngle;
-            this.IsHitTestVisible = true;
+            AngleDeg = initialAngle;
+            IsHitTestVisible = true;
         }
 
         protected override void OnRender(DrawingContext dc)
         {
             base.OnRender(dc);
-            var center = getCenter();
-            double r = 40; // distancia del asa
-            double rad = AngleDeg * Math.PI / 180.0;
-            var handle = new Point(center.X + r * Math.Cos(rad), center.Y + r * Math.Sin(rad));
+            var handle = getHandle();
             dc.DrawEllipse(Brushes.White, new Pen(Brushes.Black, 1), handle, HANDLE_RADIUS, HANDLE_RADIUS);
         }
 
@@ -52,11 +59,23 @@ namespace BrakeDiscInspector_GUI_ROI
         {
             if (dragging)
             {
-                var center = getCenter();
                 var p = e.GetPosition(this);
-                double angle = Math.Atan2(p.Y - center.Y, p.X - center.X) * 180.0 / Math.PI;
-                AngleDeg = angle;                  // tiempo real
-                onAngleChanged?.Invoke(AngleDeg);  // callback
+                var pivot = getPivot();
+                double dx = p.X - pivot.X;
+                double dy = p.Y - pivot.Y;
+
+                if (Math.Abs(dx) < 1e-6 && Math.Abs(dy) < 1e-6)
+                {
+                    base.OnMouseMove(e);
+                    return;
+                }
+
+                double pointerAngle = Math.Atan2(dy, dx);
+                double baseAngle = getBaselineAngle();
+                double angleDeg = NormalizeAngle((pointerAngle - baseAngle) * 180.0 / Math.PI);
+
+                AngleDeg = angleDeg;                  // tiempo real
+                onAngleChanged?.Invoke(AngleDeg);      // callback
                 InvalidateVisual();
                 e.Handled = true;
             }
@@ -76,11 +95,18 @@ namespace BrakeDiscInspector_GUI_ROI
 
         private bool IsOverHandle(Point p)
         {
-            var center = getCenter();
-            double r = 40;
-            double rad = AngleDeg * Math.PI / 180.0;
-            var h = new Point(center.X + r * Math.Cos(rad), center.Y + r * Math.Sin(rad));
-            return (p - h).Length <= HANDLE_RADIUS * 1.5;
+            var handle = getHandle();
+            return (p - handle).Length <= HANDLE_RADIUS * 1.5;
+        }
+
+        private static double NormalizeAngle(double angleDeg)
+        {
+            angleDeg %= 360.0;
+            if (angleDeg <= -180.0)
+                angleDeg += 360.0;
+            else if (angleDeg > 180.0)
+                angleDeg -= 360.0;
+            return angleDeg;
         }
     }
 }
