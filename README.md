@@ -136,7 +136,7 @@ BrakeDiscInspector/
   ```
 
 ### `/train_status` (GET)
-- Retorna info del modelo cargado y su estado.
+- Retorna info del modelo cargado y metadata de artefactos (tamaño, timestamp, tail del log, threshold cargado, etc.).
 
 ### `/match_one` (POST)
 - (Opcional) Matching por plantilla o ficheros.
