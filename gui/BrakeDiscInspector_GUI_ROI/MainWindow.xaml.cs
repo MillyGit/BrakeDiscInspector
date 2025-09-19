@@ -279,6 +279,7 @@ namespace BrakeDiscInspector_GUI_ROI
                 Canvas.SetTop(_previewShape, p0.Y);
                 _previewShape.Width = 0;
                 _previewShape.Height = 0;
+                Panel.SetZIndex(_previewShape, 20);
                 CanvasROI.Children.Add(_previewShape);
             }
         }
@@ -426,14 +427,14 @@ namespace BrakeDiscInspector_GUI_ROI
         {
             if (_previewShape == null) return;
 
-            RoiModel draft;
+            RoiModel canvasDraft;
             if (shape == RoiShape.Rectangle)
             {
                 var x = Canvas.GetLeft(_previewShape);
                 var y = Canvas.GetTop(_previewShape);
                 var w = _previewShape.Width;
                 var h = _previewShape.Height;
-                draft = new RoiModel { Shape = RoiShape.Rectangle, X = x, Y = y, Width = w, Height = h };
+                canvasDraft = new RoiModel { Shape = RoiShape.Rectangle, X = x, Y = y, Width = w, Height = h };
             }
             else
             {
@@ -442,13 +443,25 @@ namespace BrakeDiscInspector_GUI_ROI
                 var w = _previewShape.Width;
                 var r = w / 2.0;
                 var cx = x + r; var cy = y + r;
-                draft = new RoiModel { Shape = shape, CX = cx, CY = cy, R = r, RInner = shape == RoiShape.Annulus ? r * 0.6 : 0 };
+                canvasDraft = new RoiModel
+                {
+                    Shape = shape,
+                    CX = cx,
+                    CY = cy,
+                    R = r,
+                    RInner = shape == RoiShape.Annulus ? r * 0.6 : 0,
+                    X = x,
+                    Y = y,
+                    Width = w,
+                    Height = _previewShape.Height
+                };
             }
 
-            _tmpBuffer = draft;
+            var pixelDraft = CanvasToImage(canvasDraft);
+            _tmpBuffer = pixelDraft;
             AppendLog($"[draw] ROI draft = {DescribeRoi(_tmpBuffer)}");
 
-            _previewShape.Tag = _tmpBuffer;
+            _previewShape.Tag = canvasDraft;
             _previewShape.IsHitTestVisible = true; // el adorner coge los clics
             _previewShape.StrokeDashArray = new DoubleCollection { 4, 4 };
 
@@ -464,7 +477,8 @@ namespace BrakeDiscInspector_GUI_ROI
 
                 var adorner = new RoiAdorner(_previewShape, (shapeUpdated, modelUpdated) =>
                 {
-                    _tmpBuffer = modelUpdated.Clone();
+                    var pixelModel = CanvasToImage(modelUpdated);
+                    _tmpBuffer = pixelModel.Clone();
                     AppendLog($"[preview] edit => {DescribeRoi(_tmpBuffer)}");
                     RepositionRotateAdorner();
                 }, AppendLog); // ⬅️ pasa logger
@@ -551,6 +565,7 @@ namespace BrakeDiscInspector_GUI_ROI
                 case MasterState.DrawInspection:
                     _tmpBuffer.Role = RoiRole.Inspection;
                     _layout.Inspection = _tmpBuffer.Clone();
+                    SyncCurrentRoiFromInspection(_layout.Inspection);
 
                     // (Opcional) también puedes guardar un preview de la inspección inicial:
                     SaveRoiCropPreview(_layout.Inspection, "INS_init");
@@ -839,6 +854,7 @@ namespace BrakeDiscInspector_GUI_ROI
 
             MoveInspectionTo(_layout.Inspection, mid.X, mid.Y);
             ClipInspectionROI(_layout.Inspection, _imgW, _imgH);
+            RedrawOverlay();
             AppendLog("[FLOW] Inspection movida y recortada");
 
             MasterLayoutManager.Save(_preset, _layout);
@@ -904,6 +920,7 @@ namespace BrakeDiscInspector_GUI_ROI
                 insp.CX = cx; insp.CY = cy;
             }
 
+            SyncCurrentRoiFromInspection(insp);
             RepositionRotateAdorner();
         }
 
@@ -935,6 +952,7 @@ namespace BrakeDiscInspector_GUI_ROI
                 if (insp.CY > imgH - ro) insp.CY = imgH - ro;
             }
 
+            SyncCurrentRoiFromInspection(insp);
             RepositionRotateAdorner();
         }
 
@@ -1062,7 +1080,7 @@ namespace BrakeDiscInspector_GUI_ROI
 
         private void SyncModelFromShape(Shape shape)
         {
-            if (shape.Tag is not RoiModel roi) return;
+            if (shape.Tag is not RoiModel roiCanvas) return;
 
             var x = Canvas.GetLeft(shape);
             var y = Canvas.GetTop(shape);
@@ -1071,20 +1089,79 @@ namespace BrakeDiscInspector_GUI_ROI
 
             if (shape is System.Windows.Shapes.Rectangle)
             {
-                roi.Shape = RoiShape.Rectangle;
-                roi.X = x; roi.Y = y; roi.Width = w; roi.Height = h;
+                roiCanvas.Shape = RoiShape.Rectangle;
+                roiCanvas.X = x; roiCanvas.Y = y; roiCanvas.Width = w; roiCanvas.Height = h;
+                roiCanvas.CX = roiCanvas.X + roiCanvas.Width / 2.0;
+                roiCanvas.CY = roiCanvas.Y + roiCanvas.Height / 2.0;
+                roiCanvas.R = Math.Max(roiCanvas.Width, roiCanvas.Height) / 2.0;
             }
             else if (shape is System.Windows.Shapes.Ellipse)
             {
                 var r = w / 2.0;
-                roi.Shape = roi.Shape == RoiShape.Annulus ? RoiShape.Annulus : RoiShape.Circle;
-                roi.CX = x + r; roi.CY = y + r; roi.R = r;
-                if (roi.Shape == RoiShape.Annulus && (roi.RInner <= 0 || roi.RInner >= roi.R))
-                    roi.RInner = roi.R * 0.6;
+                roiCanvas.Shape = roiCanvas.Shape == RoiShape.Annulus ? RoiShape.Annulus : RoiShape.Circle;
+                roiCanvas.CX = x + r; roiCanvas.CY = y + r; roiCanvas.R = r;
+                roiCanvas.X = x; roiCanvas.Y = y; roiCanvas.Width = w; roiCanvas.Height = h;
+                if (roiCanvas.Shape == RoiShape.Annulus && (roiCanvas.RInner <= 0 || roiCanvas.RInner >= roiCanvas.R))
+                    roiCanvas.RInner = roiCanvas.R * 0.6;
             }
 
-            AppendLog($"[model] sync {roi.Role} => {DescribeRoi(roi)}");
+            var roiPixel = CanvasToImage(roiCanvas);
+
+            if (ReferenceEquals(shape, _previewShape))
+            {
+                _tmpBuffer = roiPixel.Clone();
+            }
+            else
+            {
+                UpdateLayoutFromPixel(roiPixel);
+            }
+
+            AppendLog($"[model] sync {roiPixel.Role} => {DescribeRoi(roiPixel)}");
             RepositionRotateAdorner();
+        }
+
+        private void UpdateLayoutFromPixel(RoiModel roiPixel)
+        {
+            switch (roiPixel.Role)
+            {
+                case RoiRole.Master1Pattern:
+                    _layout.Master1Pattern = roiPixel.Clone();
+                    break;
+                case RoiRole.Master1Search:
+                    _layout.Master1Search = roiPixel.Clone();
+                    break;
+                case RoiRole.Master2Pattern:
+                    _layout.Master2Pattern = roiPixel.Clone();
+                    break;
+                case RoiRole.Master2Search:
+                    _layout.Master2Search = roiPixel.Clone();
+                    break;
+                case RoiRole.Inspection:
+                    _layout.Inspection = roiPixel.Clone();
+                    SyncCurrentRoiFromInspection(roiPixel);
+                    break;
+            }
+        }
+
+        private void SyncCurrentRoiFromInspection(RoiModel inspectionPixel)
+        {
+            if (inspectionPixel == null) return;
+
+            if (inspectionPixel.Shape == RoiShape.Rectangle)
+            {
+                CurrentRoi.X = inspectionPixel.X + inspectionPixel.Width / 2.0;
+                CurrentRoi.Y = inspectionPixel.Y + inspectionPixel.Height / 2.0;
+                CurrentRoi.Width = inspectionPixel.Width;
+                CurrentRoi.Height = inspectionPixel.Height;
+            }
+            else
+            {
+                var diameter = inspectionPixel.R * 2.0;
+                CurrentRoi.X = inspectionPixel.CX;
+                CurrentRoi.Y = inspectionPixel.CY;
+                CurrentRoi.Width = diameter;
+                CurrentRoi.Height = diameter;
+            }
         }
 
         private void InvalidateAdornerFor(Shape shape)
@@ -1681,8 +1758,163 @@ namespace BrakeDiscInspector_GUI_ROI
 
         private void RedrawOverlay()
         {
-            // Re-dibuja tus ROIs persistentes (si tienes lógica propia, llámala aquí).
-            // Este stub se deja vacío a propósito para NO borrar las cruces recién pintadas.
+            if (CanvasROI == null) return;
+
+            var roiShapes = CanvasROI.Children
+                .OfType<Shape>()
+                .Where(s => !ReferenceEquals(s, _previewShape) && s.Tag is RoiModel)
+                .ToList();
+
+            foreach (var shape in roiShapes)
+            {
+                RemoveRoiAdorners(shape);
+                CanvasROI.Children.Remove(shape);
+            }
+
+            if (_imgW <= 0 || _imgH <= 0)
+            {
+                RepositionRotateAdorner();
+                return;
+            }
+
+            void AddPersistentRoi(RoiModel? roi)
+            {
+                if (roi == null) return;
+                var shape = CreateLayoutShape(roi);
+                if (shape == null) return;
+                CanvasROI.Children.Add(shape);
+                AttachRoiAdorner(shape);
+            }
+
+            AddPersistentRoi(_layout.Master1Search);
+            AddPersistentRoi(_layout.Master1Pattern);
+            AddPersistentRoi(_layout.Master2Search);
+            AddPersistentRoi(_layout.Master2Pattern);
+            AddPersistentRoi(_layout.Inspection);
+
+            if (_layout.Inspection != null)
+                SyncCurrentRoiFromInspection(_layout.Inspection);
+
+            RepositionRotateAdorner();
+        }
+
+        private Shape? CreateLayoutShape(RoiModel roi)
+        {
+            var canvasRoi = ImageToCanvas(roi);
+            canvasRoi.Role = roi.Role;
+            canvasRoi.Label = roi.Label;
+            canvasRoi.Id = roi.Id;
+            Shape shape = canvasRoi.Shape == RoiShape.Rectangle ? new WRectShape() : new WEllipse();
+
+            var style = GetRoiStyle(canvasRoi.Role);
+
+            shape.Stroke = style.stroke;
+            shape.Fill = style.fill;
+            shape.StrokeThickness = style.thickness;
+            if (style.dash != null)
+                shape.StrokeDashArray = style.dash;
+            shape.SnapsToDevicePixels = true;
+            shape.IsHitTestVisible = true;
+
+            if (canvasRoi.Shape == RoiShape.Rectangle)
+            {
+                Canvas.SetLeft(shape, canvasRoi.X);
+                Canvas.SetTop(shape, canvasRoi.Y);
+                shape.Width = canvasRoi.Width;
+                shape.Height = canvasRoi.Height;
+            }
+            else
+            {
+                var diameter = canvasRoi.Width > 0 ? canvasRoi.Width : canvasRoi.R * 2.0;
+                Canvas.SetLeft(shape, canvasRoi.CX - canvasRoi.R);
+                Canvas.SetTop(shape, canvasRoi.CY - canvasRoi.R);
+                shape.Width = diameter;
+                shape.Height = canvasRoi.Height > 0 ? canvasRoi.Height : diameter;
+            }
+
+            shape.Tag = canvasRoi;
+            Panel.SetZIndex(shape, style.zIndex);
+
+            return shape;
+        }
+
+        private (WBrush stroke, WBrush fill, double thickness, DoubleCollection? dash, int zIndex) GetRoiStyle(RoiRole role)
+        {
+            WBrush transparent = Brushes.Transparent;
+            switch (role)
+            {
+                case RoiRole.Master1Pattern:
+                    {
+                        var fill = new SolidColorBrush(WColor.FromArgb(30, 0, 255, 255));
+                        fill.Freeze();
+                        return (WBrushes.Cyan, fill, 2.0, null, 5);
+                    }
+                case RoiRole.Master1Search:
+                    {
+                        var fill = new SolidColorBrush(WColor.FromArgb(18, 255, 215, 0));
+                        fill.Freeze();
+                        var dash = new DoubleCollection { 4, 3 };
+                        dash.Freeze();
+                        return (WBrushes.Gold, fill, 1.5, dash, 4);
+                    }
+                case RoiRole.Master2Pattern:
+                    {
+                        var fill = new SolidColorBrush(WColor.FromArgb(30, 255, 165, 0));
+                        fill.Freeze();
+                        return (WBrushes.Orange, fill, 2.0, null, 6);
+                    }
+                case RoiRole.Master2Search:
+                    {
+                        var fill = new SolidColorBrush(WColor.FromArgb(18, 205, 92, 92));
+                        fill.Freeze();
+                        var dash = new DoubleCollection { 4, 3 };
+                        dash.Freeze();
+                        return (WBrushes.IndianRed, fill, 1.5, dash, 4);
+                    }
+                case RoiRole.Inspection:
+                    {
+                        var fill = new SolidColorBrush(WColor.FromArgb(45, 50, 205, 50));
+                        fill.Freeze();
+                        return (WBrushes.Lime, fill, 2.5, null, 7);
+                    }
+                default:
+                    return (WBrushes.White, transparent, 2.0, null, 5);
+            }
+        }
+
+        private void AttachRoiAdorner(Shape shape)
+        {
+            var layer = AdornerLayer.GetAdornerLayer(shape);
+            if (layer == null) return;
+
+            var existing = layer.GetAdorners(shape);
+            if (existing != null)
+            {
+                foreach (var ad in existing.OfType<RoiAdorner>())
+                    layer.Remove(ad);
+            }
+
+            if (shape.Tag is not RoiModel)
+                return;
+
+            var adorner = new RoiAdorner(shape, (shapeUpdated, modelUpdated) =>
+            {
+                var pixelModel = CanvasToImage(modelUpdated);
+                UpdateLayoutFromPixel(pixelModel);
+                AppendLog($"[adorner] ROI actualizado: {pixelModel.Role} => {DescribeRoi(pixelModel)}");
+            }, AppendLog);
+
+            layer.Add(adorner);
+        }
+
+        private void RemoveRoiAdorners(Shape shape)
+        {
+            var layer = AdornerLayer.GetAdornerLayer(shape);
+            if (layer == null) return;
+            var adorners = layer.GetAdorners(shape);
+            if (adorners == null) return;
+            foreach (var ad in adorners.OfType<RoiAdorner>())
+                layer.Remove(ad);
         }
 
         private void DrawAnalysisCross(double x, double y, double size, Brush color, double thickness)
@@ -1965,6 +2197,91 @@ namespace BrakeDiscInspector_GUI_ROI
             return new System.Windows.Point(pointInImage.X - displayRect.Left, pointInImage.Y - displayRect.Top);
         }
 
+        private System.Windows.Point CanvasToImage(System.Windows.Point pCanvas)
+        {
+            var displayRect = GetImageDisplayRect();
+            var (pw, ph) = GetImagePixelSize();
+            if (pw <= 0 || ph <= 0 || displayRect.Width <= 0 || displayRect.Height <= 0)
+                return new System.Windows.Point(0, 0);
+
+            double scale = displayRect.Width / pw;
+            return new System.Windows.Point(
+                pCanvas.X / scale,
+                pCanvas.Y / scale);
+        }
+
+        private RoiModel CanvasToImage(RoiModel roiCanvas)
+        {
+            var result = roiCanvas.Clone();
+            var displayRect = GetImageDisplayRect();
+            var (pw, ph) = GetImagePixelSize();
+            if (pw <= 0 || ph <= 0 || displayRect.Width <= 0 || displayRect.Height <= 0)
+                return result;
+
+            double scale = displayRect.Width / pw;
+
+            if (result.Shape == RoiShape.Rectangle)
+            {
+                result.X = roiCanvas.X / scale;
+                result.Y = roiCanvas.Y / scale;
+                result.Width = roiCanvas.Width / scale;
+                result.Height = roiCanvas.Height / scale;
+                result.CX = result.X + result.Width / 2.0;
+                result.CY = result.Y + result.Height / 2.0;
+                result.R = Math.Max(result.Width, result.Height) / 2.0;
+            }
+            else
+            {
+                result.CX = roiCanvas.CX / scale;
+                result.CY = roiCanvas.CY / scale;
+                result.R = roiCanvas.R / scale;
+                if (result.Shape == RoiShape.Annulus)
+                    result.RInner = roiCanvas.RInner / scale;
+                result.X = result.CX - result.R;
+                result.Y = result.CY - result.R;
+                result.Width = result.R * 2.0;
+                result.Height = result.R * 2.0;
+            }
+
+            return result;
+        }
+
+        private RoiModel ImageToCanvas(RoiModel roiImage)
+        {
+            var result = roiImage.Clone();
+            var displayRect = GetImageDisplayRect();
+            var (pw, ph) = GetImagePixelSize();
+            if (pw <= 0 || ph <= 0 || displayRect.Width <= 0 || displayRect.Height <= 0)
+                return result;
+
+            double scale = displayRect.Width / pw;
+
+            if (result.Shape == RoiShape.Rectangle)
+            {
+                result.X = roiImage.X * scale;
+                result.Y = roiImage.Y * scale;
+                result.Width = roiImage.Width * scale;
+                result.Height = roiImage.Height * scale;
+                result.CX = result.X + result.Width / 2.0;
+                result.CY = result.Y + result.Height / 2.0;
+                result.R = Math.Max(result.Width, result.Height) / 2.0;
+            }
+            else
+            {
+                result.CX = roiImage.CX * scale;
+                result.CY = roiImage.CY * scale;
+                result.R = roiImage.R * scale;
+                if (result.Shape == RoiShape.Annulus)
+                    result.RInner = roiImage.RInner * scale;
+                result.X = result.CX - result.R;
+                result.Y = result.CY - result.R;
+                result.Width = result.R * 2.0;
+                result.Height = result.R * 2.0;
+            }
+
+            return result;
+        }
+
         // === Sincroniza CanvasROI para que SE ACOMODE EXACTAMENTE al área visible de la imagen (letterbox) ===
         private void SyncOverlayToImage()
         {
@@ -1983,7 +2300,7 @@ namespace BrakeDiscInspector_GUI_ROI
             AppendLog($"[sync] Canvas={displayRect.Width:0}x{displayRect.Height:0}  Offset=({displayRect.Left:0},{displayRect.Top:0})  Image={bmp.PixelWidth}x{bmp.PixelHeight}");
 
             EnsureRotateAdorner();
-            RepositionRotateAdorner();
+            RedrawOverlay();
         }
 
 
