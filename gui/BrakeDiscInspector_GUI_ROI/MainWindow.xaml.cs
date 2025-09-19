@@ -188,41 +188,25 @@ namespace BrakeDiscInspector_GUI_ROI
             _imgW = _imgSourceBI.PixelWidth;
             _imgH = _imgSourceBI.PixelHeight;
 
-            SyncCanvasToImage();
+            SyncOverlayToImage();
 
             AppendLog($"Imagen cargada: {_imgW}x{_imgH}  (Canvas: {CanvasROI.ActualWidth:0}x{CanvasROI.ActualHeight:0})");
             RedrawOverlay();
         }
 
-        private void SyncCanvasToImage()
-        {
-            if (_imgSourceBI == null) return;
-
-            var w = ImgMain.ActualWidth > 0 ? ImgMain.ActualWidth : _imgSourceBI.PixelWidth;
-            var h = ImgMain.ActualHeight > 0 ? ImgMain.ActualHeight : _imgSourceBI.PixelHeight;
-
-            CanvasROI.Width = w;
-            CanvasROI.Height = h;
-
-            AppendLog($"[sync] Canvas={w:0}x{h:0}  Image(Actual)={ImgMain.ActualWidth:0}x{ImgMain.ActualHeight:0}");
-
-            EnsureRotateAdorner();
-            RepositionRotateAdorner();
-        }
-
         private void MainWindow_Loaded(object sender, RoutedEventArgs e)
         {
-            SyncCanvasToImage();
+            SyncOverlayToImage();
         }
 
         private void MainWindow_SizeChanged(object sender, SizeChangedEventArgs e)
         {
-            SyncCanvasToImage();
+            SyncOverlayToImage();
         }
 
         private void ImgMain_SizeChanged(object sender, SizeChangedEventArgs e)
         {
-            SyncCanvasToImage();
+            SyncOverlayToImage();
         }
 
         private void CanvasROI_Loaded(object sender, RoutedEventArgs e)
@@ -1966,41 +1950,43 @@ namespace BrakeDiscInspector_GUI_ROI
 
         private System.Windows.Point ImagePxToCanvasPt(double px, double py)
         {
-            // Con el CanvasROI ya ajustado al área pintada, el mapping es solo escala (sin offset).
-            if (ImgMain.Source is not System.Windows.Media.Imaging.BitmapSource bmp) return new System.Windows.Point(0, 0);
-            double sx = CanvasROI.Width / bmp.PixelWidth;
-            double sy = CanvasROI.Height / bmp.PixelHeight;
-            return new System.Windows.Point(px * sx, py * sy);
+            var displayRect = GetImageDisplayRect();
+            var (pw, ph) = GetImagePixelSize();
+            if (pw <= 0 || ph <= 0 || displayRect.Width <= 0 || displayRect.Height <= 0)
+                return new System.Windows.Point(0, 0);
+
+            double scale = displayRect.Width / pw; // escala uniforme empleada al pintar la imagen
+            double x = displayRect.Left + px * scale;
+            double y = displayRect.Top + py * scale;
+
+            if (CanvasROI != null)
+            {
+                x -= CanvasROI.Margin.Left;
+                y -= CanvasROI.Margin.Top;
+            }
+
+            return new System.Windows.Point(x, y);
         }
 
         // === Sincroniza CanvasROI para que SE ACOMODE EXACTAMENTE al área visible de la imagen (letterbox) ===
         private void SyncOverlayToImage()
         {
             if (ImgMain == null || CanvasROI == null) return;
-
-            // Tamaño real del control Image
-            double cw = ImgMain.ActualWidth;
-            double ch = ImgMain.ActualHeight;
-            if (cw <= 0 || ch <= 0) return;
-
-            // Tamaño en píxeles de la imagen cargada
             if (ImgMain.Source is not System.Windows.Media.Imaging.BitmapSource bmp) return;
-            int pw = bmp.PixelWidth;
-            int ph = bmp.PixelHeight;
-            if (pw <= 0 || ph <= 0) return;
 
-            // Letterbox: rectángulo real donde se dibuja la imagen dentro del control Image
-            double scale = Math.Min(cw / pw, ch / ph);
-            double w = pw * scale;
-            double h = ph * scale;
-            double x = (cw - w) * 0.5;
-            double y = (ch - h) * 0.5;
+            var displayRect = GetImageDisplayRect();
+            if (displayRect.Width <= 0 || displayRect.Height <= 0) return;
 
-            // Posiciona y redimensiona el CanvasROI para que cubra SOLO el área pintada
-            Canvas.SetLeft(CanvasROI, x);
-            Canvas.SetTop(CanvasROI, y);
-            CanvasROI.Width = w;
-            CanvasROI.Height = h;
+            CanvasROI.HorizontalAlignment = HorizontalAlignment.Left;
+            CanvasROI.VerticalAlignment = VerticalAlignment.Top;
+            CanvasROI.Margin = new Thickness(displayRect.Left, displayRect.Top, 0, 0);
+            CanvasROI.Width = displayRect.Width;
+            CanvasROI.Height = displayRect.Height;
+
+            AppendLog($"[sync] Canvas={displayRect.Width:0}x{displayRect.Height:0}  Offset=({displayRect.Left:0},{displayRect.Top:0})  Image={bmp.PixelWidth}x{bmp.PixelHeight}");
+
+            EnsureRotateAdorner();
+            RepositionRotateAdorner();
         }
 
 
