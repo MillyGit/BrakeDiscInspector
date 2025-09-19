@@ -1162,6 +1162,8 @@ namespace BrakeDiscInspector_GUI_ROI
                 CurrentRoi.Width = diameter;
                 CurrentRoi.Height = diameter;
             }
+
+            UpdateInspectionShapeRotation(CurrentRoi.AngleDeg);
         }
 
         private void InvalidateAdornerFor(Shape shape)
@@ -1783,6 +1785,10 @@ namespace BrakeDiscInspector_GUI_ROI
                 var shape = CreateLayoutShape(roi);
                 if (shape == null) return;
                 CanvasROI.Children.Add(shape);
+                if (roi.Role == RoiRole.Inspection)
+                {
+                    ApplyInspectionRotationToShape(shape, CurrentRoi.AngleDeg);
+                }
                 AttachRoiAdorner(shape);
             }
 
@@ -1834,6 +1840,11 @@ namespace BrakeDiscInspector_GUI_ROI
 
             shape.Tag = canvasRoi;
             Panel.SetZIndex(shape, style.zIndex);
+
+            if (roi.Role == RoiRole.Inspection)
+            {
+                ApplyInspectionRotationToShape(shape, CurrentRoi.AngleDeg);
+            }
 
             return shape;
         }
@@ -2125,13 +2136,73 @@ namespace BrakeDiscInspector_GUI_ROI
                 angle =>
                 {
                     CurrentRoi.AngleDeg = angle;   // rotación en tiempo real
-                    CanvasROI.InvalidateVisual();
+                    UpdateInspectionShapeRotation(angle);
                 },
                 CurrentRoi.AngleDeg
             );
 
             layer.Add(_rotateAdorner);
             _rotateAdornerInitialized = true;
+        }
+
+        private Shape? FindInspectionShapeOnCanvas()
+        {
+            if (CanvasROI == null)
+                return null;
+
+            return CanvasROI.Children
+                .OfType<Shape>()
+                .FirstOrDefault(shape =>
+                    !ReferenceEquals(shape, _previewShape) &&
+                    shape.Tag is RoiModel roi &&
+                    roi.Role == RoiRole.Inspection);
+        }
+
+        private void ApplyInspectionRotationToShape(Shape shape, double angle)
+        {
+            if (shape.Tag is not RoiModel roiModel)
+                return;
+
+            var (centerX, centerY) = roiModel.GetCenter();
+
+            double left = Canvas.GetLeft(shape);
+            if (double.IsNaN(left))
+            {
+                left = roiModel.Shape == RoiShape.Rectangle
+                    ? roiModel.X
+                    : roiModel.CX - roiModel.R;
+            }
+
+            double top = Canvas.GetTop(shape);
+            if (double.IsNaN(top))
+            {
+                top = roiModel.Shape == RoiShape.Rectangle
+                    ? roiModel.Y
+                    : roiModel.CY - roiModel.R;
+            }
+
+            double localCenterX = centerX - left;
+            double localCenterY = centerY - top;
+
+            if (shape.RenderTransform is RotateTransform rotate)
+            {
+                rotate.Angle = angle;
+                rotate.CenterX = localCenterX;
+                rotate.CenterY = localCenterY;
+            }
+            else
+            {
+                shape.RenderTransform = new RotateTransform(angle, localCenterX, localCenterY);
+            }
+        }
+
+        private void UpdateInspectionShapeRotation(double angle)
+        {
+            var inspectionShape = FindInspectionShapeOnCanvas();
+            if (inspectionShape == null)
+                return;
+
+            ApplyInspectionRotationToShape(inspectionShape, angle);
         }
 
         private void RepositionRotateAdorner()
