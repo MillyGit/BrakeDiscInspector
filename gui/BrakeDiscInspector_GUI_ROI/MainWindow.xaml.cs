@@ -1,4 +1,4 @@
-﻿// Dialogs
+// Dialogs
 using Microsoft.Win32;
 using OpenCvSharp;
 using OpenCvSharp.WpfExtensions;
@@ -552,8 +552,6 @@ namespace BrakeDiscInspector_GUI_ROI
                     _tmpBuffer.Role = RoiRole.Inspection;
                     _layout.Inspection = _tmpBuffer.Clone();
 
-                    UpdateCurrentRoiFromInspection();
-
                     // (Opcional) también puedes guardar un preview de la inspección inicial:
                     SaveRoiCropPreview(_layout.Inspection, "INS_init");
 
@@ -906,7 +904,6 @@ namespace BrakeDiscInspector_GUI_ROI
                 insp.CX = cx; insp.CY = cy;
             }
 
-            UpdateCurrentRoiFromInspection();
             RepositionRotateAdorner();
         }
 
@@ -938,7 +935,6 @@ namespace BrakeDiscInspector_GUI_ROI
                 if (insp.CY > imgH - ro) insp.CY = imgH - ro;
             }
 
-            UpdateCurrentRoiFromInspection();
             RepositionRotateAdorner();
         }
 
@@ -1032,7 +1028,6 @@ namespace BrakeDiscInspector_GUI_ROI
         {
             _layout = MasterLayoutManager.LoadOrNew(_preset);
             RedrawOverlay();
-            UpdateCurrentRoiFromInspection();
             Snack("Layout cargado.");
             UpdateWizardState();
         }
@@ -1089,8 +1084,6 @@ namespace BrakeDiscInspector_GUI_ROI
             }
 
             AppendLog($"[model] sync {roi.Role} => {DescribeRoi(roi)}");
-            if (roi.Role == RoiRole.Inspection)
-                UpdateCurrentRoiFromInspection();
             RepositionRotateAdorner();
         }
 
@@ -1766,7 +1759,7 @@ namespace BrakeDiscInspector_GUI_ROI
         {
             var layer = AdornerLayer.GetAdornerLayer(CanvasROI);
             _rotateAdorner = new RoiRotateAdorner(
-                CanvasROI,
+            CanvasROI,
                 () => ImagePxToCanvasPt(CurrentRoi.X, CurrentRoi.Y),
                 angle =>
                 {
@@ -1958,9 +1951,6 @@ namespace BrakeDiscInspector_GUI_ROI
 
         private System.Windows.Point ImagePxToCanvasPt(double px, double py)
         {
-            if (CanvasROI == null)
-                return new System.Windows.Point(0, 0);
-
             var displayRect = GetImageDisplayRect();
             if (displayRect.Width <= 0 || displayRect.Height <= 0)
                 return new System.Windows.Point(0, 0);
@@ -1969,20 +1959,10 @@ namespace BrakeDiscInspector_GUI_ROI
             if (pw <= 0 || ph <= 0)
                 return new System.Windows.Point(0, 0);
 
-            // Usa el mismo helper para aplicar escala y offset del letterbox.
+            // Traduce usando el mismo helper que otros cálculos y resta el offset del letterbox
+            // para llevar el punto al sistema local del CanvasROI.
             var pointInImage = ImgToCanvas(new System.Windows.Point(px, py));
-
-            // El CanvasROI se desplaza mediante Margin, así que llevamos el punto a su sistema local
-            // restando ese offset (o, si aún no se ha medido, el offset del rect de display).
-            double offsetX = CanvasROI.Margin.Left;
-            double offsetY = CanvasROI.Margin.Top;
-            if (double.IsNaN(offsetX) || double.IsNaN(offsetY))
-            {
-                offsetX = displayRect.Left;
-                offsetY = displayRect.Top;
-            }
-
-            return new System.Windows.Point(pointInImage.X - offsetX, pointInImage.Y - offsetY);
+            return new System.Windows.Point(pointInImage.X - displayRect.Left, pointInImage.Y - displayRect.Top);
         }
 
         // === Sincroniza CanvasROI para que SE ACOMODE EXACTAMENTE al área visible de la imagen (letterbox) ===
@@ -2002,33 +1982,8 @@ namespace BrakeDiscInspector_GUI_ROI
 
             AppendLog($"[sync] Canvas={displayRect.Width:0}x{displayRect.Height:0}  Offset=({displayRect.Left:0},{displayRect.Top:0})  Image={bmp.PixelWidth}x{bmp.PixelHeight}");
 
-            UpdateCurrentRoiFromInspection();
             EnsureRotateAdorner();
             RepositionRotateAdorner();
-        }
-
-        private void UpdateCurrentRoiFromInspection()
-        {
-            var insp = _layout?.Inspection;
-            if (insp == null)
-                return;
-
-            if (insp.Shape == RoiShape.Rectangle)
-            {
-                CurrentRoi.X = insp.X + insp.Width / 2.0;
-                CurrentRoi.Y = insp.Y + insp.Height / 2.0;
-                CurrentRoi.Width = insp.Width;
-                CurrentRoi.Height = insp.Height;
-            }
-            else
-            {
-                var radius = insp.R;
-                var diameter = radius * 2.0;
-                CurrentRoi.X = insp.CX;
-                CurrentRoi.Y = insp.CY;
-                CurrentRoi.Width = diameter;
-                CurrentRoi.Height = diameter;
-            }
         }
 
 
