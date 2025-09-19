@@ -58,10 +58,42 @@ multipart/form-data
 
 ```json
 {
-  "model": "current_model.h5",
+  "state": "idle",
   "threshold": 0.57,
-  "input_size": [224, 224],
-  "status": "ready"
+  "artifacts": {
+    "model": {
+      "path": ".../model/current_model.h5",
+      "exists": true,
+      "size_bytes": 7340032,
+      "modified_at": 1717000200.123,
+      "loaded": true
+    },
+    "threshold": {
+      "path": ".../model/threshold.txt",
+      "exists": true,
+      "size_bytes": 6,
+      "modified_at": 1717000200.456,
+      "value": 0.57,
+      "source": "model_cache"
+    },
+    "log": {
+      "path": ".../model/logs/train.log",
+      "exists": true,
+      "size_bytes": 10240,
+      "modified_at": 1717000200.789,
+      "tail": "Epoch 5/20 - val_loss=0.21..."
+    }
+  },
+  "model_runtime": {
+    "loaded": true,
+    "name": "classifier",
+    "layer_count": 5,
+    "layers_preview": ["input", "conv1", "conv2", "dense", "logits", "..."],
+    "input_shape": [null, 600, 600, 3],
+    "output_shape": [null, 1],
+    "trainable_params": 123456,
+    "non_trainable_params": 2048
+  }
 }
 ```
 

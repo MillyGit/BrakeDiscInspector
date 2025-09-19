@@ -34,6 +34,12 @@ app = Flask(__name__)
 
 # ========= Preprocess (único) =========
 from preprocess import preprocess_for_model, load_preprocessing_config
+from status_utils import (
+    file_metadata,
+    tail_file,
+    describe_keras_model,
+    read_threshold,
+)
 
 def _load_pre_cfg_from_request() -> dict:
     """
@@ -682,6 +688,18 @@ def train_status():
     """
     status = {"state": "idle"}
     st_json = MODEL_DIR / "train_status.json"
+    pid_file = MODEL_DIR / "train_pid.txt"
+    log_file = LOGS_DIR / "train.log"
+
+    artifacts = {
+        "model": file_metadata(MODEL_PATH),
+        "threshold": file_metadata(THR_PATH),
+        "train_status": file_metadata(st_json),
+        "pid_file": file_metadata(pid_file),
+        "log": file_metadata(log_file),
+    }
+    status["artifacts"] = artifacts
+
     if st_json.exists():
         try:
             data = json.loads(st_json.read_text())
@@ -690,24 +708,42 @@ def train_status():
         except Exception:
             pass
 
-    pid_file = MODEL_DIR / "train_pid.txt"
     if pid_file.exists():
         try:
             pid = int(pid_file.read_text().strip())
             status["pid"] = pid
+            artifacts["pid_file"]["pid"] = pid
         except Exception:
             status["pid"] = None
 
-    log_file = LOGS_DIR / "train.log"
-    if log_file.exists():
-        try:
-            text = log_file.read_text(errors="ignore")
-            tail = text[-4000:] if len(text) > 4000 else text
-            status["log_tail"] = tail
-            if "updated_at" not in status:
-                status["updated_at"] = time.time()
-        except Exception:
-            pass
+    log_tail = tail_file(log_file, max_bytes=4000)
+    if log_tail is not None:
+        status["log_tail"] = log_tail
+        artifacts["log"]["tail"] = log_tail
+        if "updated_at" not in status:
+            status["updated_at"] = time.time()
+
+    model_ok, model_msg = _ensure_model()
+    if model_ok:
+        artifacts["model"]["loaded"] = True
+        status["model_runtime"] = describe_keras_model(_ensure_model.model)
+    else:
+        artifacts["model"]["loaded"] = False
+        artifacts["model"]["load_error"] = model_msg
+        status["model_runtime"] = {"loaded": False, "error": model_msg}
+
+    thr_value = getattr(_ensure_model, "thr", None)
+    thr_source = "model_cache" if thr_value is not None else None
+    if thr_value is None:
+        thr_value = read_threshold(THR_PATH)
+        if thr_value is not None:
+            thr_source = "file"
+
+    if thr_value is not None:
+        status["threshold"] = float(thr_value)
+        artifacts["threshold"]["value"] = float(thr_value)
+        if thr_source:
+            artifacts["threshold"]["source"] = thr_source
 
     return jsonify(status)
 
