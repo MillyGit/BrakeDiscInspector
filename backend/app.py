@@ -698,7 +698,6 @@ def train_status():
         "pid_file": file_metadata(pid_file),
         "log": file_metadata(log_file),
     }
-    status["artifacts"] = artifacts
 
     if st_json.exists():
         try:
@@ -707,6 +706,8 @@ def train_status():
                 status.update(data)
         except Exception:
             pass
+
+    status["artifacts"] = artifacts
 
     if pid_file.exists():
         try:
