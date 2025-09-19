@@ -80,28 +80,51 @@ namespace BrakeDiscInspector_GUI_ROI
 
         protected override Size ArrangeOverride(Size finalSize)
         {
-            // Bounding del Shape en el canvas (Left/Top/Width/Height)
-            double x = Canvas.GetLeft(_shape); if (double.IsNaN(x)) x = 0;
-            double y = Canvas.GetTop(_shape); if (double.IsNaN(y)) y = 0;
-            double w = _shape.Width; if (double.IsNaN(w) || w < 1) w = 1;
-            double h = _shape.Height; if (double.IsNaN(h) || h < 1) h = 1;
+            Size renderSize = AdornedElement?.RenderSize ?? _shape.RenderSize;
+            double w = renderSize.Width;
+            if (double.IsNaN(w) || w <= 0)
+            {
+                w = _shape.Width;
+            }
+            if (double.IsNaN(w) || w <= 0)
+            {
+                w = finalSize.Width;
+            }
+            if (double.IsNaN(w) || w <= 0)
+            {
+                w = 1;
+            }
+
+            double h = renderSize.Height;
+            if (double.IsNaN(h) || h <= 0)
+            {
+                h = _shape.Height;
+            }
+            if (double.IsNaN(h) || h <= 0)
+            {
+                h = finalSize.Height;
+            }
+            if (double.IsNaN(h) || h <= 0)
+            {
+                h = 1;
+            }
 
             // 1) MoveThumb cubre toda el área del ROI (transparente)
-            _moveThumb.Arrange(new Rect(x, y, w, h));
+            _moveThumb.Arrange(new Rect(0, 0, w, h));
 
             // 2) Corners y edges (posicionados alrededor)
             double r = 6;
             // NW NE SE SW
-            _corners[0].Arrange(new Rect(x - r, y - r, 2 * r, 2 * r));
-            _corners[1].Arrange(new Rect(x + w - r, y - r, 2 * r, 2 * r));
-            _corners[2].Arrange(new Rect(x + w - r, y + h - r, 2 * r, 2 * r));
-            _corners[3].Arrange(new Rect(x - r, y + h - r, 2 * r, 2 * r));
+            _corners[0].Arrange(new Rect(-r, -r, 2 * r, 2 * r));
+            _corners[1].Arrange(new Rect(w - r, -r, 2 * r, 2 * r));
+            _corners[2].Arrange(new Rect(w - r, h - r, 2 * r, 2 * r));
+            _corners[3].Arrange(new Rect(-r, h - r, 2 * r, 2 * r));
 
             // N E S W
-            _edges[0].Arrange(new Rect(x + w / 2 - r, y - r, 2 * r, 2 * r));
-            _edges[1].Arrange(new Rect(x + w - r, y + h / 2 - r, 2 * r, 2 * r));
-            _edges[2].Arrange(new Rect(x + w / 2 - r, y + h - r, 2 * r, 2 * r));
-            _edges[3].Arrange(new Rect(x - r, y + h / 2 - r, 2 * r, 2 * r));
+            _edges[0].Arrange(new Rect(w / 2 - r, -r, 2 * r, 2 * r));
+            _edges[1].Arrange(new Rect(w - r, h / 2 - r, 2 * r, 2 * r));
+            _edges[2].Arrange(new Rect(w / 2 - r, h - r, 2 * r, 2 * r));
+            _edges[3].Arrange(new Rect(-r, h / 2 - r, 2 * r, 2 * r));
 
             return finalSize;
         }
