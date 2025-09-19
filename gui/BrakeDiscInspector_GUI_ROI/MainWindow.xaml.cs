@@ -37,6 +37,7 @@ namespace BrakeDiscInspector_GUI_ROI
     public partial class MainWindow : System.Windows.Window
     {
         private enum MasterState { DrawM1_Pattern, DrawM1_Search, DrawM2_Pattern, DrawM2_Search, DrawInspection, Ready }
+        private enum RoiCorner { TopLeft, TopRight, BottomRight, BottomLeft }
         private MasterState _state = MasterState.DrawM1_Pattern;
 
         private PresetFile _preset = new();
@@ -2002,8 +2003,10 @@ namespace BrakeDiscInspector_GUI_ROI
         {
             var layer = AdornerLayer.GetAdornerLayer(CanvasROI);
             _rotateAdorner = new RoiRotateAdorner(
-            CanvasROI,
-                () => ImagePxToCanvasPt(CurrentRoi.X, CurrentRoi.Y),
+                CanvasROI,
+                GetCurrentRoiCenterOnCanvas,
+                () => GetCurrentRoiCornerOnCanvas(RoiCorner.TopRight),
+                GetCurrentRoiCornerBaselineAngle,
                 angle =>
                 {
                     CurrentRoi.AngleDeg = angle; // rotación en tiempo real
@@ -2018,14 +2021,24 @@ namespace BrakeDiscInspector_GUI_ROI
         {
             CurrentRoi.EnforceMinSize(10, 10);
 
-            var center = new Point2f((float)CurrentRoi.X, (float)CurrentRoi.Y);
-            var rotMat = Cv2.GetRotationMatrix2D(center, CurrentRoi.AngleDeg, 1.0);
+            var (cornerX, cornerY) = GetCurrentRoiCornerImage(RoiCorner.TopRight);
+            double halfW = CurrentRoi.Width / 2.0;
+            double halfH = CurrentRoi.Height / 2.0;
+            double angleRad = CurrentRoi.AngleDeg * Math.PI / 180.0;
+            double cos = Math.Cos(angleRad);
+            double sin = Math.Sin(angleRad);
+
+            double offsetX = halfW * cos - (-halfH) * sin;
+            double offsetY = halfW * sin + (-halfH) * cos;
+            var pivotCenter = new Point2f((float)(cornerX - offsetX), (float)(cornerY - offsetY));
+
+            var rotMat = Cv2.GetRotationMatrix2D(pivotCenter, CurrentRoi.AngleDeg, 1.0);
 
             Mat rotated = new Mat();
             Cv2.WarpAffine(bgr, rotated, rotMat, new OpenCvSharp.Size(bgr.Width, bgr.Height), InterpolationFlags.Linear, BorderTypes.Constant, new Scalar(0, 0, 0));
 
-            int x = (int)(CurrentRoi.X - CurrentRoi.Width / 2);
-            int y = (int)(CurrentRoi.Y - CurrentRoi.Height / 2);
+            int x = (int)Math.Round(pivotCenter.X - halfW);
+            int y = (int)Math.Round(pivotCenter.Y - halfH);
             x = Math.Max(0, Math.Min(x, rotated.Width - 1));
             y = Math.Max(0, Math.Min(y, rotated.Height - 1));
             int w = (int)Math.Max(10, Math.Min(CurrentRoi.Width, rotated.Width - x));
@@ -2118,6 +2131,57 @@ namespace BrakeDiscInspector_GUI_ROI
             SetupRoiRotateAdorner();
         }
 
+        private System.Windows.Point GetCurrentRoiCenterOnCanvas()
+        {
+            return ImagePxToCanvasPt(CurrentRoi.X, CurrentRoi.Y);
+        }
+
+        private (double x, double y) GetCurrentRoiCornerImage(RoiCorner corner)
+        {
+            double halfW = CurrentRoi.Width / 2.0;
+            double halfH = CurrentRoi.Height / 2.0;
+
+            double rawOffsetX = corner switch
+            {
+                RoiCorner.TopLeft or RoiCorner.BottomLeft => -halfW,
+                RoiCorner.TopRight or RoiCorner.BottomRight => halfW,
+                _ => 0.0
+            };
+
+            double rawOffsetY = corner switch
+            {
+                RoiCorner.TopLeft or RoiCorner.TopRight => -halfH,
+                RoiCorner.BottomLeft or RoiCorner.BottomRight => halfH,
+                _ => 0.0
+            };
+
+            double angleRad = CurrentRoi.AngleDeg * Math.PI / 180.0;
+            double cos = Math.Cos(angleRad);
+            double sin = Math.Sin(angleRad);
+
+            double rotatedX = rawOffsetX * cos - rawOffsetY * sin;
+            double rotatedY = rawOffsetX * sin + rawOffsetY * cos;
+
+            return (CurrentRoi.X + rotatedX, CurrentRoi.Y + rotatedY);
+        }
+
+        private System.Windows.Point GetCurrentRoiCornerOnCanvas(RoiCorner corner)
+        {
+            var (x, y) = GetCurrentRoiCornerImage(corner);
+            return ImagePxToCanvasPt(x, y);
+        }
+
+        private double GetCurrentRoiCornerBaselineAngle()
+        {
+            double halfW = CurrentRoi.Width / 2.0;
+            double halfH = CurrentRoi.Height / 2.0;
+
+            if (halfW == 0 && halfH == 0)
+                return 0.0;
+
+            return Math.Atan2(-halfH, halfW);
+        }
+
         private void SetupRoiRotateAdorner()
         {
             var layer = AdornerLayer.GetAdornerLayer(CanvasROI);
@@ -2131,8 +2195,9 @@ namespace BrakeDiscInspector_GUI_ROI
 
             _rotateAdorner = new RoiRotateAdorner(
                 CanvasROI,
-                // CurrentRoi.X/Y están en píxeles de imagen → conviértelos a coords del CanvasROI
-                () => ImagePxToCanvasPt(CurrentRoi.X, CurrentRoi.Y),
+                GetCurrentRoiCenterOnCanvas,
+                () => GetCurrentRoiCornerOnCanvas(RoiCorner.TopRight),
+                GetCurrentRoiCornerBaselineAngle,
                 angle =>
                 {
                     CurrentRoi.AngleDeg = angle;   // rotación en tiempo real
