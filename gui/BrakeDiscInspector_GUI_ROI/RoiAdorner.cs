@@ -158,17 +158,32 @@ namespace BrakeDiscInspector_GUI_ROI
 
             // 2) Corners y edges (posicionados alrededor)
             double r = 6;
-            // NW NE SE SW
-            _corners[0].Arrange(new Rect(-r, -r, 2 * r, 2 * r));
-            _corners[1].Arrange(new Rect(w - r, -r, 2 * r, 2 * r));
-            _corners[2].Arrange(new Rect(w - r, h - r, 2 * r, 2 * r));
-            _corners[3].Arrange(new Rect(-r, h - r, 2 * r, 2 * r));
+            double angleRad = GetCurrentAngle() * Math.PI / 180.0;
+            Point center = new Point(w / 2.0, h / 2.0);
 
-            // N E S W
-            _edges[0].Arrange(new Rect(w / 2 - r, -r, 2 * r, 2 * r));
-            _edges[1].Arrange(new Rect(w - r, h / 2 - r, 2 * r, 2 * r));
-            _edges[2].Arrange(new Rect(w / 2 - r, h - r, 2 * r, 2 * r));
-            _edges[3].Arrange(new Rect(-r, h / 2 - r, 2 * r, 2 * r));
+            Point[] cornerPositions = new Point[4];
+            cornerPositions[0] = GetCornerPosition(center, new Vector(-w / 2.0, -h / 2.0), angleRad);
+            cornerPositions[1] = GetCornerPosition(center, new Vector(w / 2.0, -h / 2.0), angleRad);
+            cornerPositions[2] = GetCornerPosition(center, new Vector(w / 2.0, h / 2.0), angleRad);
+            cornerPositions[3] = GetCornerPosition(center, new Vector(-w / 2.0, h / 2.0), angleRad);
+
+            for (int i = 0; i < _corners.Length; i++)
+            {
+                Point corner = cornerPositions[i];
+                _corners[i].Arrange(new Rect(corner.X - r, corner.Y - r, 2 * r, 2 * r));
+            }
+
+            Point[] edgePositions = new Point[4];
+            edgePositions[0] = MidPoint(cornerPositions[0], cornerPositions[1]);
+            edgePositions[1] = MidPoint(cornerPositions[1], cornerPositions[2]);
+            edgePositions[2] = MidPoint(cornerPositions[2], cornerPositions[3]);
+            edgePositions[3] = MidPoint(cornerPositions[3], cornerPositions[0]);
+
+            for (int i = 0; i < _edges.Length; i++)
+            {
+                Point edge = edgePositions[i];
+                _edges[i].Arrange(new Rect(edge.X - r, edge.Y - r, 2 * r, 2 * r));
+            }
 
             return finalSize;
         }
@@ -463,6 +478,7 @@ namespace BrakeDiscInspector_GUI_ROI
             }
 
             roi.AngleDeg = angleDeg;
+            InvalidateArrange();
         }
 
         private double GetCurrentAngle()
@@ -570,6 +586,17 @@ namespace BrakeDiscInspector_GUI_ROI
             double cos = Math.Cos(angleRad);
             double sin = Math.Sin(angleRad);
             return new Vector(vector.X * cos - vector.Y * sin, vector.X * sin + vector.Y * cos);
+        }
+
+        private static Point GetCornerPosition(Point center, Vector localOffset, double angleRad)
+        {
+            Vector rotated = RotateVector(localOffset, angleRad);
+            return new Point(center.X + rotated.X, center.Y + rotated.Y);
+        }
+
+        private static Point MidPoint(Point a, Point b)
+        {
+            return new Point((a.X + b.X) / 2.0, (a.Y + b.Y) / 2.0);
         }
 
         private static Point GetCornerWorldPoint(Corner corner, double left, double top, double width, double height, double angleRad)
