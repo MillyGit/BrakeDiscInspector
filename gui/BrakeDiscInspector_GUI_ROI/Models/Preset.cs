@@ -21,6 +21,8 @@ namespace BrakeDiscInspector_GUI_ROI
         public RoiShape Shape { get; set; } = RoiShape.Rectangle;
         public RoiRole Role { get; set; } = RoiRole.Inspection;
 
+        public double AngleDeg { get; set; } = 0.0;
+
         // Rectángulo
         public double X { get; set; }
         public double Y { get; set; }
@@ -43,7 +45,25 @@ namespace BrakeDiscInspector_GUI_ROI
             };
         }
 
-        public RoiModel Clone() => (RoiModel)MemberwiseClone();
+        public RoiModel Clone()
+        {
+            return new RoiModel
+            {
+                Id = Id,
+                Label = Label,
+                Shape = Shape,
+                Role = Role,
+                X = X,
+                Y = Y,
+                Width = Width,
+                Height = Height,
+                CX = CX,
+                CY = CY,
+                R = R,
+                RInner = RInner,
+                AngleDeg = AngleDeg
+            };
+        }
     }
 
     public class PresetFile
