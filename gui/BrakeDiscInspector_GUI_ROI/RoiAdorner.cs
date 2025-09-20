@@ -31,6 +31,8 @@ namespace BrakeDiscInspector_GUI_ROI
         private bool _isRotating;
         private double _rotationAngleAtDragStart;
         private double _rotationAccumulatedAngle;
+        private Point _rotationPivot;
+        private double _rotationPointerAngleAtDragStartDeg;
 
         public RoiAdorner(UIElement adornedElement, Action<bool, RoiModel> onChanged, Action<string> log)
             : base(adornedElement)
@@ -279,10 +281,25 @@ namespace BrakeDiscInspector_GUI_ROI
             _rotationAngleAtDragStart = NormalizeAngle(GetCurrentAngle());
             _rotationAccumulatedAngle = 0;
 
+            UpdateRotationCenterIfNeeded();
+            if (_shape.RenderTransform is RotateTransform rotateTransform)
+            {
+                _rotationPivot = new Point(rotateTransform.CenterX, rotateTransform.CenterY);
+            }
+            else
+            {
+                var (width, height) = GetShapeSize();
+                _rotationPivot = new Point(width / 2.0, height / 2.0);
+            }
+
+            Point pointerStart = Mouse.GetPosition(_shape);
+            Vector pointerVector = new Vector(pointerStart.X - _rotationPivot.X, pointerStart.Y - _rotationPivot.Y);
+            _rotationPointerAngleAtDragStartDeg = Math.Atan2(pointerVector.Y, pointerVector.X) * 180.0 / Math.PI;
+
             SetNonRotationThumbsEnabled(false);
             _rotationThumb.IsHitTestVisible = true;
 
-            _log($"[rotate] start roi={roi.Id} angle={_rotationAngleAtDragStart:0.##}");
+            _log($"[rotate] start roi={roi.Id} angle={_rotationAngleAtDragStart:0.##} pivot=({_rotationPivot.X:0.##},{_rotationPivot.Y:0.##}) pointerAngle={_rotationPointerAngleAtDragStartDeg:0.##}");
         }
 
         private void RotationThumb_DragDelta(object sender, DragDeltaEventArgs e)
@@ -290,19 +307,19 @@ namespace BrakeDiscInspector_GUI_ROI
             if (!_isRotating || _shape.Tag is not RoiModel roi)
                 return;
 
-            double radius = GetRotationRadius();
-            if (radius <= 1e-3)
-                radius = 1;
+            Point pointerPosition = Mouse.GetPosition(_shape);
+            Vector pointerVector = new Vector(pointerPosition.X - _rotationPivot.X, pointerPosition.Y - _rotationPivot.Y);
+            double pointerAngleDeg = Math.Atan2(pointerVector.Y, pointerVector.X) * 180.0 / Math.PI;
 
-            double angleDeltaDeg = (-e.VerticalChange / radius) * 180.0 / Math.PI;
-            _rotationAccumulatedAngle += angleDeltaDeg;
+            double angleDeltaDeg = NormalizeAngle(pointerAngleDeg - _rotationPointerAngleAtDragStartDeg);
+            _rotationAccumulatedAngle = angleDeltaDeg;
 
             double newAngle = NormalizeAngle(_rotationAngleAtDragStart + _rotationAccumulatedAngle);
             ApplyRotation(newAngle, roi);
 
             _onChanged(true, roi);
 
-            _log($"[rotate] delta roi={roi.Id} drag=({e.HorizontalChange:0.##},{e.VerticalChange:0.##}) radius={radius:0.##} angle={newAngle:0.##}");
+            _log($"[rotate] delta roi={roi.Id} pointer=({pointerPosition.X:0.##},{pointerPosition.Y:0.##}) pointerAngle={pointerAngleDeg:0.##} delta={angleDeltaDeg:0.##} angle={newAngle:0.##}");
         }
 
         private void RotationThumb_DragCompleted(object sender, DragCompletedEventArgs e)
@@ -449,20 +466,6 @@ namespace BrakeDiscInspector_GUI_ROI
             if (double.IsNaN(height) || height <= 0) height = 1;
 
             return (width, height);
-        }
-
-        private double GetRotationRadius()
-        {
-            var (width, height) = GetShapeSize();
-            double centerX = width / 2.0;
-            double centerY = height / 2.0;
-            double handleX = width;
-            double handleY = 0;
-
-            double dx = handleX - centerX;
-            double dy = handleY - centerY;
-
-            return Math.Sqrt(dx * dx + dy * dy);
         }
 
         private static double NormalizeAngle(double angleDeg)
