@@ -463,6 +463,16 @@ namespace BrakeDiscInspector_GUI_ROI
             AppendLog($"[draw] ROI draft = {DescribeRoi(_tmpBuffer)}");
 
             _previewShape.Tag = canvasDraft;
+            if (_state == MasterState.DrawInspection)
+            {
+                canvasDraft.Role = RoiRole.Inspection;
+                if (_tmpBuffer != null)
+                {
+                    _tmpBuffer.Role = RoiRole.Inspection;
+                    SyncCurrentRoiFromInspection(_tmpBuffer);
+                }
+                RepositionRotateAdorner();
+            }
             _previewShape.IsHitTestVisible = true; // el adorner coge los clics
             _previewShape.StrokeDashArray = new DoubleCollection { 4, 4 };
 
@@ -480,6 +490,12 @@ namespace BrakeDiscInspector_GUI_ROI
                 {
                     var pixelModel = CanvasToImage(modelUpdated);
                     _tmpBuffer = pixelModel.Clone();
+                    if (_state == MasterState.DrawInspection && _tmpBuffer != null)
+                    {
+                        modelUpdated.Role = RoiRole.Inspection;
+                        _tmpBuffer.Role = RoiRole.Inspection;
+                        SyncCurrentRoiFromInspection(_tmpBuffer);
+                    }
                     AppendLog($"[preview] edit => {DescribeRoi(_tmpBuffer)}");
                     RepositionRotateAdorner();
                 }, AppendLog); // ⬅️ pasa logger
@@ -2231,6 +2247,17 @@ namespace BrakeDiscInspector_GUI_ROI
                     var pivot = GetCurrentRoiCornerOnCanvas(RoiCorner.TopRight);
                     AppendLog($"[rotate] callback angle={angle:0.##} pivot=({pivot.X:0.##},{pivot.Y:0.##}) handle=({pivot.X:0.##},{pivot.Y:0.##})");
                     CurrentRoi.AngleDeg = angle;   // rotación en tiempo real
+                    if (_state == MasterState.DrawInspection)
+                    {
+                        if (_tmpBuffer != null)
+                        {
+                            _tmpBuffer.AngleDeg = angle;
+                        }
+                        if (_previewShape?.Tag is RoiModel preview)
+                        {
+                            preview.AngleDeg = angle;
+                        }
+                    }
                     UpdateInspectionShapeRotation(angle);
                     if (_layout?.Inspection != null)
                     {
@@ -2250,10 +2277,12 @@ namespace BrakeDiscInspector_GUI_ROI
             if (CanvasROI == null)
                 return null;
 
+            if (_state == MasterState.DrawInspection && _previewShape != null)
+                return _previewShape;
+
             return CanvasROI.Children
                 .OfType<Shape>()
                 .FirstOrDefault(shape =>
-                    !ReferenceEquals(shape, _previewShape) &&
                     shape.Tag is RoiModel roi &&
                     roi.Role == RoiRole.Inspection);
         }
