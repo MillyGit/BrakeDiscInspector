@@ -2382,18 +2382,31 @@ namespace BrakeDiscInspector_GUI_ROI
 
         private void AttachRoiAdorner(Shape shape)
         {
+            var roiInfo = shape.Tag as RoiModel;
+            string shapeContext = roiInfo != null ? BuildShapeLogContext(shape) : $"shape={shape.GetType().Name} tag={(shape.Tag ?? "<null>")}";
+
             var layer = AdornerLayer.GetAdornerLayer(shape);
-            if (layer == null) return;
+            if (layer == null)
+            {
+                AppendLog($"[adorner] layer missing for {shapeContext}");
+                return;
+            }
 
             var existing = layer.GetAdorners(shape);
             if (existing != null)
             {
                 foreach (var ad in existing.OfType<RoiAdorner>())
+                {
                     layer.Remove(ad);
+                    AppendLog($"[adorner] removed existing roi adorner for {shapeContext}");
+                }
             }
 
-            if (shape.Tag is not RoiModel)
+            if (roiInfo == null)
+            {
+                AppendLog($"[adorner] skip attach (no RoiModel) for {shapeContext}");
                 return;
+            }
 
             var adorner = new RoiAdorner(shape, (changeKind, modelUpdated) =>
             {
@@ -2404,6 +2417,7 @@ namespace BrakeDiscInspector_GUI_ROI
             }, AppendLog);
 
             layer.Add(adorner);
+            AppendLog($"[adorner] attached {BuildShapeLogContext(shape)}");
         }
 
         private void RemoveRoiAdorners(Shape shape)
@@ -2603,19 +2617,64 @@ namespace BrakeDiscInspector_GUI_ROI
             return (CurrentRoi.X + rotatedX, CurrentRoi.Y + rotatedY);
         }
 
+        private string BuildShapeLogContext(Shape shape)
+        {
+            if (shape.Tag is RoiModel roiModel)
+            {
+                var (pivotCanvasX, pivotCanvasY, pivotLocalX, pivotLocalY, width, height) = GetShapePivotMetrics(shape, roiModel);
+                return $"role={roiModel.Role} id={roiModel.Id} angle={roiModel.AngleDeg:0.##} pivotCanvas=({pivotCanvasX:0.##},{pivotCanvasY:0.##}) pivotLocal=({pivotLocalX:0.##},{pivotLocalY:0.##}) size=({width:0.##},{height:0.##})";
+            }
+
+            var tagText = shape.Tag != null ? shape.Tag.ToString() : "<null>";
+            return $"shape={shape.GetType().Name} tag={tagText}";
+        }
+
+        private (double pivotCanvasX, double pivotCanvasY, double pivotLocalX, double pivotLocalY, double width, double height) GetShapePivotMetrics(Shape shape, RoiModel roiModel)
+        {
+            double width = !double.IsNaN(shape.Width) && shape.Width > 0 ? shape.Width : roiModel.Width;
+            double height = !double.IsNaN(shape.Height) && shape.Height > 0 ? shape.Height : roiModel.Height;
+
+            double left = Canvas.GetLeft(shape); if (double.IsNaN(left)) left = 0;
+            double top = Canvas.GetTop(shape); if (double.IsNaN(top)) top = 0;
+            double pivotLocalX = width / 2.0;
+            double pivotLocalY = height / 2.0;
+            double pivotCanvasX = left + pivotLocalX;
+            double pivotCanvasY = top + pivotLocalY;
+
+            return (pivotCanvasX, pivotCanvasY, pivotLocalX, pivotLocalY, width, height);
+        }
+
         private Shape? FindInspectionShapeOnCanvas()
         {
             if (CanvasROI == null)
+            {
+                AppendLog("[inspect] CanvasROI missing when searching inspection shape");
                 return null;
+            }
 
             if (_state == MasterState.DrawInspection && _previewShape != null)
+            {
+                AppendLog($"[inspect] using preview inspection shape {BuildShapeLogContext(_previewShape)}");
                 return _previewShape;
+            }
 
-            return CanvasROI.Children
+            var inspectionShapes = CanvasROI.Children
                 .OfType<Shape>()
-                .FirstOrDefault(shape =>
+                .Where(shape =>
                     shape.Tag is RoiModel roi &&
-                    roi.Role == RoiRole.Inspection);
+                    roi.Role == RoiRole.Inspection)
+                .ToList();
+
+            var persisted = inspectionShapes.FirstOrDefault();
+            if (persisted != null)
+            {
+                AppendLog($"[inspect] using persisted inspection shape {BuildShapeLogContext(persisted)}");
+                return persisted;
+            }
+
+            int totalShapes = CanvasROI.Children.OfType<Shape>().Count();
+            AppendLog($"[inspect] no inspection shape found (state={_state}, preview={_previewShape != null}, inspectionCount={inspectionShapes.Count}, totalShapes={totalShapes})");
+            return null;
         }
 
         private void ApplyInspectionRotationToShape(Shape shape, double angle)
@@ -2660,7 +2719,12 @@ namespace BrakeDiscInspector_GUI_ROI
         {
             var inspectionShape = FindInspectionShapeOnCanvas();
             if (inspectionShape == null)
+            {
+                AppendLog($"[rotate] update skip angle={angle:0.##} target=none");
                 return;
+            }
+
+            AppendLog($"[rotate] update target angle={angle:0.##} {BuildShapeLogContext(inspectionShape)}");
 
             ApplyInspectionRotationToShape(inspectionShape, angle);
 
