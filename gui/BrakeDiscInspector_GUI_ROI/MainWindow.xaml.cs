@@ -1754,30 +1754,244 @@ namespace BrakeDiscInspector_GUI_ROI
                     "roi_previews");
                 System.IO.Directory.CreateDirectory(baseDir);
 
-                var r = RoiToRect(roi);
-                using var src = new System.Drawing.Bitmap(_currentImagePathWin);
-                var rectInt = new System.Drawing.Rectangle(
-                    (int)System.Math.Max(0, r.X),
-                    (int)System.Math.Max(0, r.Y),
-                    (int)System.Math.Min(r.Width, src.Width - r.X),
-                    (int)System.Math.Min(r.Height, src.Height - r.Y));
-
-                if (rectInt.Width <= 0 || rectInt.Height <= 0)
+                using var src = Cv2.ImRead(_currentImagePathWin, ImreadModes.Unchanged);
+                if (src.Empty())
                 {
-                    AppendLog("[preview] ROI fuera de límites; no se guarda preview.");
+                    AppendLog("[preview] No se pudo leer la imagen fuente.");
                     return;
                 }
 
-                using var crop = src.Clone(rectInt, src.PixelFormat);
-                string ts = DateTime.Now.ToString("yyyyMMdd_HHmmssfff");
-                string fname = $"{tag}_{ts}.png";
-                crop.Save(System.IO.Path.Combine(baseDir, fname), System.Drawing.Imaging.ImageFormat.Png);
-                AppendLog($"[preview] Guardado {fname} en {baseDir}");
+                if (!TryBuildRoiCropInfo(roi, out var cropInfo))
+                {
+                    AppendLog("[preview] ROI no soportado para recorte.");
+                    return;
+                }
+
+                if (!TryGetRotatedCrop(src, cropInfo.CenterX, cropInfo.CenterY, cropInfo.Width, cropInfo.Height, roi.AngleDeg,
+                    out var cropMat, out var cropRect))
+                {
+                    AppendLog("[preview] No se pudo obtener el recorte rotado.");
+                    return;
+                }
+
+                Mat? alphaMask = null;
+                try
+                {
+                    alphaMask = BuildRoiMask(cropInfo, cropRect);
+                    using var cropWithAlpha = ConvertCropToBgra(cropMat, alphaMask);
+
+                    string ts = DateTime.Now.ToString("yyyyMMdd_HHmmssfff");
+                    string fname = $"{tag}_{ts}.png";
+                    var outPath = System.IO.Path.Combine(baseDir, fname);
+                    Cv2.ImWrite(outPath, cropWithAlpha);
+                    AppendLog($"[preview] Guardado {fname} en {baseDir} (w={cropRect.Width} h={cropRect.Height} ang={roi.AngleDeg:0.##})");
+                }
+                finally
+                {
+                    alphaMask?.Dispose();
+                    cropMat.Dispose();
+                }
             }
             catch (Exception ex)
             {
                 AppendLog("[preview] error: " + ex.Message);
             }
+        }
+
+        private readonly struct RoiCropInfo
+        {
+            public RoiCropInfo(RoiShape shape, double centerX, double centerY, double width, double height, double radius, double innerRadius)
+            {
+                Shape = shape;
+                CenterX = centerX;
+                CenterY = centerY;
+                Width = width;
+                Height = height;
+                Radius = radius;
+                InnerRadius = innerRadius;
+            }
+
+            public RoiShape Shape { get; }
+            public double CenterX { get; }
+            public double CenterY { get; }
+            public double Width { get; }
+            public double Height { get; }
+            public double Radius { get; }
+            public double InnerRadius { get; }
+        }
+
+        private bool TryBuildRoiCropInfo(RoiModel roi, out RoiCropInfo info)
+        {
+            info = default;
+
+            if (roi == null)
+                return false;
+
+            switch (roi.Shape)
+            {
+                case RoiShape.Rectangle:
+                    {
+                        double width = Math.Max(1.0, roi.Width);
+                        double height = Math.Max(1.0, roi.Height);
+                        double centerX = roi.X + width / 2.0;
+                        double centerY = roi.Y + height / 2.0;
+                        info = new RoiCropInfo(roi.Shape, centerX, centerY, width, height, 0, 0);
+                        return true;
+                    }
+                case RoiShape.Circle:
+                case RoiShape.Annulus:
+                    {
+                        double radius = Math.Max(roi.R, 0.5);
+                        double width = roi.Width > 0 ? roi.Width : radius * 2.0;
+                        double height = roi.Height > 0 ? roi.Height : radius * 2.0;
+                        width = Math.Max(width, radius * 2.0);
+                        height = Math.Max(height, radius * 2.0);
+                        double centerX = roi.CX;
+                        double centerY = roi.CY;
+                        double inner = Math.Clamp(roi.RInner, 0, radius);
+                        info = new RoiCropInfo(roi.Shape, centerX, centerY, width, height, radius, inner);
+                        return true;
+                    }
+                default:
+                    return false;
+            }
+        }
+
+        private Mat BuildRoiMask(RoiCropInfo info, OpenCvSharp.Rect cropRect)
+        {
+            int width = Math.Max(1, cropRect.Width);
+            int height = Math.Max(1, cropRect.Height);
+            var mask = new Mat(new OpenCvSharp.Size(width, height), MatType.CV_8UC1, Scalar.All(0));
+
+            switch (info.Shape)
+            {
+                case RoiShape.Rectangle:
+                    mask.SetTo(Scalar.All(255));
+                    break;
+
+                case RoiShape.Circle:
+                case RoiShape.Annulus:
+                    {
+                        mask.SetTo(Scalar.All(0));
+                        var center = new OpenCvSharp.Point(width / 2, height / 2);
+                        double scaleX = width / Math.Max(info.Width, 1.0);
+                        double scaleY = height / Math.Max(info.Height, 1.0);
+                        double scale = Math.Min(scaleX, scaleY);
+                        double baseOuter = info.Radius > 0 ? info.Radius : Math.Min(info.Width, info.Height) / 2.0;
+                        int outerRadius = (int)Math.Round(baseOuter * scale);
+                        int maxRadius = Math.Max(1, Math.Min(width, height) / 2);
+                        outerRadius = Math.Clamp(Math.Max(outerRadius, 1), 1, maxRadius);
+
+                        if (outerRadius <= 0)
+                        {
+                            mask.SetTo(Scalar.All(255));
+                            break;
+                        }
+
+                        Cv2.Circle(mask, center, outerRadius, Scalar.All(255), -1, LineTypes.AntiAlias);
+
+                        if (info.Shape == RoiShape.Annulus)
+                        {
+                            double baseInner = Math.Min(info.InnerRadius, baseOuter);
+                            int innerRadius = (int)Math.Round(baseInner * scale);
+                            innerRadius = Math.Clamp(innerRadius, 0, Math.Max(outerRadius - 1, 0));
+                            if (innerRadius > 0)
+                            {
+                                Cv2.Circle(mask, center, innerRadius, Scalar.All(0), -1, LineTypes.AntiAlias);
+                            }
+                        }
+                        break;
+                    }
+            }
+
+            return mask;
+        }
+
+        private bool TryGetRotatedCrop(Mat source, double centerX, double centerY, double width, double height, double angleDeg,
+            out Mat crop, out OpenCvSharp.Rect cropRect)
+        {
+            crop = new Mat();
+            cropRect = default;
+
+            if (source.Empty())
+                return false;
+
+            width = Math.Max(1.0, width);
+            height = Math.Max(1.0, height);
+
+            var pivot = new Point2f((float)centerX, (float)centerY);
+            using var rotMat = Cv2.GetRotationMatrix2D(pivot, angleDeg, 1.0);
+
+            Point2f Transform(double x, double y)
+            {
+                double newX = rotMat.At<double>(0, 0) * x + rotMat.At<double>(0, 1) * y + rotMat.At<double>(0, 2);
+                double newY = rotMat.At<double>(1, 0) * x + rotMat.At<double>(1, 1) * y + rotMat.At<double>(1, 2);
+                return new Point2f((float)newX, (float)newY);
+            }
+
+            using var rotated = new Mat();
+            Scalar border = source.Channels() == 4 ? new Scalar(0, 0, 0, 0) : Scalar.All(0);
+            Cv2.WarpAffine(source, rotated, rotMat, new OpenCvSharp.Size(source.Width, source.Height),
+                InterpolationFlags.Linear, BorderTypes.Constant, border);
+
+            var rotatedCenter = Transform(centerX, centerY);
+
+            int w = (int)Math.Round(width);
+            int h = (int)Math.Round(height);
+            int x = (int)Math.Round(rotatedCenter.X - width / 2.0);
+            int y = (int)Math.Round(rotatedCenter.Y - height / 2.0);
+
+            if (rotated.Width <= 0 || rotated.Height <= 0)
+                return false;
+
+            x = Math.Clamp(x, 0, rotated.Width - 1);
+            y = Math.Clamp(y, 0, rotated.Height - 1);
+            w = Math.Clamp(w, 1, rotated.Width - x);
+            h = Math.Clamp(h, 1, rotated.Height - y);
+
+            if (w <= 0 || h <= 0)
+                return false;
+
+            cropRect = new OpenCvSharp.Rect(x, y, w, h);
+            crop.Dispose();
+            crop = new Mat(rotated, cropRect).Clone();
+            return true;
+        }
+
+        private Mat ConvertCropToBgra(Mat crop, Mat? alphaMask)
+        {
+            Mat output;
+            if (crop.Channels() == 4)
+            {
+                output = crop.Clone();
+            }
+            else if (crop.Channels() == 3)
+            {
+                output = new Mat();
+                Cv2.CvtColor(crop, output, ColorConversionCodes.BGR2BGRA);
+            }
+            else
+            {
+                output = new Mat();
+                Cv2.CvtColor(crop, output, ColorConversionCodes.GRAY2BGRA);
+            }
+
+            if (alphaMask != null)
+            {
+                using var alphaChannel = output.ExtractChannel(3);
+                if (alphaMask.Rows == output.Rows && alphaMask.Cols == output.Cols)
+                {
+                    alphaMask.CopyTo(alphaChannel);
+                }
+                else
+                {
+                    using var resized = new Mat();
+                    Cv2.Resize(alphaMask, resized, new OpenCvSharp.Size(output.Cols, output.Rows), 0, 0, InterpolationFlags.Nearest);
+                    resized.CopyTo(alphaChannel);
+                }
+            }
+
+            return output;
         }
 
         // === 1) Snapshot de configuración y paths ===
@@ -2258,33 +2472,16 @@ namespace BrakeDiscInspector_GUI_ROI
         private Mat GetRotatedCrop(Mat bgr)
         {
             CurrentRoi.EnforceMinSize(10, 10);
+            var info = new RoiCropInfo(RoiShape.Rectangle, CurrentRoi.X, CurrentRoi.Y,
+                Math.Max(1.0, CurrentRoi.Width), Math.Max(1.0, CurrentRoi.Height), 0, 0);
 
-            var pivot = new Point2f((float)CurrentRoi.X, (float)CurrentRoi.Y);
-
-            using var rotMat = Cv2.GetRotationMatrix2D(pivot, CurrentRoi.AngleDeg, 1.0);
-
-            Point2f TransformPoint(double x, double y)
+            if (TryGetRotatedCrop(bgr, info.CenterX, info.CenterY, info.Width, info.Height, CurrentRoi.AngleDeg,
+                out var crop, out _))
             {
-                double newX = rotMat.At<double>(0, 0) * x + rotMat.At<double>(0, 1) * y + rotMat.At<double>(0, 2);
-                double newY = rotMat.At<double>(1, 0) * x + rotMat.At<double>(1, 1) * y + rotMat.At<double>(1, 2);
-                return new Point2f((float)newX, (float)newY);
+                return crop;
             }
 
-            double halfW = CurrentRoi.Width / 2.0;
-            double halfH = CurrentRoi.Height / 2.0;
-            var rotatedCenter = TransformPoint(CurrentRoi.X, CurrentRoi.Y);
-
-            Mat rotated = new Mat();
-            Cv2.WarpAffine(bgr, rotated, rotMat, new OpenCvSharp.Size(bgr.Width, bgr.Height), InterpolationFlags.Linear, BorderTypes.Constant, new Scalar(0, 0, 0));
-
-            int x = (int)Math.Round(rotatedCenter.X - halfW);
-            int y = (int)Math.Round(rotatedCenter.Y - halfH);
-            x = Math.Max(0, Math.Min(x, rotated.Width - 1));
-            y = Math.Max(0, Math.Min(y, rotated.Height - 1));
-            int w = (int)Math.Max(10, Math.Min(CurrentRoi.Width, rotated.Width - x));
-            int h = (int)Math.Max(10, Math.Min(CurrentRoi.Height, rotated.Height - y));
-
-            return new Mat(rotated, new OpenCvSharp.Rect(x, y, w, h));
+            return new Mat();
         }
 
         // using necesarios (asegúrate de tenerlos al inicio del archivo)
