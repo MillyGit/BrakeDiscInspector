@@ -11,15 +11,22 @@ using System.Windows.Shapes;
 
 namespace BrakeDiscInspector_GUI_ROI
 {
+    public enum RoiAdornerChangeKind
+    {
+        DragStarted,
+        Delta,
+        DragCompleted
+    }
+
     /// Adorner de edición para el Shape de preview:
     /// - Permite mover (Thumb central transparente).
     /// - Permite redimensionar (Thumbs en esquinas/lados) para Rect y Circle/Annulus.
     /// - Incluye rotación con el thumb NE.
-    /// callback: onChanged(shapeUpdated, modelUpdated)
+    /// callback: onChanged(changeKind, modelUpdated)
     public class RoiAdorner : Adorner
     {
         private readonly Shape _shape;
-        private readonly Action<bool, RoiModel> _onChanged;
+        private readonly Action<RoiAdornerChangeKind, RoiModel> _onChanged;
         private readonly Action<string> _log;
 
         // Thumbs
@@ -34,7 +41,7 @@ namespace BrakeDiscInspector_GUI_ROI
         private Point _rotationPivot;
         private double _rotationPointerAngleAtDragStartDeg;
 
-        public RoiAdorner(UIElement adornedElement, Action<bool, RoiModel> onChanged, Action<string> log)
+        public RoiAdorner(UIElement adornedElement, Action<RoiAdornerChangeKind, RoiModel> onChanged, Action<string> log)
             : base(adornedElement)
         {
             _shape = adornedElement as Shape ?? throw new ArgumentException("RoiAdorner requiere Shape.", nameof(adornedElement));
@@ -65,20 +72,41 @@ namespace BrakeDiscInspector_GUI_ROI
             }
 
             // Eventos
+            _moveThumb.DragStarted += OnThumbDragStarted;
             _moveThumb.DragDelta += MoveThumb_DragDelta;
+            _moveThumb.DragCompleted += OnThumbDragCompleted;
 
+            _corners[0].DragStarted += OnThumbDragStarted;
             _corners[0].DragDelta += (s, e) => ResizeByCorner(e.HorizontalChange, e.VerticalChange, Corner.NW);
+            _corners[0].DragCompleted += OnThumbDragCompleted;
+
+            _corners[2].DragStarted += OnThumbDragStarted;
             _corners[2].DragDelta += (s, e) => ResizeByCorner(e.HorizontalChange, e.VerticalChange, Corner.SE);
+            _corners[2].DragCompleted += OnThumbDragCompleted;
+
+            _corners[3].DragStarted += OnThumbDragStarted;
             _corners[3].DragDelta += (s, e) => ResizeByCorner(e.HorizontalChange, e.VerticalChange, Corner.SW);
+            _corners[3].DragCompleted += OnThumbDragCompleted;
 
             _rotationThumb.DragStarted += RotationThumb_DragStarted;
             _rotationThumb.DragDelta += RotationThumb_DragDelta;
             _rotationThumb.DragCompleted += RotationThumb_DragCompleted;
 
+            _edges[0].DragStarted += OnThumbDragStarted;
             _edges[0].DragDelta += (s, e) => ResizeByEdge(e.HorizontalChange, e.VerticalChange, Edge.N); // N
+            _edges[0].DragCompleted += OnThumbDragCompleted;
+
+            _edges[1].DragStarted += OnThumbDragStarted;
             _edges[1].DragDelta += (s, e) => ResizeByEdge(e.HorizontalChange, e.VerticalChange, Edge.E); // E
+            _edges[1].DragCompleted += OnThumbDragCompleted;
+
+            _edges[2].DragStarted += OnThumbDragStarted;
             _edges[2].DragDelta += (s, e) => ResizeByEdge(e.HorizontalChange, e.VerticalChange, Edge.S); // S
+            _edges[2].DragCompleted += OnThumbDragCompleted;
+
+            _edges[3].DragStarted += OnThumbDragStarted;
             _edges[3].DragDelta += (s, e) => ResizeByEdge(e.HorizontalChange, e.VerticalChange, Edge.W); // W
+            _edges[3].DragCompleted += OnThumbDragCompleted;
 
             AddVisualChild(_moveThumb);
             foreach (var t in _corners) AddVisualChild(t);
@@ -164,7 +192,25 @@ namespace BrakeDiscInspector_GUI_ROI
             SyncModelFromShape(_shape, roi);
             InvalidateArrange(); // recoloca thumbs
 
-            _onChanged(true, roi);
+            _onChanged(RoiAdornerChangeKind.Delta, roi);
+        }
+
+        private void OnThumbDragStarted(object? sender, DragStartedEventArgs e)
+        {
+            if (_shape.Tag is RoiModel roi)
+            {
+                SyncModelFromShape(_shape, roi);
+                _onChanged(RoiAdornerChangeKind.DragStarted, roi);
+            }
+        }
+
+        private void OnThumbDragCompleted(object? sender, DragCompletedEventArgs e)
+        {
+            if (_shape.Tag is RoiModel roi)
+            {
+                SyncModelFromShape(_shape, roi);
+                _onChanged(RoiAdornerChangeKind.DragCompleted, roi);
+            }
         }
 
         private enum Corner { NW, NE, SE, SW }
@@ -300,6 +346,8 @@ namespace BrakeDiscInspector_GUI_ROI
             _rotationThumb.IsHitTestVisible = true;
 
             _log($"[rotate] start roi={roi.Id} angle={_rotationAngleAtDragStart:0.##} pivot=({_rotationPivot.X:0.##},{_rotationPivot.Y:0.##}) pointerAngle={_rotationPointerAngleAtDragStartDeg:0.##}");
+
+            _onChanged(RoiAdornerChangeKind.DragStarted, roi);
         }
 
         private void RotationThumb_DragDelta(object sender, DragDeltaEventArgs e)
@@ -317,7 +365,7 @@ namespace BrakeDiscInspector_GUI_ROI
             double newAngle = NormalizeAngle(_rotationAngleAtDragStart + _rotationAccumulatedAngle);
             ApplyRotation(newAngle, roi);
 
-            _onChanged(true, roi);
+            _onChanged(RoiAdornerChangeKind.Delta, roi);
 
             _log($"[rotate] delta roi={roi.Id} pointer=({pointerPosition.X:0.##},{pointerPosition.Y:0.##}) pointerAngle={pointerAngleDeg:0.##} delta={angleDeltaDeg:0.##} angle={newAngle:0.##}");
         }
@@ -336,7 +384,7 @@ namespace BrakeDiscInspector_GUI_ROI
             {
                 double finalAngle = NormalizeAngle(GetCurrentAngle());
                 ApplyRotation(finalAngle, roi);
-                _onChanged(true, roi);
+                _onChanged(RoiAdornerChangeKind.DragCompleted, roi);
 
                 _log($"[rotate] end roi={roi.Id} angle={finalAngle:0.##}");
             }
@@ -553,7 +601,7 @@ namespace BrakeDiscInspector_GUI_ROI
             SyncModelFromShape(_shape, roi);
             InvalidateArrange();
 
-            _onChanged(true, roi);
+            _onChanged(RoiAdornerChangeKind.Delta, roi);
         }
 
         private void UpdateRotationCenterIfNeeded()
