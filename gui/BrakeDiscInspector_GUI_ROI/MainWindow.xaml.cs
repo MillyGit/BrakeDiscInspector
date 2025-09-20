@@ -1326,6 +1326,23 @@ namespace BrakeDiscInspector_GUI_ROI
             var w = shape.Width;
             var h = shape.Height;
 
+            double? renderAngle = null;
+            if (shape.RenderTransform is RotateTransform rotateTransform)
+            {
+                renderAngle = rotateTransform.Angle;
+            }
+            else if (shape.RenderTransform is TransformGroup transformGroup)
+            {
+                var rotate = transformGroup.Children.OfType<RotateTransform>().FirstOrDefault();
+                if (rotate != null)
+                    renderAngle = rotate.Angle;
+            }
+
+            if (renderAngle.HasValue)
+            {
+                roiCanvas.AngleDeg = renderAngle.Value;
+            }
+
             if (shape is System.Windows.Shapes.Rectangle)
             {
                 roiCanvas.Shape = RoiShape.Rectangle;
