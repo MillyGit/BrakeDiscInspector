@@ -15,6 +15,7 @@ namespace BrakeDiscInspector_GUI_ROI
         private readonly Func<Point> getHandle;
         private readonly Func<double> getBaselineAngle;
         private readonly Action<double> onAngleChanged;
+        private readonly Action<string>? log;
         private bool dragging = false;
 
         public double AngleDeg { get; private set; }
@@ -25,13 +26,15 @@ namespace BrakeDiscInspector_GUI_ROI
             Func<Point> getHandle,
             Func<double> getBaselineAngle,
             Action<double> onAngleChanged,
-            double initialAngle)
+            double initialAngle,
+            Action<string>? logger = null)
             : base(adornedElement)
         {
             this.getPivot = getPivot ?? throw new ArgumentNullException(nameof(getPivot));
             this.getHandle = getHandle ?? throw new ArgumentNullException(nameof(getHandle));
             this.getBaselineAngle = getBaselineAngle ?? throw new ArgumentNullException(nameof(getBaselineAngle));
             this.onAngleChanged = onAngleChanged;
+            log = logger;
             AngleDeg = initialAngle;
             IsHitTestVisible = true;
         }
@@ -50,6 +53,9 @@ namespace BrakeDiscInspector_GUI_ROI
             {
                 dragging = true;
                 CaptureMouse();
+                var pivot = getPivot();
+                var handle = getHandle();
+                log?.Invoke($"[rotate] mouse-down pivot=({pivot.X:0.##},{pivot.Y:0.##}) handle=({handle.X:0.##},{handle.Y:0.##}) pointer=({p.X:0.##},{p.Y:0.##}) angle={AngleDeg:0.##}");
                 e.Handled = true;
             }
             base.OnMouseDown(e);
@@ -61,6 +67,7 @@ namespace BrakeDiscInspector_GUI_ROI
             {
                 var p = e.GetPosition(this);
                 var pivot = getPivot();
+                var handle = getHandle();
                 double dx = p.X - pivot.X;
                 double dy = p.Y - pivot.Y;
 
@@ -73,6 +80,10 @@ namespace BrakeDiscInspector_GUI_ROI
                 double pointerAngle = Math.Atan2(dy, dx);
                 double baseAngle = getBaselineAngle();
                 double angleDeg = NormalizeAngle((pointerAngle - baseAngle) * 180.0 / Math.PI);
+
+                double pointerAngleDeg = pointerAngle * 180.0 / Math.PI;
+                double baseAngleDeg = baseAngle * 180.0 / Math.PI;
+                log?.Invoke($"[rotate] drag pivot=({pivot.X:0.##},{pivot.Y:0.##}) handle=({handle.X:0.##},{handle.Y:0.##}) pointer=({p.X:0.##},{p.Y:0.##}) pointerDeg={pointerAngleDeg:0.##} baseDeg={baseAngleDeg:0.##} resultDeg={angleDeg:0.##}");
 
                 AngleDeg = angleDeg;                  // tiempo real
                 onAngleChanged?.Invoke(AngleDeg);      // callback
@@ -88,6 +99,10 @@ namespace BrakeDiscInspector_GUI_ROI
             {
                 dragging = false;
                 ReleaseMouseCapture();
+                var pivot = getPivot();
+                var handle = getHandle();
+                var pointer = e.GetPosition(this);
+                log?.Invoke($"[rotate] mouse-up pivot=({pivot.X:0.##},{pivot.Y:0.##}) handle=({handle.X:0.##},{handle.Y:0.##}) pointer=({pointer.X:0.##},{pointer.Y:0.##}) finalDeg={AngleDeg:0.##}");
                 e.Handled = true;
             }
             base.OnMouseUp(e);

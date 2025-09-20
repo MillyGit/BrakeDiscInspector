@@ -1785,8 +1785,15 @@ namespace BrakeDiscInspector_GUI_ROI
             {
                 if (roi == null) return;
                 var shape = CreateLayoutShape(roi);
-                if (shape == null) return;
+                if (shape == null)
+                {
+                    AppendLog($"[overlay] build failed for {roi.Role} ({roi.Label})");
+                    return;
+                }
                 CanvasROI.Children.Add(shape);
+                double left = Canvas.GetLeft(shape); if (double.IsNaN(left)) left = 0;
+                double top = Canvas.GetTop(shape); if (double.IsNaN(top)) top = 0;
+                AppendLog($"[overlay] add role={roi.Role} bounds=({left:0.##},{top:0.##},{shape.Width:0.##},{shape.Height:0.##}) angle={roi.AngleDeg:0.##}");
                 if (roi.Role == RoiRole.Inspection)
                 {
                     ApplyInspectionRotationToShape(shape, roi.AngleDeg);
@@ -1842,6 +1849,10 @@ namespace BrakeDiscInspector_GUI_ROI
 
             shape.Tag = canvasRoi;
             Panel.SetZIndex(shape, style.zIndex);
+
+            double left = Canvas.GetLeft(shape); if (double.IsNaN(left)) left = 0;
+            double top = Canvas.GetTop(shape); if (double.IsNaN(top)) top = 0;
+            AppendLog($"[overlay] build role={roi.Role} shape={canvasRoi.Shape} bounds=({left:0.##},{top:0.##},{shape.Width:0.##},{shape.Height:0.##}) angle={canvasRoi.AngleDeg:0.##}");
 
             if (roi.Role == RoiRole.Inspection)
             {
@@ -2019,7 +2030,8 @@ namespace BrakeDiscInspector_GUI_ROI
                     }
                     CanvasROI.InvalidateVisual();
                 },
-                CurrentRoi.AngleDeg
+                CurrentRoi.AngleDeg,
+                AppendLog
             );
             layer.Add(_rotateAdorner);
         }
@@ -2205,6 +2217,10 @@ namespace BrakeDiscInspector_GUI_ROI
 
             System.Windows.Point CornerProvider() => GetCurrentRoiCornerOnCanvas(RoiCorner.TopRight);
 
+            var pivotAtSetup = CornerProvider();
+            double baselineDeg = GetCurrentRoiCornerBaselineAngle() * 180.0 / Math.PI;
+            AppendLog($"[rotate] setup pivot=({pivotAtSetup.X:0.##},{pivotAtSetup.Y:0.##}) handle=({pivotAtSetup.X:0.##},{pivotAtSetup.Y:0.##}) baselineDeg={baselineDeg:0.##} currentDeg={CurrentRoi.AngleDeg:0.##}");
+
             _rotateAdorner = new RoiRotateAdorner(
                 CanvasROI,
                 CornerProvider,
@@ -2212,6 +2228,8 @@ namespace BrakeDiscInspector_GUI_ROI
                 GetCurrentRoiCornerBaselineAngle,
                 angle =>
                 {
+                    var pivot = GetCurrentRoiCornerOnCanvas(RoiCorner.TopRight);
+                    AppendLog($"[rotate] callback angle={angle:0.##} pivot=({pivot.X:0.##},{pivot.Y:0.##}) handle=({pivot.X:0.##},{pivot.Y:0.##})");
                     CurrentRoi.AngleDeg = angle;   // rotación en tiempo real
                     UpdateInspectionShapeRotation(angle);
                     if (_layout?.Inspection != null)
@@ -2219,7 +2237,8 @@ namespace BrakeDiscInspector_GUI_ROI
                         _layout.Inspection.AngleDeg = angle;
                     }
                 },
-                CurrentRoi.AngleDeg
+                CurrentRoi.AngleDeg,
+                AppendLog
             );
 
             layer.Add(_rotateAdorner);
@@ -2250,7 +2269,10 @@ namespace BrakeDiscInspector_GUI_ROI
             double height = !double.IsNaN(shape.Height) && shape.Height > 0 ? shape.Height : roiModel.Height;
 
             if (width <= 0 || height <= 0)
+            {
+                AppendLog($"[rotate] skip apply {roiModel.Role} width={width:0.##} height={height:0.##} angle={angle:0.##}");
                 return;
+            }
 
             double pivotLocalX;
             double pivotLocalY;
@@ -2269,6 +2291,11 @@ namespace BrakeDiscInspector_GUI_ROI
                     break;
             }
 
+            double left = Canvas.GetLeft(shape); if (double.IsNaN(left)) left = 0;
+            double top = Canvas.GetTop(shape); if (double.IsNaN(top)) top = 0;
+            double pivotCanvasX = left + pivotLocalX;
+            double pivotCanvasY = top + pivotLocalY;
+
             if (shape.RenderTransform is RotateTransform rotate)
             {
                 rotate.Angle = angle;
@@ -2279,6 +2306,8 @@ namespace BrakeDiscInspector_GUI_ROI
             {
                 shape.RenderTransform = new RotateTransform(angle, pivotLocalX, pivotLocalY);
             }
+
+            AppendLog($"[rotate] apply role={roiModel.Role} shape={roiModel.Shape} pivotLocal=({pivotLocalX:0.##},{pivotLocalY:0.##}) pivotCanvas=({pivotCanvasX:0.##},{pivotCanvasY:0.##}) angle={angle:0.##}");
         }
 
         private void UpdateInspectionShapeRotation(double angle)
