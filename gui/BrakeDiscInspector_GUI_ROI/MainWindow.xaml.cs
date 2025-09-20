@@ -1680,7 +1680,8 @@ namespace BrakeDiscInspector_GUI_ROI
                 ["cx"] = roi.CX,
                 ["cy"] = roi.CY,
                 ["r"] = roi.R,
-                ["ri"] = roi.RInner
+                ["ri"] = roi.RInner,
+                ["angle_deg"] = roi.AngleDeg
             };
             return System.Text.Json.JsonSerializer.Serialize(obj);
         }

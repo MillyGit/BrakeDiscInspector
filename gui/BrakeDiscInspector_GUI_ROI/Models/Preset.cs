@@ -1,5 +1,6 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
+using System.Text.Json.Serialization;
 
 namespace BrakeDiscInspector_GUI_ROI
 {
@@ -21,7 +22,21 @@ namespace BrakeDiscInspector_GUI_ROI
         public RoiShape Shape { get; set; } = RoiShape.Rectangle;
         public RoiRole Role { get; set; } = RoiRole.Inspection;
 
+        [JsonPropertyName("AngleDeg")]
         public double AngleDeg { get; set; } = 0.0;
+
+        // Permite deserializar tanto AngleDeg como angle_deg (snake_case) sin duplicar la escritura.
+        [JsonPropertyName("angle_deg")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public double? AngleDegSerialized
+        {
+            get => null;
+            set
+            {
+                if (value.HasValue)
+                    AngleDeg = value.Value;
+            }
+        }
 
         // Rectángulo
         public double X { get; set; }
