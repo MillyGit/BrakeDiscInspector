@@ -165,6 +165,32 @@ namespace BrakeDiscInspector_GUI_ROI
             BtnAnalyzeMaster.IsEnabled = mastersReady;
         }
 
+        private RoiModel? GetCurrentStatePersistedRoi()
+        {
+            return _state switch
+            {
+                MasterState.DrawM1_Pattern => _layout.Master1Pattern,
+                MasterState.DrawM1_Search => _layout.Master1Search,
+                MasterState.DrawM2_Pattern => _layout.Master2Pattern,
+                MasterState.DrawM2_Search => _layout.Master2Search,
+                MasterState.DrawInspection or MasterState.Ready => _layout.Inspection,
+                _ => null
+            };
+        }
+
+        private RoiRole? GetCurrentStateRole()
+        {
+            return _state switch
+            {
+                MasterState.DrawM1_Pattern => RoiRole.Master1Pattern,
+                MasterState.DrawM1_Search => RoiRole.Master1Search,
+                MasterState.DrawM2_Pattern => RoiRole.Master2Pattern,
+                MasterState.DrawM2_Search => RoiRole.Master2Search,
+                MasterState.DrawInspection or MasterState.Ready => RoiRole.Inspection,
+                _ => null
+            };
+        }
+
 
         // ====== Imagen ======
         private void BtnLoadImage_Click(object sender, RoutedEventArgs e)
@@ -697,6 +723,15 @@ namespace BrakeDiscInspector_GUI_ROI
         // ====== Guardar pasos del wizard ======
         private void BtnSaveMaster_Click(object sender, RoutedEventArgs e)
         {
+            if (_tmpBuffer is null)
+            {
+                var persisted = GetCurrentStatePersistedRoi();
+                if (persisted != null)
+                {
+                    _tmpBuffer = persisted.Clone();
+                }
+            }
+
             if (_tmpBuffer is null) { Snack("Dibuja un ROI válido antes de guardar"); return; }
 
             switch (_state)
@@ -1325,24 +1360,32 @@ namespace BrakeDiscInspector_GUI_ROI
 
         private void UpdateLayoutFromPixel(RoiModel roiPixel)
         {
+            var clone = roiPixel.Clone();
+
             switch (roiPixel.Role)
             {
                 case RoiRole.Master1Pattern:
-                    _layout.Master1Pattern = roiPixel.Clone();
+                    _layout.Master1Pattern = clone;
                     break;
                 case RoiRole.Master1Search:
-                    _layout.Master1Search = roiPixel.Clone();
+                    _layout.Master1Search = clone;
                     break;
                 case RoiRole.Master2Pattern:
-                    _layout.Master2Pattern = roiPixel.Clone();
+                    _layout.Master2Pattern = clone;
                     break;
                 case RoiRole.Master2Search:
-                    _layout.Master2Search = roiPixel.Clone();
+                    _layout.Master2Search = clone;
                     break;
                 case RoiRole.Inspection:
-                    _layout.Inspection = roiPixel.Clone();
-                    SyncCurrentRoiFromInspection(roiPixel);
+                    _layout.Inspection = clone;
+                    SyncCurrentRoiFromInspection(clone);
                     break;
+            }
+
+            var currentRole = GetCurrentStateRole();
+            if (currentRole.HasValue && roiPixel.Role == currentRole.Value)
+            {
+                _tmpBuffer = clone.Clone();
             }
         }
 
