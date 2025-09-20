@@ -1,4 +1,4 @@
-﻿// ROI/RoiAdorner.cs  (ADORNER DE EDICIÓN / PREVIEW, NO DE ROTACIÓN)
+﻿// ROI/RoiAdorner.cs  (ADORNER DE EDICIÓN / PREVIEW, CON ROTACIÓN BÁSICA)
 using System;
 using System.Linq;
 using System.Windows;
@@ -14,7 +14,7 @@ namespace BrakeDiscInspector_GUI_ROI
     /// Adorner de edición para el Shape de preview:
     /// - Permite mover (Thumb central transparente).
     /// - Permite redimensionar (Thumbs en esquinas/lados) para Rect y Circle/Annulus.
-    /// - Sin rotación (la rotación es RoiRotateAdorner).
+    /// - Incluye rotación con el thumb NE.
     /// callback: onChanged(shapeUpdated, modelUpdated)
     public class RoiAdorner : Adorner
     {
@@ -24,8 +24,13 @@ namespace BrakeDiscInspector_GUI_ROI
 
         // Thumbs
         private readonly Thumb _moveThumb = new Thumb();
-        private readonly Thumb[] _corners = new Thumb[4]; // NW, NE, SE, SW
+        private readonly Thumb[] _corners = new Thumb[4]; // NW, NE (rot), SE, SW
         private readonly Thumb[] _edges = new Thumb[4];   // N, E, S, W
+        private readonly Thumb _rotationThumb;
+
+        private bool _isRotating;
+        private double _rotationAngleAtDragStart;
+        private double _rotationAccumulatedAngle;
 
         public RoiAdorner(UIElement adornedElement, Action<bool, RoiModel> onChanged, Action<string> log)
             : base(adornedElement)
@@ -43,8 +48,14 @@ namespace BrakeDiscInspector_GUI_ROI
             for (int i = 0; i < 4; i++)
             {
                 _corners[i] = new Thumb();
-                StyleThumb(_corners[i], 8, 8, 8, 8, Cursors.SizeAll);
             }
+
+            StyleThumb(_corners[0], 8, 8, 8, 8, Cursors.SizeAll);
+            StyleThumb(_corners[2], 8, 8, 8, 8, Cursors.SizeAll);
+            StyleThumb(_corners[3], 8, 8, 8, 8, Cursors.SizeAll);
+
+            _rotationThumb = _corners[1];
+            StyleRotationThumb(_rotationThumb);
             for (int i = 0; i < 4; i++)
             {
                 _edges[i] = new Thumb();
@@ -55,9 +66,12 @@ namespace BrakeDiscInspector_GUI_ROI
             _moveThumb.DragDelta += MoveThumb_DragDelta;
 
             _corners[0].DragDelta += (s, e) => ResizeByCorner(-e.HorizontalChange, -e.VerticalChange, Corner.NW);
-            _corners[1].DragDelta += (s, e) => ResizeByCorner(+e.HorizontalChange, -e.VerticalChange, Corner.NE);
             _corners[2].DragDelta += (s, e) => ResizeByCorner(+e.HorizontalChange, +e.VerticalChange, Corner.SE);
             _corners[3].DragDelta += (s, e) => ResizeByCorner(-e.HorizontalChange, +e.VerticalChange, Corner.SW);
+
+            _rotationThumb.DragStarted += RotationThumb_DragStarted;
+            _rotationThumb.DragDelta += RotationThumb_DragDelta;
+            _rotationThumb.DragCompleted += RotationThumb_DragCompleted;
 
             _edges[0].DragDelta += (s, e) => ResizeByEdge(0, -e.VerticalChange, Edge.N); // N
             _edges[1].DragDelta += (s, e) => ResizeByEdge(+e.HorizontalChange, 0, Edge.E); // E
@@ -181,6 +195,7 @@ namespace BrakeDiscInspector_GUI_ROI
             _shape.Width = w;
             _shape.Height = h;
 
+            UpdateRotationCenterIfNeeded();
             SyncModelFromShape(_shape, roi);
             InvalidateArrange();
 
@@ -213,10 +228,68 @@ namespace BrakeDiscInspector_GUI_ROI
             _shape.Width = w;
             _shape.Height = h;
 
+            UpdateRotationCenterIfNeeded();
             SyncModelFromShape(_shape, roi);
             InvalidateArrange();
 
             _onChanged(true, roi);
+        }
+
+        // === Rotación ===
+        private void RotationThumb_DragStarted(object sender, DragStartedEventArgs e)
+        {
+            if (_shape.Tag is not RoiModel roi)
+            {
+                _isRotating = false;
+                return;
+            }
+
+            _isRotating = true;
+            _rotationAngleAtDragStart = NormalizeAngle(GetCurrentAngle());
+            _rotationAccumulatedAngle = 0;
+
+            SetNonRotationThumbsEnabled(false);
+            _rotationThumb.IsHitTestVisible = true;
+
+            _log($"[adorner] rotate start roi={roi.Id} angle={_rotationAngleAtDragStart:0.##}");
+        }
+
+        private void RotationThumb_DragDelta(object sender, DragDeltaEventArgs e)
+        {
+            if (!_isRotating || _shape.Tag is not RoiModel roi)
+                return;
+
+            double radius = GetRotationRadius();
+            if (radius <= 1e-3)
+                radius = 1;
+
+            double angleDeltaDeg = (-e.VerticalChange / radius) * 180.0 / Math.PI;
+            _rotationAccumulatedAngle += angleDeltaDeg;
+
+            double newAngle = NormalizeAngle(_rotationAngleAtDragStart + _rotationAccumulatedAngle);
+            ApplyRotation(newAngle, roi);
+
+            _onChanged(true, roi);
+        }
+
+        private void RotationThumb_DragCompleted(object sender, DragCompletedEventArgs e)
+        {
+            SetNonRotationThumbsEnabled(true);
+
+            if (!_isRotating)
+                return;
+
+            _isRotating = false;
+            _rotationAccumulatedAngle = 0;
+
+            if (_shape.Tag is RoiModel roi)
+            {
+                double finalAngle = NormalizeAngle(GetCurrentAngle());
+                ApplyRotation(finalAngle, roi);
+                _onChanged(true, roi);
+
+                _log($"[adorner] rotate end roi={roi.Id} angle={finalAngle:0.##}");
+            }
         }
 
         // === Utilidades ===
@@ -232,6 +305,151 @@ namespace BrakeDiscInspector_GUI_ROI
             t.BorderThickness = new Thickness(1);
             t.Opacity = (w == 0 && h == 0) ? 0.0 : 0.8; // moveThumb transparente
             t.Margin = new Thickness(mL, mT, mR, mB);
+        }
+
+        private static void StyleRotationThumb(Thumb thumb)
+        {
+            thumb.Cursor = Cursors.Hand;
+            thumb.Width = 14;
+            thumb.Height = 14;
+            thumb.MinWidth = 14;
+            thumb.MinHeight = 14;
+            thumb.Background = Brushes.Transparent;
+            thumb.BorderBrush = Brushes.Transparent;
+            thumb.BorderThickness = new Thickness(0);
+            thumb.Opacity = 1.0;
+            thumb.Margin = new Thickness(0);
+            thumb.Template = CreateCircularThumbTemplate(Brushes.White, Brushes.SteelBlue, 1.5);
+        }
+
+        private static ControlTemplate CreateCircularThumbTemplate(Brush fill, Brush stroke, double thickness)
+        {
+            var template = new ControlTemplate(typeof(Thumb));
+            var ellipseFactory = new FrameworkElementFactory(typeof(Ellipse));
+            ellipseFactory.SetValue(Shape.FillProperty, fill);
+            ellipseFactory.SetValue(Shape.StrokeProperty, stroke);
+            ellipseFactory.SetValue(Shape.StrokeThicknessProperty, thickness);
+            template.VisualTree = ellipseFactory;
+            return template;
+        }
+
+        private void SetNonRotationThumbsEnabled(bool enabled)
+        {
+            _moveThumb.IsHitTestVisible = enabled;
+            foreach (var thumb in _corners)
+            {
+                if (thumb == _rotationThumb)
+                    continue;
+                thumb.IsHitTestVisible = enabled;
+            }
+
+            foreach (var thumb in _edges)
+                thumb.IsHitTestVisible = enabled;
+        }
+
+        private void ApplyRotation(double angleDeg, RoiModel roi)
+        {
+            var (width, height) = GetShapeSize();
+            double centerX = width / 2.0;
+            double centerY = height / 2.0;
+
+            if (_shape.RenderTransform is RotateTransform rotate)
+            {
+                rotate.Angle = angleDeg;
+                rotate.CenterX = centerX;
+                rotate.CenterY = centerY;
+            }
+            else
+            {
+                _shape.RenderTransform = new RotateTransform(angleDeg, centerX, centerY);
+            }
+
+            roi.AngleDeg = angleDeg;
+        }
+
+        private double GetCurrentAngle()
+        {
+            if (_shape.RenderTransform is RotateTransform rotate)
+                return rotate.Angle;
+
+            if (_shape.Tag is RoiModel roi)
+                return roi.AngleDeg;
+
+            return 0.0;
+        }
+
+        private (double width, double height) GetShapeSize()
+        {
+            double width = _shape.Width;
+            if (double.IsNaN(width) || width <= 0)
+                width = _shape.RenderSize.Width;
+            if (double.IsNaN(width) || width <= 0)
+                width = _shape.DesiredSize.Width;
+
+            if ((double.IsNaN(width) || width <= 0) && _shape.Tag is RoiModel roi)
+            {
+                width = roi.Shape switch
+                {
+                    RoiShape.Rectangle => roi.Width,
+                    RoiShape.Circle or RoiShape.Annulus => roi.R > 0 ? roi.R * 2.0 : roi.Width,
+                    _ => width
+                };
+            }
+
+            double height = _shape.Height;
+            if (double.IsNaN(height) || height <= 0)
+                height = _shape.RenderSize.Height;
+            if (double.IsNaN(height) || height <= 0)
+                height = _shape.DesiredSize.Height;
+
+            if ((double.IsNaN(height) || height <= 0) && _shape.Tag is RoiModel roiModel)
+            {
+                height = roiModel.Shape switch
+                {
+                    RoiShape.Rectangle => roiModel.Height,
+                    RoiShape.Circle or RoiShape.Annulus => roiModel.R > 0 ? roiModel.R * 2.0 : roiModel.Height,
+                    _ => height
+                };
+            }
+
+            if (double.IsNaN(width) || width <= 0) width = 1;
+            if (double.IsNaN(height) || height <= 0) height = 1;
+
+            return (width, height);
+        }
+
+        private double GetRotationRadius()
+        {
+            var (width, height) = GetShapeSize();
+            double centerX = width / 2.0;
+            double centerY = height / 2.0;
+            double handleX = width;
+            double handleY = 0;
+
+            double dx = handleX - centerX;
+            double dy = handleY - centerY;
+
+            return Math.Sqrt(dx * dx + dy * dy);
+        }
+
+        private static double NormalizeAngle(double angleDeg)
+        {
+            angleDeg %= 360.0;
+            if (angleDeg <= -180.0)
+                angleDeg += 360.0;
+            else if (angleDeg > 180.0)
+                angleDeg -= 360.0;
+            return angleDeg;
+        }
+
+        private void UpdateRotationCenterIfNeeded()
+        {
+            if (_shape.RenderTransform is not RotateTransform rotate)
+                return;
+
+            var (width, height) = GetShapeSize();
+            rotate.CenterX = width / 2.0;
+            rotate.CenterY = height / 2.0;
         }
 
         private void SyncModelFromShape(Shape shape, RoiModel roi)
