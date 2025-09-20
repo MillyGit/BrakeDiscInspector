@@ -2005,8 +2005,7 @@ namespace BrakeDiscInspector_GUI_ROI
         {
             CurrentRoi.EnforceMinSize(10, 10);
 
-            var (cornerX, cornerY) = GetCurrentRoiCornerImage(RoiCorner.TopRight);
-            var pivot = new Point2f((float)cornerX, (float)cornerY);
+            var pivot = new Point2f((float)CurrentRoi.X, (float)CurrentRoi.Y);
 
             using var rotMat = Cv2.GetRotationMatrix2D(pivot, CurrentRoi.AngleDeg, 1.0);
 
@@ -2167,22 +2166,8 @@ namespace BrakeDiscInspector_GUI_ROI
                 return;
             }
 
-            double pivotLocalX;
-            double pivotLocalY;
-
-            switch (roiModel.Shape)
-            {
-                case RoiShape.Rectangle:
-                case RoiShape.Circle:
-                case RoiShape.Annulus:
-                    pivotLocalX = width;
-                    pivotLocalY = 0;
-                    break;
-                default:
-                    pivotLocalX = width / 2.0;
-                    pivotLocalY = height / 2.0;
-                    break;
-            }
+            double pivotLocalX = width / 2.0;
+            double pivotLocalY = height / 2.0;
 
             double left = Canvas.GetLeft(shape); if (double.IsNaN(left)) left = 0;
             double top = Canvas.GetTop(shape); if (double.IsNaN(top)) top = 0;
