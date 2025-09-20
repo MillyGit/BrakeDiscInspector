@@ -30,7 +30,7 @@ Cada ROI representa un área rectangular dentro de la imagen del disco de freno,
 
 ## 2) Rotación del ROI
 
-- Implementada en GUI con `RoiRotateAdorner`.  
+- Implementada en GUI con el thumb NE del `RoiAdorner`.
 - Se aplica `Cv2.GetRotationMatrix2D` + `Cv2.WarpAffine` a la imagen completa.  
 - Después se extrae el sub-rectángulo correspondiente.  
 - Esto garantiza que el backend recibe un crop ya orientado correctamente.

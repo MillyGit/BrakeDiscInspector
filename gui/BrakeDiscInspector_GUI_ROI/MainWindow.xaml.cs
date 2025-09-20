@@ -78,8 +78,6 @@ namespace BrakeDiscInspector_GUI_ROI
         private const double LabelOffsetY = -20;  // desplazamiento hacia arriba de la cruz
 
         private ROI CurrentRoi = new ROI { X = 200, Y = 150, Width = 100, Height = 80, AngleDeg = 0, Legend = "M1" };
-        private RoiRotateAdorner _rotateAdorner;
-        private bool _rotateAdornerInitialized;
         private Mat bgrFrame; // tu frame actual
         private bool UseAnnulus = false;
 
@@ -95,8 +93,6 @@ namespace BrakeDiscInspector_GUI_ROI
             HookCanvasInput();
 
             ImgMain.SizeChanged += ImgMain_SizeChanged;
-            CanvasROI.SizeChanged += CanvasROI_SizeChanged;
-            CanvasROI.Loaded += CanvasROI_Loaded;
             this.SizeChanged += MainWindow_SizeChanged;
             this.Loaded += MainWindow_Loaded;
         }
@@ -208,18 +204,6 @@ namespace BrakeDiscInspector_GUI_ROI
         private void ImgMain_SizeChanged(object sender, SizeChangedEventArgs e)
         {
             SyncOverlayToImage();
-        }
-
-        private void CanvasROI_Loaded(object sender, RoutedEventArgs e)
-        {
-            EnsureRotateAdorner();
-            RepositionRotateAdorner();
-        }
-
-        private void CanvasROI_SizeChanged(object sender, SizeChangedEventArgs e)
-        {
-            EnsureRotateAdorner();
-            RepositionRotateAdorner();
         }
 
         // ====== Ratón & dibujo ======
@@ -379,7 +363,6 @@ namespace BrakeDiscInspector_GUI_ROI
                 // Sincroniza modelo y recoloca los thumbs del adorner
                 SyncModelFromShape(_dragShape);
                 InvalidateAdornerFor(_dragShape);
-                RepositionRotateAdorner();
 
                 AppendLog($"[drag] move dx={dx:0.##} dy={dy:0.##} -> pos=({nx:0.##},{ny:0.##})");
                 return;
@@ -406,7 +389,6 @@ namespace BrakeDiscInspector_GUI_ROI
                 CanvasROI.ReleaseMouseCapture();
                 _dragShape = null;
                 MasterLayoutManager.Save(_preset, _layout);
-                RepositionRotateAdorner();
                 e.Handled = true;
                 return;
             }
@@ -471,7 +453,6 @@ namespace BrakeDiscInspector_GUI_ROI
                     _tmpBuffer.Role = RoiRole.Inspection;
                     SyncCurrentRoiFromInspection(_tmpBuffer);
                 }
-                RepositionRotateAdorner();
             }
             _previewShape.IsHitTestVisible = true; // el adorner coge los clics
             _previewShape.StrokeDashArray = new DoubleCollection { 4, 4 };
@@ -497,7 +478,6 @@ namespace BrakeDiscInspector_GUI_ROI
                         SyncCurrentRoiFromInspection(_tmpBuffer);
                     }
                     AppendLog($"[preview] edit => {DescribeRoi(_tmpBuffer)}");
-                    RepositionRotateAdorner();
                 }, AppendLog); // ⬅️ pasa logger
 
                 al.Add(adorner);
@@ -938,7 +918,6 @@ namespace BrakeDiscInspector_GUI_ROI
             }
 
             SyncCurrentRoiFromInspection(insp);
-            RepositionRotateAdorner();
         }
 
         private void ClipInspectionROI(RoiModel insp, int imgW, int imgH)
@@ -970,7 +949,6 @@ namespace BrakeDiscInspector_GUI_ROI
             }
 
             SyncCurrentRoiFromInspection(insp);
-            RepositionRotateAdorner();
         }
 
         private async void BtnAnalyzeMaster_Click(object sender, RoutedEventArgs e)
@@ -1134,7 +1112,6 @@ namespace BrakeDiscInspector_GUI_ROI
             }
 
             AppendLog($"[model] sync {roiPixel.Role} => {DescribeRoi(roiPixel)}");
-            RepositionRotateAdorner();
         }
 
         private void UpdateLayoutFromPixel(RoiModel roiPixel)
@@ -1793,7 +1770,6 @@ namespace BrakeDiscInspector_GUI_ROI
 
             if (_imgW <= 0 || _imgH <= 0)
             {
-                RepositionRotateAdorner();
                 return;
             }
 
@@ -1825,8 +1801,6 @@ namespace BrakeDiscInspector_GUI_ROI
 
             if (_layout.Inspection != null)
                 SyncCurrentRoiFromInspection(_layout.Inspection);
-
-            RepositionRotateAdorner();
         }
 
         private Shape? CreateLayoutShape(RoiModel roi)
@@ -2027,31 +2001,6 @@ namespace BrakeDiscInspector_GUI_ROI
             }
         }
 
-        private void SetupRoiAdorner()
-        {
-            var layer = AdornerLayer.GetAdornerLayer(CanvasROI);
-            System.Windows.Point CornerProvider() => GetCurrentRoiCornerOnCanvas(RoiCorner.TopRight);
-            _rotateAdorner = new RoiRotateAdorner(
-                CanvasROI,
-                CornerProvider,
-                CornerProvider,
-                GetCurrentRoiCornerBaselineAngle,
-                angle =>
-                {
-                    CurrentRoi.AngleDeg = angle; // rotación en tiempo real
-                    UpdateInspectionShapeRotation(angle);
-                    if (_layout?.Inspection != null)
-                    {
-                        _layout.Inspection.AngleDeg = angle;
-                    }
-                    CanvasROI.InvalidateVisual();
-                },
-                CurrentRoi.AngleDeg,
-                AppendLog
-            );
-            layer.Add(_rotateAdorner);
-        }
-
         private Mat GetRotatedCrop(Mat bgr)
         {
             CurrentRoi.EnforceMinSize(10, 10);
@@ -2153,22 +2102,6 @@ namespace BrakeDiscInspector_GUI_ROI
                 MessageBox.Show("Error en Analyze: " + ex.Message);
             }
         }
-        private void EnsureRotateAdorner()
-        {
-            if (_rotateAdornerInitialized)
-                return;
-
-            if (CanvasROI == null)
-                return;
-
-            double width = CanvasROI.ActualWidth > 0 ? CanvasROI.ActualWidth : CanvasROI.Width;
-            double height = CanvasROI.ActualHeight > 0 ? CanvasROI.ActualHeight : CanvasROI.Height;
-            if (width <= 0 || height <= 0)
-                return;
-
-            SetupRoiRotateAdorner();
-        }
-
         private System.Windows.Point GetCurrentRoiCenterOnCanvas()
         {
             return ImagePxToCanvasPt(CurrentRoi.X, CurrentRoi.Y);
@@ -2201,75 +2134,6 @@ namespace BrakeDiscInspector_GUI_ROI
             double rotatedY = rawOffsetX * sin + rawOffsetY * cos;
 
             return (CurrentRoi.X + rotatedX, CurrentRoi.Y + rotatedY);
-        }
-
-        private System.Windows.Point GetCurrentRoiCornerOnCanvas(RoiCorner corner)
-        {
-            var (x, y) = GetCurrentRoiCornerImage(corner);
-            return ImagePxToCanvasPt(x, y);
-        }
-
-        private double GetCurrentRoiCornerBaselineAngle()
-        {
-            double halfW = CurrentRoi.Width / 2.0;
-            double halfH = CurrentRoi.Height / 2.0;
-
-            if (halfW == 0 && halfH == 0)
-                return 0.0;
-
-            return Math.Atan2(halfH, -halfW);
-        }
-
-        private void SetupRoiRotateAdorner()
-        {
-            var layer = AdornerLayer.GetAdornerLayer(CanvasROI);
-            if (layer == null) return;
-
-            // Si ya existe, quítalo (evita duplicados)
-            var prev = layer.GetAdorners(CanvasROI);
-            if (prev != null)
-                foreach (var ad in prev)
-                    if (ad is RoiRotateAdorner) layer.Remove(ad);
-
-            System.Windows.Point CornerProvider() => GetCurrentRoiCornerOnCanvas(RoiCorner.TopRight);
-
-            var pivotAtSetup = CornerProvider();
-            double baselineDeg = GetCurrentRoiCornerBaselineAngle() * 180.0 / Math.PI;
-            AppendLog($"[rotate] setup pivot=({pivotAtSetup.X:0.##},{pivotAtSetup.Y:0.##}) handle=({pivotAtSetup.X:0.##},{pivotAtSetup.Y:0.##}) baselineDeg={baselineDeg:0.##} currentDeg={CurrentRoi.AngleDeg:0.##}");
-
-            _rotateAdorner = new RoiRotateAdorner(
-                CanvasROI,
-                CornerProvider,
-                CornerProvider,
-                GetCurrentRoiCornerBaselineAngle,
-                angle =>
-                {
-                    var pivot = GetCurrentRoiCornerOnCanvas(RoiCorner.TopRight);
-                    AppendLog($"[rotate] callback angle={angle:0.##} pivot=({pivot.X:0.##},{pivot.Y:0.##}) handle=({pivot.X:0.##},{pivot.Y:0.##})");
-                    CurrentRoi.AngleDeg = angle;   // rotación en tiempo real
-                    if (_state == MasterState.DrawInspection)
-                    {
-                        if (_tmpBuffer != null)
-                        {
-                            _tmpBuffer.AngleDeg = angle;
-                        }
-                        if (_previewShape?.Tag is RoiModel preview)
-                        {
-                            preview.AngleDeg = angle;
-                        }
-                    }
-                    UpdateInspectionShapeRotation(angle);
-                    if (_layout?.Inspection != null)
-                    {
-                        _layout.Inspection.AngleDeg = angle;
-                    }
-                },
-                CurrentRoi.AngleDeg,
-                AppendLog
-            );
-
-            layer.Add(_rotateAdorner);
-            _rotateAdornerInitialized = true;
         }
 
         private Shape? FindInspectionShapeOnCanvas()
@@ -2352,14 +2216,6 @@ namespace BrakeDiscInspector_GUI_ROI
                 _layout.Inspection.AngleDeg = angle;
             }
         }
-
-        private void RepositionRotateAdorner()
-        {
-            if (_rotateAdorner == null) return;
-            // Forzar repintado para que OnRender del adorner recalcule la posición del handle
-            _rotateAdorner.InvalidateVisual();
-        }
-
 
         // === Helpers para mapear coordenadas ===
         public (int pw, int ph) GetImagePixelSize()
@@ -2522,7 +2378,6 @@ namespace BrakeDiscInspector_GUI_ROI
 
             AppendLog($"[sync] Canvas={displayRect.Width:0}x{displayRect.Height:0}  Offset=({displayRect.Left:0},{displayRect.Top:0})  Image={bmp.PixelWidth}x{bmp.PixelHeight}");
 
-            EnsureRotateAdorner();
             RedrawOverlay();
         }
 

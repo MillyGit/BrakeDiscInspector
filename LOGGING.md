@@ -90,7 +90,7 @@ logger.info(f"[{rid}] /analyze end label={label} score={score:.3f} thr={_thresho
 - Inicio de la app y versión (OS, .NET).
 - Carga de imagen: ruta **anonimizada** (solo nombre de archivo).
 - ROI: cambios relevantes (tamaño, posición, `AngleDeg`), respetando rate‑limit de logs.
-- Creación/Reposicionamiento del **RoiRotateAdorner**.
+- Rotaciones del ROI (thumb NE del **RoiAdorner**).
 - Click **Analyze**: dimensiones del crop, tamaño PNG enviado.
 - Respuesta: `label`, `score`, `threshold` (no guardar imagen).
 - Errores de red/HTTP y conversiones Mat↔BitmapSource.

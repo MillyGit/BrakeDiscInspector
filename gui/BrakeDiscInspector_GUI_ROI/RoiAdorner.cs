@@ -251,7 +251,7 @@ namespace BrakeDiscInspector_GUI_ROI
             SetNonRotationThumbsEnabled(false);
             _rotationThumb.IsHitTestVisible = true;
 
-            _log($"[adorner] rotate start roi={roi.Id} angle={_rotationAngleAtDragStart:0.##}");
+            _log($"[rotate] start roi={roi.Id} angle={_rotationAngleAtDragStart:0.##}");
         }
 
         private void RotationThumb_DragDelta(object sender, DragDeltaEventArgs e)
@@ -270,6 +270,8 @@ namespace BrakeDiscInspector_GUI_ROI
             ApplyRotation(newAngle, roi);
 
             _onChanged(true, roi);
+
+            _log($"[rotate] delta roi={roi.Id} drag=({e.HorizontalChange:0.##},{e.VerticalChange:0.##}) radius={radius:0.##} angle={newAngle:0.##}");
         }
 
         private void RotationThumb_DragCompleted(object sender, DragCompletedEventArgs e)
@@ -288,7 +290,7 @@ namespace BrakeDiscInspector_GUI_ROI
                 ApplyRotation(finalAngle, roi);
                 _onChanged(true, roi);
 
-                _log($"[adorner] rotate end roi={roi.Id} angle={finalAngle:0.##}");
+                _log($"[rotate] end roi={roi.Id} angle={finalAngle:0.##}");
             }
         }
 
