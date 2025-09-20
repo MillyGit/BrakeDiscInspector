@@ -2002,10 +2002,11 @@ namespace BrakeDiscInspector_GUI_ROI
         private void SetupRoiAdorner()
         {
             var layer = AdornerLayer.GetAdornerLayer(CanvasROI);
+            System.Windows.Point CornerProvider() => GetCurrentRoiCornerOnCanvas(RoiCorner.TopRight);
             _rotateAdorner = new RoiRotateAdorner(
                 CanvasROI,
-                GetCurrentRoiCenterOnCanvas,
-                () => GetCurrentRoiCornerOnCanvas(RoiCorner.TopRight),
+                CornerProvider,
+                CornerProvider,
                 GetCurrentRoiCornerBaselineAngle,
                 angle =>
                 {
@@ -2022,23 +2023,26 @@ namespace BrakeDiscInspector_GUI_ROI
             CurrentRoi.EnforceMinSize(10, 10);
 
             var (cornerX, cornerY) = GetCurrentRoiCornerImage(RoiCorner.TopRight);
+            var pivot = new Point2f((float)cornerX, (float)cornerY);
+
+            using var rotMat = Cv2.GetRotationMatrix2D(pivot, CurrentRoi.AngleDeg, 1.0);
+
+            Point2f TransformPoint(double x, double y)
+            {
+                double newX = rotMat.At<double>(0, 0) * x + rotMat.At<double>(0, 1) * y + rotMat.At<double>(0, 2);
+                double newY = rotMat.At<double>(1, 0) * x + rotMat.At<double>(1, 1) * y + rotMat.At<double>(1, 2);
+                return new Point2f((float)newX, (float)newY);
+            }
+
             double halfW = CurrentRoi.Width / 2.0;
             double halfH = CurrentRoi.Height / 2.0;
-            double angleRad = CurrentRoi.AngleDeg * Math.PI / 180.0;
-            double cos = Math.Cos(angleRad);
-            double sin = Math.Sin(angleRad);
-
-            double offsetX = halfW * cos - (-halfH) * sin;
-            double offsetY = halfW * sin + (-halfH) * cos;
-            var pivotCenter = new Point2f((float)(cornerX - offsetX), (float)(cornerY - offsetY));
-
-            var rotMat = Cv2.GetRotationMatrix2D(pivotCenter, CurrentRoi.AngleDeg, 1.0);
+            var rotatedCenter = TransformPoint(CurrentRoi.X, CurrentRoi.Y);
 
             Mat rotated = new Mat();
             Cv2.WarpAffine(bgr, rotated, rotMat, new OpenCvSharp.Size(bgr.Width, bgr.Height), InterpolationFlags.Linear, BorderTypes.Constant, new Scalar(0, 0, 0));
 
-            int x = (int)Math.Round(pivotCenter.X - halfW);
-            int y = (int)Math.Round(pivotCenter.Y - halfH);
+            int x = (int)Math.Round(rotatedCenter.X - halfW);
+            int y = (int)Math.Round(rotatedCenter.Y - halfH);
             x = Math.Max(0, Math.Min(x, rotated.Width - 1));
             y = Math.Max(0, Math.Min(y, rotated.Height - 1));
             int w = (int)Math.Max(10, Math.Min(CurrentRoi.Width, rotated.Width - x));
@@ -2179,7 +2183,7 @@ namespace BrakeDiscInspector_GUI_ROI
             if (halfW == 0 && halfH == 0)
                 return 0.0;
 
-            return Math.Atan2(-halfH, halfW);
+            return Math.Atan2(halfH, -halfW);
         }
 
         private void SetupRoiRotateAdorner()
@@ -2193,10 +2197,12 @@ namespace BrakeDiscInspector_GUI_ROI
                 foreach (var ad in prev)
                     if (ad is RoiRotateAdorner) layer.Remove(ad);
 
+            System.Windows.Point CornerProvider() => GetCurrentRoiCornerOnCanvas(RoiCorner.TopRight);
+
             _rotateAdorner = new RoiRotateAdorner(
                 CanvasROI,
-                GetCurrentRoiCenterOnCanvas,
-                () => GetCurrentRoiCornerOnCanvas(RoiCorner.TopRight),
+                CornerProvider,
+                CornerProvider,
                 GetCurrentRoiCornerBaselineAngle,
                 angle =>
                 {
@@ -2228,36 +2234,38 @@ namespace BrakeDiscInspector_GUI_ROI
             if (shape.Tag is not RoiModel roiModel)
                 return;
 
-            var (centerX, centerY) = roiModel.GetCenter();
+            double width = !double.IsNaN(shape.Width) && shape.Width > 0 ? shape.Width : roiModel.Width;
+            double height = !double.IsNaN(shape.Height) && shape.Height > 0 ? shape.Height : roiModel.Height;
 
-            double left = Canvas.GetLeft(shape);
-            if (double.IsNaN(left))
+            if (width <= 0 || height <= 0)
+                return;
+
+            double pivotLocalX;
+            double pivotLocalY;
+
+            switch (roiModel.Shape)
             {
-                left = roiModel.Shape == RoiShape.Rectangle
-                    ? roiModel.X
-                    : roiModel.CX - roiModel.R;
+                case RoiShape.Rectangle:
+                case RoiShape.Circle:
+                case RoiShape.Annulus:
+                    pivotLocalX = width;
+                    pivotLocalY = 0;
+                    break;
+                default:
+                    pivotLocalX = width / 2.0;
+                    pivotLocalY = height / 2.0;
+                    break;
             }
-
-            double top = Canvas.GetTop(shape);
-            if (double.IsNaN(top))
-            {
-                top = roiModel.Shape == RoiShape.Rectangle
-                    ? roiModel.Y
-                    : roiModel.CY - roiModel.R;
-            }
-
-            double localCenterX = centerX - left;
-            double localCenterY = centerY - top;
 
             if (shape.RenderTransform is RotateTransform rotate)
             {
                 rotate.Angle = angle;
-                rotate.CenterX = localCenterX;
-                rotate.CenterY = localCenterY;
+                rotate.CenterX = pivotLocalX;
+                rotate.CenterY = pivotLocalY;
             }
             else
             {
-                shape.RenderTransform = new RotateTransform(angle, localCenterX, localCenterY);
+                shape.RenderTransform = new RotateTransform(angle, pivotLocalX, pivotLocalY);
             }
         }
 
