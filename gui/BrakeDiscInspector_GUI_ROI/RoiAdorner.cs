@@ -65,18 +65,18 @@ namespace BrakeDiscInspector_GUI_ROI
             // Eventos
             _moveThumb.DragDelta += MoveThumb_DragDelta;
 
-            _corners[0].DragDelta += (s, e) => ResizeByCorner(-e.HorizontalChange, -e.VerticalChange, Corner.NW);
-            _corners[2].DragDelta += (s, e) => ResizeByCorner(+e.HorizontalChange, +e.VerticalChange, Corner.SE);
-            _corners[3].DragDelta += (s, e) => ResizeByCorner(-e.HorizontalChange, +e.VerticalChange, Corner.SW);
+            _corners[0].DragDelta += (s, e) => ResizeByCorner(e.HorizontalChange, e.VerticalChange, Corner.NW);
+            _corners[2].DragDelta += (s, e) => ResizeByCorner(e.HorizontalChange, e.VerticalChange, Corner.SE);
+            _corners[3].DragDelta += (s, e) => ResizeByCorner(e.HorizontalChange, e.VerticalChange, Corner.SW);
 
             _rotationThumb.DragStarted += RotationThumb_DragStarted;
             _rotationThumb.DragDelta += RotationThumb_DragDelta;
             _rotationThumb.DragCompleted += RotationThumb_DragCompleted;
 
-            _edges[0].DragDelta += (s, e) => ResizeByEdge(0, -e.VerticalChange, Edge.N); // N
-            _edges[1].DragDelta += (s, e) => ResizeByEdge(+e.HorizontalChange, 0, Edge.E); // E
-            _edges[2].DragDelta += (s, e) => ResizeByEdge(0, +e.VerticalChange, Edge.S); // S
-            _edges[3].DragDelta += (s, e) => ResizeByEdge(-e.HorizontalChange, 0, Edge.W); // W
+            _edges[0].DragDelta += (s, e) => ResizeByEdge(e.HorizontalChange, e.VerticalChange, Edge.N); // N
+            _edges[1].DragDelta += (s, e) => ResizeByEdge(e.HorizontalChange, e.VerticalChange, Edge.E); // E
+            _edges[2].DragDelta += (s, e) => ResizeByEdge(e.HorizontalChange, e.VerticalChange, Edge.S); // S
+            _edges[3].DragDelta += (s, e) => ResizeByEdge(e.HorizontalChange, e.VerticalChange, Edge.W); // W
 
             AddVisualChild(_moveThumb);
             foreach (var t in _corners) AddVisualChild(t);
@@ -168,7 +168,7 @@ namespace BrakeDiscInspector_GUI_ROI
         private enum Corner { NW, NE, SE, SW }
         private enum Edge { N, E, S, W }
 
-        private void ResizeByCorner(double dx, double dy, Corner c)
+        private void ResizeByCorner(double dragDx, double dragDy, Corner movingCorner)
         {
             var roi = _shape.Tag as RoiModel;
             if (roi == null) return;
@@ -178,31 +178,46 @@ namespace BrakeDiscInspector_GUI_ROI
             double w = _shape.Width; if (double.IsNaN(w)) w = 0;
             double h = _shape.Height; if (double.IsNaN(h)) h = 0;
 
-            switch (c)
+            double angleDeg = GetCurrentAngle();
+            double angleRad = angleDeg * Math.PI / 180.0;
+
+            Vector deltaLocal = RotateVector(new Vector(dragDx, dragDy), -angleRad);
+
+            double newWidth = w;
+            double newHeight = h;
+
+            switch (movingCorner)
             {
-                case Corner.NW: x -= dx; y -= dy; w += dx; h += dy; break;
-                case Corner.NE: y -= dy; w += dx; h += dy; break;
-                case Corner.SE: w += dx; h += dy; break;
-                case Corner.SW: x -= dx; w += dx; h += dy; break;
+                case Corner.NW:
+                    newWidth = w - deltaLocal.X;
+                    newHeight = h - deltaLocal.Y;
+                    break;
+                case Corner.NE:
+                    newWidth = w + deltaLocal.X;
+                    newHeight = h - deltaLocal.Y;
+                    break;
+                case Corner.SE:
+                    newWidth = w + deltaLocal.X;
+                    newHeight = h + deltaLocal.Y;
+                    break;
+                case Corner.SW:
+                    newWidth = w - deltaLocal.X;
+                    newHeight = h + deltaLocal.Y;
+                    break;
             }
 
-            // Mínimos 10x10
-            if (w < 10) { x += (w - 10); w = 10; }
-            if (h < 10) { y += (h - 10); h = 10; }
+            const double minSize = 10.0;
+            newWidth = Math.Max(minSize, newWidth);
+            newHeight = Math.Max(minSize, newHeight);
 
-            Canvas.SetLeft(_shape, x);
-            Canvas.SetTop(_shape, y);
-            _shape.Width = w;
-            _shape.Height = h;
+            Corner anchorCorner = GetOppositeCorner(movingCorner);
+            Point anchorWorld = GetCornerWorldPoint(anchorCorner, x, y, w, h, angleRad);
+            Point newCenter = ComputeCenterFromAnchor(anchorWorld, anchorCorner, newWidth, newHeight, angleRad);
 
-            UpdateRotationCenterIfNeeded();
-            SyncModelFromShape(_shape, roi);
-            InvalidateArrange();
-
-            _onChanged(true, roi);
+            ApplyResizeResult(newCenter, newWidth, newHeight, angleDeg, roi);
         }
 
-        private void ResizeByEdge(double dx, double dy, Edge e)
+        private void ResizeByEdge(double dragDx, double dragDy, Edge edge)
         {
             var roi = _shape.Tag as RoiModel;
             if (roi == null) return;
@@ -212,27 +227,43 @@ namespace BrakeDiscInspector_GUI_ROI
             double w = _shape.Width; if (double.IsNaN(w)) w = 0;
             double h = _shape.Height; if (double.IsNaN(h)) h = 0;
 
-            switch (e)
+            double angleDeg = GetCurrentAngle();
+            double angleRad = angleDeg * Math.PI / 180.0;
+
+            Vector deltaLocal = RotateVector(new Vector(dragDx, dragDy), -angleRad);
+
+            double newWidth = w;
+            double newHeight = h;
+
+            switch (edge)
             {
-                case Edge.N: y -= dy; h += dy; break;
-                case Edge.E: w += dx; break;
-                case Edge.S: h += dy; break;
-                case Edge.W: x -= dx; w += dx; break;
+                case Edge.N:
+                    newHeight = h - deltaLocal.Y;
+                    break;
+                case Edge.E:
+                    newWidth = w + deltaLocal.X;
+                    break;
+                case Edge.S:
+                    newHeight = h + deltaLocal.Y;
+                    break;
+                case Edge.W:
+                    newWidth = w - deltaLocal.X;
+                    break;
             }
 
-            if (w < 10) { x += (w - 10); w = 10; }
-            if (h < 10) { y += (h - 10); h = 10; }
+            const double minSize = 10.0;
+            newWidth = Math.Max(minSize, newWidth);
+            newHeight = Math.Max(minSize, newHeight);
 
-            Canvas.SetLeft(_shape, x);
-            Canvas.SetTop(_shape, y);
-            _shape.Width = w;
-            _shape.Height = h;
+            var (anchorA, anchorB) = GetEdgeAnchorCorners(edge);
+            Point anchorAWorld = GetCornerWorldPoint(anchorA, x, y, w, h, angleRad);
+            Point anchorBWorld = GetCornerWorldPoint(anchorB, x, y, w, h, angleRad);
 
-            UpdateRotationCenterIfNeeded();
-            SyncModelFromShape(_shape, roi);
-            InvalidateArrange();
+            Point centerA = ComputeCenterFromAnchor(anchorAWorld, anchorA, newWidth, newHeight, angleRad);
+            Point centerB = ComputeCenterFromAnchor(anchorBWorld, anchorB, newWidth, newHeight, angleRad);
+            Point newCenter = new Point((centerA.X + centerB.X) / 2.0, (centerA.Y + centerB.Y) / 2.0);
 
-            _onChanged(true, roi);
+            ApplyResizeResult(newCenter, newWidth, newHeight, angleDeg, roi);
         }
 
         // === Rotación ===
@@ -442,6 +473,84 @@ namespace BrakeDiscInspector_GUI_ROI
             else if (angleDeg > 180.0)
                 angleDeg -= 360.0;
             return angleDeg;
+        }
+
+        private static Corner GetOppositeCorner(Corner corner)
+        {
+            return corner switch
+            {
+                Corner.NW => Corner.SE,
+                Corner.NE => Corner.SW,
+                Corner.SE => Corner.NW,
+                Corner.SW => Corner.NE,
+                _ => Corner.SE
+            };
+        }
+
+        private static Vector GetCornerLocalVector(Corner corner, double width, double height)
+        {
+            double halfWidth = width / 2.0;
+            double halfHeight = height / 2.0;
+
+            return corner switch
+            {
+                Corner.NW => new Vector(-halfWidth, -halfHeight),
+                Corner.NE => new Vector(halfWidth, -halfHeight),
+                Corner.SE => new Vector(halfWidth, halfHeight),
+                Corner.SW => new Vector(-halfWidth, halfHeight),
+                _ => new Vector(0, 0)
+            };
+        }
+
+        private static (Corner a, Corner b) GetEdgeAnchorCorners(Edge edge)
+        {
+            return edge switch
+            {
+                Edge.N => (Corner.SW, Corner.SE),
+                Edge.E => (Corner.NW, Corner.SW),
+                Edge.S => (Corner.NW, Corner.NE),
+                Edge.W => (Corner.NE, Corner.SE),
+                _ => (Corner.SW, Corner.SE)
+            };
+        }
+
+        private static Vector RotateVector(Vector vector, double angleRad)
+        {
+            double cos = Math.Cos(angleRad);
+            double sin = Math.Sin(angleRad);
+            return new Vector(vector.X * cos - vector.Y * sin, vector.X * sin + vector.Y * cos);
+        }
+
+        private static Point GetCornerWorldPoint(Corner corner, double left, double top, double width, double height, double angleRad)
+        {
+            Vector local = GetCornerLocalVector(corner, width, height);
+            Vector rotated = RotateVector(local, angleRad);
+            Point center = new Point(left + width / 2.0, top + height / 2.0);
+            return new Point(center.X + rotated.X, center.Y + rotated.Y);
+        }
+
+        private static Point ComputeCenterFromAnchor(Point anchorWorld, Corner anchorCorner, double width, double height, double angleRad)
+        {
+            Vector local = GetCornerLocalVector(anchorCorner, width, height);
+            Vector rotated = RotateVector(local, angleRad);
+            return new Point(anchorWorld.X - rotated.X, anchorWorld.Y - rotated.Y);
+        }
+
+        private void ApplyResizeResult(Point center, double width, double height, double angleDeg, RoiModel roi)
+        {
+            double left = center.X - width / 2.0;
+            double top = center.Y - height / 2.0;
+
+            Canvas.SetLeft(_shape, left);
+            Canvas.SetTop(_shape, top);
+            _shape.Width = width;
+            _shape.Height = height;
+
+            ApplyRotation(angleDeg, roi);
+            SyncModelFromShape(_shape, roi);
+            InvalidateArrange();
+
+            _onChanged(true, roi);
         }
 
         private void UpdateRotationCenterIfNeeded()
