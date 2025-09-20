@@ -3,10 +3,12 @@ using Microsoft.Win32;
 using OpenCvSharp;
 using OpenCvSharp.WpfExtensions;
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Net.Http;
 using System.Reflection.Emit;
+using System.Text;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
@@ -61,6 +63,10 @@ namespace BrakeDiscInspector_GUI_ROI
         private Shape? _dragShape;
         private System.Windows.Point _dragStart;
         private double _dragOrigX, _dragOrigY;
+
+        private readonly Dictionary<RoiModel, DragLogState> _dragLogStates = new();
+        private const double DragLogMovementThreshold = 5.0; // px (canvas)
+        private const double DragLogAngleThreshold = 1.0;    // grados
 
         // Marca para identificar las cruces de análisis y poder borrarlas sin tocar los ROIs
         private const string AnalysisTag = "analysis-mark";
@@ -467,7 +473,7 @@ namespace BrakeDiscInspector_GUI_ROI
                         al.Remove(ad);
                 }
 
-                var adorner = new RoiAdorner(_previewShape, (shapeUpdated, modelUpdated) =>
+                var adorner = new RoiAdorner(_previewShape, (changeKind, modelUpdated) =>
                 {
                     var pixelModel = CanvasToImage(modelUpdated);
                     _tmpBuffer = pixelModel.Clone();
@@ -477,7 +483,10 @@ namespace BrakeDiscInspector_GUI_ROI
                         _tmpBuffer.Role = RoiRole.Inspection;
                         SyncCurrentRoiFromInspection(_tmpBuffer);
                     }
-                    AppendLog($"[preview] edit => {DescribeRoi(_tmpBuffer)}");
+                    if (_tmpBuffer != null)
+                    {
+                        HandleAdornerChange(changeKind, modelUpdated, pixelModel, "[preview]");
+                    }
                 }, AppendLog); // ⬅️ pasa logger
 
                 al.Add(adorner);
@@ -499,6 +508,190 @@ namespace BrakeDiscInspector_GUI_ROI
                 RoiShape.Annulus => $"Ann cx={r.CX:0},cy={r.CY:0},r={r.R:0},ri={r.RInner:0},ang={r.AngleDeg:0.0}",
                 _ => "?"
             };
+        }
+
+        private void HandleAdornerChange(RoiAdornerChangeKind changeKind, RoiModel canvasModel, RoiModel pixelModel, string contextLabel)
+        {
+            switch (changeKind)
+            {
+                case RoiAdornerChangeKind.DragStarted:
+                    HandleDragStarted(canvasModel, pixelModel, contextLabel);
+                    break;
+                case RoiAdornerChangeKind.Delta:
+                    HandleDragDelta(canvasModel, pixelModel, contextLabel);
+                    break;
+                case RoiAdornerChangeKind.DragCompleted:
+                    HandleDragCompleted(canvasModel, pixelModel, contextLabel);
+                    break;
+            }
+        }
+
+        private void HandleDragStarted(RoiModel canvasModel, RoiModel pixelModel, string contextLabel)
+        {
+            var state = GetOrCreateDragState(canvasModel);
+            state.Buffer.Clear();
+            state.LastSnapshot = CaptureSnapshot(canvasModel);
+            state.HasSnapshot = true;
+
+            AppendLog($"{contextLabel} drag start => {DescribeRoi(pixelModel)}");
+        }
+
+        private void HandleDragDelta(RoiModel canvasModel, RoiModel pixelModel, string contextLabel)
+        {
+            var state = GetOrCreateDragState(canvasModel);
+            var snapshot = CaptureSnapshot(canvasModel);
+
+            if (!state.HasSnapshot)
+            {
+                state.LastSnapshot = snapshot;
+                state.HasSnapshot = true;
+            }
+
+            if (!ShouldLogDelta(state, snapshot))
+                return;
+
+            state.Buffer.AppendLine($"{contextLabel} drag delta => {DescribeRoi(pixelModel)}");
+            state.LastSnapshot = snapshot;
+        }
+
+        private void HandleDragCompleted(RoiModel canvasModel, RoiModel pixelModel, string contextLabel)
+        {
+            if (_dragLogStates.TryGetValue(canvasModel, out var state))
+            {
+                FlushDragBuffer(state);
+                _dragLogStates.Remove(canvasModel);
+            }
+
+            AppendLog($"{contextLabel} drag end => {DescribeRoi(pixelModel)}");
+        }
+
+        private DragLogState GetOrCreateDragState(RoiModel model)
+        {
+            if (!_dragLogStates.TryGetValue(model, out var state))
+            {
+                state = new DragLogState();
+                _dragLogStates[model] = state;
+            }
+
+            return state;
+        }
+
+        private static RoiSnapshot CaptureSnapshot(RoiModel model)
+        {
+            double x;
+            double y;
+            double width;
+            double height;
+
+            switch (model.Shape)
+            {
+                case RoiShape.Circle:
+                case RoiShape.Annulus:
+                    {
+                        double radius = model.R;
+                        if (radius > 0)
+                        {
+                            width = radius * 2.0;
+                            height = width;
+                        }
+                        else
+                        {
+                            width = model.Width;
+                            height = model.Height;
+                            if (width <= 0 && height > 0) width = height;
+                            if (height <= 0 && width > 0) height = width;
+                        }
+
+                        x = model.CX - width / 2.0;
+                        y = model.CY - height / 2.0;
+                        break;
+                    }
+                case RoiShape.Rectangle:
+                default:
+                    x = model.X;
+                    y = model.Y;
+                    width = model.Width;
+                    height = model.Height;
+                    break;
+            }
+
+            return new RoiSnapshot(x, y, width, height, model.AngleDeg);
+        }
+
+        private bool ShouldLogDelta(DragLogState state, RoiSnapshot current)
+        {
+            if (!state.HasSnapshot)
+                return true;
+
+            var last = state.LastSnapshot;
+
+            if (Math.Abs(current.X - last.X) >= DragLogMovementThreshold)
+                return true;
+            if (Math.Abs(current.Y - last.Y) >= DragLogMovementThreshold)
+                return true;
+            if (Math.Abs(current.Width - last.Width) >= DragLogMovementThreshold)
+                return true;
+            if (Math.Abs(current.Height - last.Height) >= DragLogMovementThreshold)
+                return true;
+
+            var angleDelta = Math.Abs(NormalizeAngleDifference(current.Angle - last.Angle));
+            return angleDelta >= DragLogAngleThreshold;
+        }
+
+        private void FlushDragBuffer(DragLogState state)
+        {
+            if (state.Buffer.Length == 0)
+                return;
+
+            var snapshot = state.Buffer.ToString();
+            state.Buffer.Clear();
+
+            using var reader = new StringReader(snapshot);
+            string? line;
+            var lines = new List<string>();
+            while ((line = reader.ReadLine()) != null)
+            {
+                if (!string.IsNullOrWhiteSpace(line))
+                    lines.Add(line);
+            }
+
+            if (lines.Count > 0)
+                AppendLogBulk(lines);
+        }
+
+        private static double NormalizeAngleDifference(double angleDeg)
+        {
+            angleDeg %= 360.0;
+            if (angleDeg <= -180.0)
+                angleDeg += 360.0;
+            else if (angleDeg > 180.0)
+                angleDeg -= 360.0;
+            return angleDeg;
+        }
+
+        private sealed class DragLogState
+        {
+            public RoiSnapshot LastSnapshot;
+            public bool HasSnapshot;
+            public StringBuilder Buffer { get; } = new();
+        }
+
+        private readonly struct RoiSnapshot
+        {
+            public RoiSnapshot(double x, double y, double width, double height, double angle)
+            {
+                X = x;
+                Y = y;
+                Width = width;
+                Height = height;
+                Angle = angle;
+            }
+
+            public double X { get; }
+            public double Y { get; }
+            public double Width { get; }
+            public double Height { get; }
+            public double Angle { get; }
         }
 
         // ====== Guardar pasos del wizard ======
@@ -884,16 +1077,32 @@ namespace BrakeDiscInspector_GUI_ROI
         // Log seguro desde cualquier hilo
         private void AppendLog(string line)
         {
+            AppendLogBulk(new[] { line });
+        }
+
+        private void AppendLogBulk(IEnumerable<string> lines)
+        {
             if (TrainLogText == null) return;
 
             if (!Dispatcher.CheckAccess())
             {
-                Dispatcher.Invoke(() => AppendLog(line));
+                var copy = lines.ToList();
+                Dispatcher.Invoke(() => AppendLogBulk(copy));
                 return;
             }
 
-            var stamp = DateTime.Now.ToString("HH:mm:ss.fff");
-            TrainLogText.Text += $"[{stamp}] {line}{Environment.NewLine}";
+            var list = lines as IList<string> ?? lines.ToList();
+            if (list.Count == 0)
+                return;
+
+            var sb = new StringBuilder();
+            foreach (var entry in list)
+            {
+                var stamp = DateTime.Now.ToString("HH:mm:ss.fff");
+                sb.Append('[').Append(stamp).Append("] ").Append(entry).AppendLine();
+            }
+
+            TrainLogText.AppendText(sb.ToString());
             TrainLogText.ScrollToEnd();
         }
 
@@ -1911,11 +2120,12 @@ namespace BrakeDiscInspector_GUI_ROI
             if (shape.Tag is not RoiModel)
                 return;
 
-            var adorner = new RoiAdorner(shape, (shapeUpdated, modelUpdated) =>
+            var adorner = new RoiAdorner(shape, (changeKind, modelUpdated) =>
             {
                 var pixelModel = CanvasToImage(modelUpdated);
                 UpdateLayoutFromPixel(pixelModel);
-                AppendLog($"[adorner] ROI actualizado: {pixelModel.Role} => {DescribeRoi(pixelModel)}");
+                var context = $"[adorner:{pixelModel.Role}]";
+                HandleAdornerChange(changeKind, modelUpdated, pixelModel, context);
             }, AppendLog);
 
             layer.Add(adorner);
