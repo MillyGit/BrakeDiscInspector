@@ -50,8 +50,7 @@ BrakeDiscInspector/
 │     ├─ BackendAPI.cs
 │     ├─ ROI/
 │     │  ├─ ROI.cs
-│     │  ├─ RoiAdorner.cs
-│     │  └─ RoiRotateAdorner.cs
+│     │  └─ RoiAdorner.cs
 │     └─ Overlays/
 │        └─ RoiOverlay.cs
 ├─ scripts/                 # utilidades PowerShell

@@ -28,8 +28,7 @@ flowchart LR
 - **MainWindow.xaml(.cs)**: orquesta UI, eventos, y acciones del usuario (cargar imagen, botón Analyze).
 - **ROI/**:
   - `ROI.cs`: modelo de ROI (`X`, `Y`, `Width`, `Height`, `AngleDeg`, `Legend`).
-  - `RoiRotateAdorner.cs`: adorner para **rotación en tiempo real** alrededor del centro del ROI.
-  - `RoiAdorner.cs` (opcional): edición visual de tamaño/posición (si se integra).
+  - `RoiAdorner.cs`: adorner de edición (mover, redimensionar y rotar mediante thumb NE).
 - **Overlays/**:
   - `RoiOverlay.cs`: dibuja el ROI en el `CanvasROI` **alineado** con el área visible del `<Image>` (letterbox).
 - **BackendAPI.cs**: cliente HTTP tipado (POST `/analyze`, GET `/train_status`, POST `/match_one`).
