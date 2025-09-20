@@ -498,9 +498,9 @@ namespace BrakeDiscInspector_GUI_ROI
             if (r == null) return "<null>";
             return r.Shape switch
             {
-                RoiShape.Rectangle => $"Rect x={r.X:0},y={r.Y:0},w={r.Width:0},h={r.Height:0}",
-                RoiShape.Circle => $"Circ cx={r.CX:0},cy={r.CY:0},r={r.R:0}",
-                RoiShape.Annulus => $"Ann cx={r.CX:0},cy={r.CY:0},r={r.R:0},ri={r.RInner:0}",
+                RoiShape.Rectangle => $"Rect x={r.X:0},y={r.Y:0},w={r.Width:0},h={r.Height:0},ang={r.AngleDeg:0.0}",
+                RoiShape.Circle => $"Circ cx={r.CX:0},cy={r.CY:0},r={r.R:0},ang={r.AngleDeg:0.0}",
+                RoiShape.Annulus => $"Ann cx={r.CX:0},cy={r.CY:0},r={r.R:0},ri={r.RInner:0},ang={r.AngleDeg:0.0}",
                 _ => "?"
             };
         }
@@ -1164,6 +1164,7 @@ namespace BrakeDiscInspector_GUI_ROI
                 CurrentRoi.Height = diameter;
             }
 
+            CurrentRoi.AngleDeg = inspectionPixel.AngleDeg;
             UpdateInspectionShapeRotation(CurrentRoi.AngleDeg);
         }
 
@@ -1788,7 +1789,7 @@ namespace BrakeDiscInspector_GUI_ROI
                 CanvasROI.Children.Add(shape);
                 if (roi.Role == RoiRole.Inspection)
                 {
-                    ApplyInspectionRotationToShape(shape, CurrentRoi.AngleDeg);
+                    ApplyInspectionRotationToShape(shape, roi.AngleDeg);
                 }
                 AttachRoiAdorner(shape);
             }
@@ -1844,7 +1845,7 @@ namespace BrakeDiscInspector_GUI_ROI
 
             if (roi.Role == RoiRole.Inspection)
             {
-                ApplyInspectionRotationToShape(shape, CurrentRoi.AngleDeg);
+                ApplyInspectionRotationToShape(shape, canvasRoi.AngleDeg);
             }
 
             return shape;
@@ -2011,6 +2012,11 @@ namespace BrakeDiscInspector_GUI_ROI
                 angle =>
                 {
                     CurrentRoi.AngleDeg = angle; // rotación en tiempo real
+                    UpdateInspectionShapeRotation(angle);
+                    if (_layout?.Inspection != null)
+                    {
+                        _layout.Inspection.AngleDeg = angle;
+                    }
                     CanvasROI.InvalidateVisual();
                 },
                 CurrentRoi.AngleDeg
@@ -2208,6 +2214,10 @@ namespace BrakeDiscInspector_GUI_ROI
                 {
                     CurrentRoi.AngleDeg = angle;   // rotación en tiempo real
                     UpdateInspectionShapeRotation(angle);
+                    if (_layout?.Inspection != null)
+                    {
+                        _layout.Inspection.AngleDeg = angle;
+                    }
                 },
                 CurrentRoi.AngleDeg
             );
@@ -2233,6 +2243,8 @@ namespace BrakeDiscInspector_GUI_ROI
         {
             if (shape.Tag is not RoiModel roiModel)
                 return;
+
+            roiModel.AngleDeg = angle;
 
             double width = !double.IsNaN(shape.Width) && shape.Width > 0 ? shape.Width : roiModel.Width;
             double height = !double.IsNaN(shape.Height) && shape.Height > 0 ? shape.Height : roiModel.Height;
@@ -2276,6 +2288,11 @@ namespace BrakeDiscInspector_GUI_ROI
                 return;
 
             ApplyInspectionRotationToShape(inspectionShape, angle);
+
+            if (_layout?.Inspection != null)
+            {
+                _layout.Inspection.AngleDeg = angle;
+            }
         }
 
         private void RepositionRotateAdorner()
@@ -2364,6 +2381,8 @@ namespace BrakeDiscInspector_GUI_ROI
 
             double scale = displayRect.Width / pw;
 
+            result.AngleDeg = roiCanvas.AngleDeg;
+
             if (result.Shape == RoiShape.Rectangle)
             {
                 result.X = roiCanvas.X / scale;
@@ -2399,6 +2418,8 @@ namespace BrakeDiscInspector_GUI_ROI
                 return result;
 
             double scale = displayRect.Width / pw;
+
+            result.AngleDeg = roiImage.AngleDeg;
 
             if (result.Shape == RoiShape.Rectangle)
             {
