@@ -43,7 +43,7 @@ Guía de **logging y trazabilidad** para el backend (Flask) y la GUI (WPF). El o
   - Parámetros opcionales (mask/annulus presentes o no).
   - Resultado: `label`, `score`, `threshold` (redondeado).
 - **/train_status**: respuesta enriquecida con `state`, `threshold`, `artifacts.*`, `model_runtime` y `log_tail`.
-- **/match_one** (si se usa): similitud/resultado.
+- **/match_master** (alias `/match_one`): estado (`stage`), `found`, `confidence`, `tm_best/tm_thr` y métricas del detector.
 - **Errores**: traza con `logger.exception(...)`.
 
 Ejemplo (pseudocódigo):

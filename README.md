@@ -137,8 +137,10 @@ BrakeDiscInspector/
 ### `/train_status` (GET)
 - Retorna info del modelo cargado y metadata de artefactos (tamaño, timestamp, tail del log, threshold cargado, etc.).
 
-### `/match_one` (POST)
-- (Opcional) Matching por plantilla o ficheros.
+### `/match_master` (POST) — alias `/match_one`
+- Matching por plantilla entre `image` y `template` enviados como `multipart/form-data`.
+- Parámetros opcionales: `thr`, `tm_thr`, `feature` (`auto|sift|orb|tm_rot|geom`), `rot_range`, `scale_min`, `scale_max`, `search_x/y/w/h`, `debug`.
+- Respuesta: campos como `found`, `center_x`, `center_y`, `confidence`, `stage`, `tm_best`, `tm_thr`, `sift_orb` y bloques `debug` cuando se solicitan.
 
 > Detalles completos en [API_REFERENCE.md](API_REFERENCE.md)
 

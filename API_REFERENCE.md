@@ -119,20 +119,61 @@ curl -X POST http://127.0.0.1:5000/analyze   -F "file=@crop.png"   -F "annulus={
 
 ---
 
-### 1.3 `/match_one` (POST)
+### 1.3 `/match_master` (POST) — alias `/match_one`
 
-- **Descripción**: Endpoint experimental para matching basado en plantilla o comparación directa de archivos.
-- **URL**: `http://<host>:5000/match_one`
+- **Descripción**: Matching maestro que localiza la plantilla (`template`) dentro de una imagen (`image`).
+- **URL**: `http://<host>:5000/match_master` (compatible con `/match_one`).
 - **Método**: POST
 
-#### Entrada
-- `template` o `file1` + `file2`
+#### Entrada (`multipart/form-data`)
+- `image`: captura donde buscar (obligatoria).
+- `template`: plantilla de referencia (obligatoria, se acepta PNG con canal alfa para máscara implícita).
+- Parámetros opcionales:
+  - `feature`: `auto` (por defecto) / `sift` / `orb` / `tm_rot` / `geom`.
+  - `thr`: umbral de confianza para coincidencia geométrica/SIFT-ORB (por defecto `0.6`).
+  - `tm_thr`: umbral de template matching (`0.8` por defecto).
+  - `rot_range`: rango de rotaciones ±grados para `tm_rot`.
+  - `scale_min` / `scale_max`: escalas mín./máx. para `tm_rot`.
+  - `search_x`, `search_y`, `search_w`, `search_h`: ROI para limitar la búsqueda.
+  - `debug`: `1/true` para adjuntar capturas de depuración codificadas en Base64.
 
-#### Respuesta
+#### Respuesta (ejemplo `found=true`)
 ```json
 {
-  "similarity": 0.94,
-  "matched": true
+  "found": true,
+  "stage": "TM_OK",
+  "center_x": 412.5,
+  "center_y": 298.0,
+  "confidence": 0.91,
+  "tm_best": 0.91,
+  "tm_thr": 0.8,
+  "bbox": [380.0, 260.0, 65.0, 76.0],
+  "sift_orb": {
+    "detector": "auto->orb",
+    "kp_tpl": 523,
+    "kp_img": 497,
+    "matches": 480,
+    "good": 132,
+    "confidence": 0.86
+  }
+}
+```
+
+#### Respuesta (ejemplo `found=false`)
+```json
+{
+  "found": false,
+  "stage": "TM_FAIL",
+  "reason": "tm_below_threshold",
+  "tm_best": 0.42,
+  "tm_thr": 0.8,
+  "crop_off": [0, 0],
+  "sift_orb": {
+    "detector": "auto->orb",
+    "matches": 12,
+    "good": 1,
+    "fail_reason": "not_enough_good_matches"
+  }
 }
 ```
 
