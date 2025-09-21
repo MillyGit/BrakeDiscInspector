@@ -166,6 +166,8 @@ Más detalles en [ROI_AND_MATCHING_SPEC.md](ROI_AND_MATCHING_SPEC.md).
 - **[DEPLOYMENT.md](DEPLOYMENT.md)** → despliegue local/prod y tests.
 - **[LOGGING.md](LOGGING.md)** → niveles y rutas de logs.
 - **[CONTRIBUTING.md](CONTRIBUTING.md)** → normas para contribuir.
+- **[MCP Overview](docs/mcp/overview.md)** → responsables, cadencia de releases y registro de artefactos.
+- **[MCP Latest Updates](docs/mcp/latest_updates.md)** → historial cronológico de decisiones MCP.
 
 ---
 
