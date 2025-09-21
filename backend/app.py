@@ -266,6 +266,7 @@ def upload_roi():
     (sub / name).write_bytes(f.read())
     return jsonify({"ok": True, "saved": str(sub / name)})
 
+@app.post("/match_one")
 @app.route("/match_master", methods=["POST"])
 def match_master():
     """
