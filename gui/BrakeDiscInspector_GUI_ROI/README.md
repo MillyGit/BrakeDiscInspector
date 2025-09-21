@@ -29,7 +29,7 @@ Sistema de inspección visual de discos de freno mediante GUI en C# WPF y backen
 
 ## 4. Backend (Python)
 - **app.py**: servidor Flask con endpoints:
-  - `/match_master`
+  - `/match_master` (alias `/match_one`)
   - `/analyze`
   - `/train_status`
 - **matcher.py**: lógica de matching ORB/SIFT.

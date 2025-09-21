@@ -82,6 +82,39 @@ def _encode_png(img: np.ndarray) -> Optional[str]:
     except Exception:
         return None
 
+
+def _generate_heatmap_b64(rgb_img: np.ndarray, mask: Optional[np.ndarray] = None) -> Optional[str]:
+    """Devuelve un heatmap tipo JET codificado en base64 (sin prefijo data URI)."""
+    try:
+        if rgb_img.ndim != 3 or rgb_img.shape[2] != 3:
+            return None
+        if rgb_img.size == 0:
+            return None
+        arr = np.ascontiguousarray(rgb_img.astype(np.uint8))
+        gray = cv2.cvtColor(arr, cv2.COLOR_RGB2GRAY)
+        lap = cv2.Laplacian(gray, cv2.CV_32F, ksize=3)
+        lap = np.abs(lap)
+        lap = cv2.GaussianBlur(lap, (5, 5), 0)
+        norm = cv2.normalize(lap, None, 0, 255, cv2.NORM_MINMAX)
+        norm = norm.astype(np.uint8)
+        heat = cv2.applyColorMap(norm, cv2.COLORMAP_JET)
+        if mask is not None:
+            mask_arr = np.array(mask, dtype=np.uint8)
+            if mask_arr.ndim == 2:
+                mask_u8 = np.where(mask_arr > 0, 255, 0).astype(np.uint8)
+            elif mask_arr.ndim == 3:
+                mask_u8 = np.where(mask_arr[..., 0] > 0, 255, 0).astype(np.uint8)
+            else:
+                mask_u8 = None
+            if mask_u8 is not None:
+                heat = cv2.bitwise_and(heat, heat, mask=mask_u8)
+        ok, buf = cv2.imencode(".png", heat)
+        if not ok:
+            return None
+        return base64.b64encode(buf.tobytes()).decode("ascii")
+    except Exception:
+        return None
+
 def _finite(x, lo=None, hi=None):
     """Devuelve float finito (clip a [lo,hi]) o None si NaN/Inf/err."""
     try:
@@ -233,6 +266,7 @@ def upload_roi():
     (sub / name).write_bytes(f.read())
     return jsonify({"ok": True, "saved": str(sub / name)})
 
+@app.post("/match_one")
 @app.route("/match_master", methods=["POST"])
 def match_master():
     """
@@ -264,14 +298,6 @@ def match_master():
             cv2.ORB_create(nfeatures=2000, scaleFactor=1.2, nlevels=8, edgeThreshold=31, patchSize=31),
             ("orb" if det == "orb" else "auto->orb"),
         )
-
-    def _match_template(img_gray, tpl_gray, mask=None):
-        if mask is not None:
-            try:
-                return cv2.matchTemplate(img_gray, tpl_gray, cv2.TM_CCORR_NORMED, mask=mask), cv2.TM_CCORR_NORMED
-            except TypeError:
-                pass
-        return cv2.matchTemplate(img_gray, tpl_gray, cv2.TM_CCOEFF_NORMED), cv2.TM_CCOEFF_NORMED
 
     # ---------- inputs ----------
     file_img = request.files.get("image")
@@ -308,21 +334,6 @@ def match_master():
         alpha   = None
 
     # máscara desde la plantilla
-    def _build_mask_from_tpl(bgr, alpha):
-        if alpha is not None:
-            m = (alpha > 0).astype(np.uint8) * 255
-        else:
-            g = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
-            zeros = int((g == 0).sum())
-            if zeros > 0.05 * g.size:
-                _, m = cv2.threshold(g, 0, 255, cv2.THRESH_BINARY)
-            else:
-                m = None
-        if m is not None:
-            k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
-            m = cv2.morphologyEx(m, cv2.MORPH_ERODE, k, iterations=1)
-        return m
-
     mask_tpl = _build_mask_from_tpl(tpl_bgr, alpha)
 
     # ---------- SEARCH ROI opcional ----------
@@ -346,48 +357,6 @@ def match_master():
     tpl_g = cv2.cvtColor(tpl_bgr, cv2.COLOR_BGR2GRAY)
 
     # ---------- bloque debug (opcional, igual que tu versión) ----------
-    def _encode_png(img):
-        try:
-            ok, buf = cv2.imencode(".png", img)
-            if not ok: return None
-            return "data:image/png;base64," + base64.b64encode(buf.tobytes()).decode("ascii")
-        except Exception:
-            return None
-
-    def _build_debug_block(img_bgr, tpl_bgr, mask_tpl):
-        dbg = {}
-        img_gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
-        b, g, r = cv2.split(img_bgr)
-        y = img_gray.astype(np.float32)
-        mad = (np.abs(r.astype(np.float32) - y) +
-               np.abs(g.astype(np.float32) - y) +
-               np.abs(b.astype(np.float32) - y)) / 3.0
-        mad = cv2.normalize(mad, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
-        color_heat_img = cv2.applyColorMap(mad, cv2.COLORMAP_JET)
-
-        dbg["gray_png"]       = _encode_png(img_gray)
-        dbg["color_loss_png"] = _encode_png(color_heat_img)
-
-        tpl_g2 = cv2.cvtColor(tpl_bgr, cv2.COLOR_BGR2GRAY)
-        b2, g2, r2 = cv2.split(tpl_bgr)
-        y2 = tpl_g2.astype(np.float32)
-        mad2 = (np.abs(r2.astype(np.float32) - y2) +
-                np.abs(g2.astype(np.float32) - y2) +
-                np.abs(b2.astype(np.float32) - y2)) / 3.0
-        mad2 = cv2.normalize(mad2, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
-        color_heat_tpl = cv2.applyColorMap(mad2, cv2.COLORMAP_JET)
-        if mask_tpl is not None:
-            m3 = cv2.merge([mask_tpl, mask_tpl, mask_tpl])
-            color_heat_tpl = np.where(m3 > 0, color_heat_tpl, 0)
-            tpl_g_vis = np.where(mask_tpl > 0, tpl_g2, 0)
-        else:
-            tpl_g_vis = tpl_g2
-
-        dbg["mask_png"]           = _encode_png(mask_tpl) if mask_tpl is not None else None
-        dbg["tpl_gray_png"]       = _encode_png(tpl_g_vis)
-        dbg["tpl_color_loss_png"] = _encode_png(color_heat_tpl)
-        return dbg
-
     debug_block = _build_debug_block(img_np, tpl_bgr, mask_tpl) if dbg_req else None
 
     # Helper para ajustar salida a coordenadas absolutas de la imagen original
@@ -660,21 +629,113 @@ def match_master():
     
 @app.post("/analyze")
 def analyze():
-    """
-    Stub temporal: recibe un 'image' (PNG del ROI de inspección),
-    calcula una métrica simple y devuelve label/score.
-    """
-    f = request.files.get("image")
-    if not f:
-        return jsonify({"ok": False, "error": "no image"}), 400
+    ok, msg = _ensure_model()
+    if not ok:
+        return jsonify({"error": f"model not loaded: {msg}"}), 503
+
+    file_storage = request.files.get("file")
+    if file_storage is None:
+        return jsonify({"error": "missing file"}), 400
+
+    data = file_storage.read()
+    if not data:
+        return jsonify({"error": "empty file"}), 400
+
     try:
-        arr = np.array(Image.open(io.BytesIO(f.read())).convert("L"))
-        # métrica simple: media de intensidad normalizada
-        score = float(arr.mean()) / 255.0
-        label = "good" if score < 0.5 else "defective"
-        return jsonify({"ok": True, "label": label, "score": score})
-    except Exception as e:
-        return jsonify({"ok": False, "error": str(e)}), 500
+        pil_src = Image.open(io.BytesIO(data))
+    except Exception:
+        return jsonify({"error": "invalid image"}), 400
+
+    try:
+        rgba = np.array(pil_src.convert("RGBA"), dtype=np.uint8)
+    except Exception:
+        return jsonify({"error": "invalid image"}), 400
+
+    if rgba.ndim != 3 or rgba.shape[2] < 3:
+        return jsonify({"error": "invalid image"}), 400
+
+    rgb = rgba[..., :3]
+    if rgb.size == 0:
+        return jsonify({"error": "empty image"}), 400
+
+    mask_bool: Optional[np.ndarray] = None
+    if rgba.shape[2] == 4:
+        alpha_mask = rgba[..., 3] > 0
+        if np.any(~alpha_mask):
+            mask_bool = alpha_mask
+
+    mask_file = request.files.get("mask")
+    if mask_file and mask_file.filename:
+        mask_bytes = mask_file.read()
+        if not mask_bytes:
+            return jsonify({"error": "empty mask"}), 400
+        try:
+            mask_img = Image.open(io.BytesIO(mask_bytes)).convert("L")
+            mask_arr = np.array(mask_img, dtype=np.uint8)
+        except Exception:
+            return jsonify({"error": "invalid mask"}), 400
+        if mask_arr.shape != rgb.shape[:2]:
+            return jsonify({"error": "mask size mismatch"}), 400
+        mask_from_file = mask_arr > 0
+        mask_bool = mask_from_file if mask_bool is None else (mask_bool & mask_from_file)
+    else:
+        annulus_raw = request.form.get("annulus")
+        if annulus_raw:
+            try:
+                annulus_json = json.loads(annulus_raw)
+                cx = float(annulus_json["cx"])
+                cy = float(annulus_json["cy"])
+                ro = float(annulus_json["ro"])
+                ri_raw = annulus_json.get("ri", 0.0)
+                ri = float(ri_raw) if ri_raw is not None else 0.0
+            except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+                return jsonify({"error": "invalid annulus"}), 400
+            if not np.isfinite(cx) or not np.isfinite(cy) or not np.isfinite(ro) or not np.isfinite(ri):
+                return jsonify({"error": "invalid annulus"}), 400
+            if ro <= 0 or ro <= ri:
+                return jsonify({"error": "invalid annulus"}), 400
+            h, w = rgb.shape[:2]
+            yy, xx = np.ogrid[:h, :w]
+            dist2 = (xx - cx) ** 2 + (yy - cy) ** 2
+            ann_mask = dist2 <= (ro ** 2)
+            if ri > 0:
+                ann_mask &= dist2 >= (ri ** 2)
+            mask_bool = ann_mask if mask_bool is None else (mask_bool & ann_mask)
+
+    rgb_for_model = rgb.copy()
+    if mask_bool is not None:
+        rgb_for_model[~mask_bool] = 0
+
+    try:
+        pre_cfg = _load_pre_cfg_from_request()
+        arr = preprocess_for_model(Image.fromarray(rgb_for_model), (600, 600), pre_cfg)
+        batch = np.expand_dims(arr, axis=0)
+        preds = _ensure_model.model.predict(batch, verbose=0).reshape((-1,))
+        score_raw = float(preds[0]) if preds.size else 0.0
+        score = _finite(score_raw, lo=0.0, hi=1.0)
+        if score is None:
+            raise ValueError("invalid score")
+        threshold = getattr(_ensure_model, "thr", 0.5)
+        thr = _finite(threshold, lo=0.0, hi=1.0)
+        if thr is None:
+            thr = 0.5
+        label = "NG" if score >= thr else "OK"
+        heatmap_b64 = _generate_heatmap_b64(rgb_for_model, mask_bool)
+        if heatmap_b64 is None:
+            blank = np.zeros((rgb_for_model.shape[0], rgb_for_model.shape[1], 3), dtype=np.uint8)
+            ok_png, buf = cv2.imencode(".png", blank)
+            heatmap_b64 = base64.b64encode(buf.tobytes()).decode("ascii") if ok_png else ""
+        return jsonify({
+            "label": label,
+            "score": float(score),
+            "threshold": float(thr),
+            "heatmap_png_b64": heatmap_b64,
+        })
+    except json.JSONDecodeError:
+        return jsonify({"error": "invalid annulus"}), 400
+    except Exception as exc:
+        log.exception("/analyze failed: %s", exc)
+        return jsonify({"error": "inference failed"}), 500
 
 
 # ========= /train_status =========
