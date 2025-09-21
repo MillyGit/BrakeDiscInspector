@@ -38,7 +38,8 @@ namespace BrakeDiscInspector_GUI_ROI
         private bool _isRotating;
         private double _rotationAngleAtDragStart;
         private double _rotationAccumulatedAngle;
-        private Point _rotationPivot;
+        private Point _rotationPivotWorld;
+        private UIElement? _rotationReferenceElement;
         private double _rotationPointerAngleAtDragStartDeg;
 
         public RoiAdorner(UIElement adornedElement, Action<RoiAdornerChangeKind, RoiModel> onChanged, Action<string> log)
@@ -344,19 +345,22 @@ namespace BrakeDiscInspector_GUI_ROI
             _rotationAngleAtDragStart = NormalizeAngle(GetCurrentAngle());
             _rotationAccumulatedAngle = 0;
 
+            _rotationReferenceElement = GetRotationReferenceElement();
+            UIElement referenceElement = _rotationReferenceElement ?? _shape;
+
             var (width, height) = GetShapeSize();
             Point pivotLocal = GetRotationPivotLocalPoint(roi, width, height);
             UpdateRotationCenterIfNeeded(roi, width, height);
-            _rotationPivot = pivotLocal;
+            _rotationPivotWorld = _shape.TranslatePoint(pivotLocal, referenceElement);
 
-            Point pointerStart = Mouse.GetPosition(_shape);
-            Vector pointerVector = new Vector(pointerStart.X - _rotationPivot.X, pointerStart.Y - _rotationPivot.Y);
+            Point pointerStart = Mouse.GetPosition(referenceElement);
+            Vector pointerVector = new Vector(pointerStart.X - _rotationPivotWorld.X, pointerStart.Y - _rotationPivotWorld.Y);
             _rotationPointerAngleAtDragStartDeg = Math.Atan2(pointerVector.Y, pointerVector.X) * 180.0 / Math.PI;
 
             SetNonRotationThumbsEnabled(false);
             _rotationThumb.IsHitTestVisible = true;
 
-            _log($"[rotate] start roi={roi.Id} angle={_rotationAngleAtDragStart:0.##} pivot=({_rotationPivot.X:0.##},{_rotationPivot.Y:0.##}) pointerAngle={_rotationPointerAngleAtDragStartDeg:0.##}");
+            _log($"[rotate] start roi={roi.Id} angle={_rotationAngleAtDragStart:0.##} pivot=({_rotationPivotWorld.X:0.##},{_rotationPivotWorld.Y:0.##}) pointerAngle={_rotationPointerAngleAtDragStartDeg:0.##}");
 
             _onChanged(RoiAdornerChangeKind.DragStarted, roi);
         }
@@ -366,8 +370,10 @@ namespace BrakeDiscInspector_GUI_ROI
             if (!_isRotating || _shape.Tag is not RoiModel roi)
                 return;
 
-            Point pointerPosition = Mouse.GetPosition(_shape);
-            Vector pointerVector = new Vector(pointerPosition.X - _rotationPivot.X, pointerPosition.Y - _rotationPivot.Y);
+            UIElement referenceElement = _rotationReferenceElement ?? _shape;
+
+            Point pointerPosition = Mouse.GetPosition(referenceElement);
+            Vector pointerVector = new Vector(pointerPosition.X - _rotationPivotWorld.X, pointerPosition.Y - _rotationPivotWorld.Y);
             double pointerAngleDeg = Math.Atan2(pointerVector.Y, pointerVector.X) * 180.0 / Math.PI;
 
             double angleDeltaDeg = NormalizeAngle(pointerAngleDeg - _rotationPointerAngleAtDragStartDeg);
@@ -390,6 +396,7 @@ namespace BrakeDiscInspector_GUI_ROI
 
             _isRotating = false;
             _rotationAccumulatedAngle = 0;
+            _rotationReferenceElement = null;
 
             if (_shape.Tag is RoiModel roi)
             {
@@ -440,6 +447,22 @@ namespace BrakeDiscInspector_GUI_ROI
             ellipseFactory.SetValue(Shape.StrokeThicknessProperty, thickness);
             template.VisualTree = ellipseFactory;
             return template;
+        }
+
+        private UIElement? GetRotationReferenceElement()
+        {
+            if (_shape.Parent is UIElement directParent)
+            {
+                return directParent;
+            }
+
+            DependencyObject? parent = VisualTreeHelper.GetParent(_shape);
+            while (parent != null && !(parent is UIElement))
+            {
+                parent = VisualTreeHelper.GetParent(parent);
+            }
+
+            return parent as UIElement;
         }
 
         private void SetNonRotationThumbsEnabled(bool enabled)
