@@ -931,7 +931,7 @@ namespace BrakeDiscInspector_GUI_ROI
                 AppendLog($"[wizard] layout save FAILED => {layoutPath} :: {ex}");
             }
 
-            RedrawOverlay();
+            ClearPersistedRoisFromCanvas();
 
             // IMPORTANTE: recalcula habilitaciones (esto ya deja el botón "Analizar Master" activo si M1+M2 están listos)
             UpdateWizardState();
@@ -2400,6 +2400,22 @@ namespace BrakeDiscInspector_GUI_ROI
             {
                 if (CanvasROI.Children[i] is FrameworkElement fe && Equals(fe.Tag, "analysis-mark"))
                     CanvasROI.Children.RemoveAt(i);
+            }
+        }
+
+        private void ClearPersistedRoisFromCanvas()
+        {
+            if (CanvasROI == null) return;
+
+            var persistedShapes = CanvasROI.Children
+                .OfType<Shape>()
+                .Where(shape => shape.Tag is RoiModel)
+                .ToList();
+
+            foreach (var shape in persistedShapes)
+            {
+                RemoveRoiAdorners(shape);
+                CanvasROI.Children.Remove(shape);
             }
         }
 
