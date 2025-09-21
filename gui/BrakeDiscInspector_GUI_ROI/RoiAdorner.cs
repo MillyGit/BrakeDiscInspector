@@ -604,19 +604,7 @@ namespace BrakeDiscInspector_GUI_ROI
             double safeWidth = double.IsNaN(width) || width <= 0 ? 0 : width;
             double safeHeight = double.IsNaN(height) || height <= 0 ? 0 : height;
 
-            double halfWidth = safeWidth / 2.0;
-            double halfHeight = safeHeight / 2.0;
-            Point center = new Point(halfWidth, halfHeight);
-
-            RoiShape shape = roi?.Shape ?? RoiShape.Rectangle;
-            Vector offset = shape switch
-            {
-                RoiShape.Rectangle => GetCornerLocalVector(Corner.NE, safeWidth, safeHeight),
-                RoiShape.Circle or RoiShape.Annulus => new Vector(halfWidth, 0),
-                _ => new Vector(0, 0)
-            };
-
-            return new Point(center.X + offset.X, center.Y + offset.Y);
+            return new Point(safeWidth / 2.0, safeHeight / 2.0);
         }
 
         internal static Point GetRotationPivotWorldPoint(RoiModel? roi, double left, double top, double width, double height)
