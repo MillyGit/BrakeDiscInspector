@@ -2573,13 +2573,44 @@ namespace BrakeDiscInspector_GUI_ROI
             }
         }
 
+        private RoiModel BuildCurrentRoiModel(RoiRole? roleOverride = null)
+        {
+            double width = Math.Max(CurrentRoi.Width, 0.0);
+            double height = Math.Max(CurrentRoi.Height, 0.0);
+            double halfW = width / 2.0;
+            double halfH = height / 2.0;
+
+            var roiModel = new RoiModel
+            {
+                Shape = RoiShape.Rectangle,
+                X = CurrentRoi.X - halfW,
+                Y = CurrentRoi.Y - halfH,
+                Width = width,
+                Height = height,
+                AngleDeg = CurrentRoi.AngleDeg,
+                CX = CurrentRoi.X,
+                CY = CurrentRoi.Y,
+                R = Math.Max(width, height) / 2.0
+            };
+
+            if (!string.IsNullOrWhiteSpace(CurrentRoi.Legend))
+                roiModel.Label = CurrentRoi.Legend;
+
+            var role = roleOverride ?? _layout.Inspection?.Role ?? GetCurrentStateRole();
+            if (role.HasValue)
+                roiModel.Role = role.Value;
+
+            return roiModel;
+        }
+
         private Mat GetRotatedCrop(Mat bgr)
         {
             CurrentRoi.EnforceMinSize(10, 10);
-            if (!TryBuildRoiCropInfo(CurrentRoi, out var info))
+            var currentModel = BuildCurrentRoiModel();
+            if (!TryBuildRoiCropInfo(currentModel, out var info))
                 return new Mat();
 
-            if (TryGetRotatedCrop(bgr, info, CurrentRoi.AngleDeg, out var crop, out _))
+            if (TryGetRotatedCrop(bgr, info, currentModel.AngleDeg, out var crop, out _))
                 return crop;
 
             return new Mat();
