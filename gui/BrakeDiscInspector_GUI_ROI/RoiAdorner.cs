@@ -159,16 +159,28 @@ namespace BrakeDiscInspector_GUI_ROI
 
             // 2) Corners y edges (posicionados alrededor)
             double r = 6;
-            double angleRad = GetCurrentAngle() * Math.PI / 180.0;
 
             RoiModel? roi = _shape.Tag as RoiModel;
-            Point pivotLocal = GetRotationPivotLocalPoint(roi, w, h);
+            bool hasRotateTransform = _shape.RenderTransform is RotateTransform;
 
             Point[] cornerPositions = new Point[4];
-            cornerPositions[0] = RotatePointAroundPivot(GetCornerLocalPoint(Corner.NW, w, h), pivotLocal, angleRad);
-            cornerPositions[1] = RotatePointAroundPivot(GetCornerLocalPoint(Corner.NE, w, h), pivotLocal, angleRad);
-            cornerPositions[2] = RotatePointAroundPivot(GetCornerLocalPoint(Corner.SE, w, h), pivotLocal, angleRad);
-            cornerPositions[3] = RotatePointAroundPivot(GetCornerLocalPoint(Corner.SW, w, h), pivotLocal, angleRad);
+            if (hasRotateTransform)
+            {
+                cornerPositions[0] = GetCornerLocalPoint(Corner.NW, w, h);
+                cornerPositions[1] = GetCornerLocalPoint(Corner.NE, w, h);
+                cornerPositions[2] = GetCornerLocalPoint(Corner.SE, w, h);
+                cornerPositions[3] = GetCornerLocalPoint(Corner.SW, w, h);
+            }
+            else
+            {
+                double angleRad = GetCurrentAngle() * Math.PI / 180.0;
+                Point pivotLocal = GetRotationPivotLocalPoint(roi, w, h);
+
+                cornerPositions[0] = RotatePointAroundPivot(GetCornerLocalPoint(Corner.NW, w, h), pivotLocal, angleRad);
+                cornerPositions[1] = RotatePointAroundPivot(GetCornerLocalPoint(Corner.NE, w, h), pivotLocal, angleRad);
+                cornerPositions[2] = RotatePointAroundPivot(GetCornerLocalPoint(Corner.SE, w, h), pivotLocal, angleRad);
+                cornerPositions[3] = RotatePointAroundPivot(GetCornerLocalPoint(Corner.SW, w, h), pivotLocal, angleRad);
+            }
 
             for (int i = 0; i < _corners.Length; i++)
             {
