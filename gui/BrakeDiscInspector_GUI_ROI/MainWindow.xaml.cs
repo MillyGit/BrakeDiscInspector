@@ -477,6 +477,7 @@ namespace BrakeDiscInspector_GUI_ROI
             AppendLog($"[draw] ROI draft = {DescribeRoi(_tmpBuffer)}");
 
             _previewShape.Tag = canvasDraft;
+            ApplyRoiRotationToShape(_previewShape, canvasDraft.AngleDeg);
             if (_state == MasterState.DrawInspection)
             {
                 canvasDraft.Role = RoiRole.Inspection;
@@ -2343,10 +2344,6 @@ namespace BrakeDiscInspector_GUI_ROI
                 double left = Canvas.GetLeft(shape); if (double.IsNaN(left)) left = 0;
                 double top = Canvas.GetTop(shape); if (double.IsNaN(top)) top = 0;
                 AppendLog($"[overlay] add role={roi.Role} bounds=({left:0.##},{top:0.##},{shape.Width:0.##},{shape.Height:0.##}) angle={roi.AngleDeg:0.##}");
-                if (roi.Role == RoiRole.Inspection)
-                {
-                    ApplyInspectionRotationToShape(shape, roi.AngleDeg);
-                }
                 AttachRoiAdorner(shape);
             }
 
@@ -2395,16 +2392,12 @@ namespace BrakeDiscInspector_GUI_ROI
             }
 
             shape.Tag = canvasRoi;
+            ApplyRoiRotationToShape(shape, canvasRoi.AngleDeg);
             Panel.SetZIndex(shape, style.zIndex);
 
             double left = Canvas.GetLeft(shape); if (double.IsNaN(left)) left = 0;
             double top = Canvas.GetTop(shape); if (double.IsNaN(top)) top = 0;
             AppendLog($"[overlay] build role={roi.Role} shape={canvasRoi.Shape} bounds=({left:0.##},{top:0.##},{shape.Width:0.##},{shape.Height:0.##}) angle={canvasRoi.AngleDeg:0.##}");
-
-            if (roi.Role == RoiRole.Inspection)
-            {
-                ApplyInspectionRotationToShape(shape, canvasRoi.AngleDeg);
-            }
 
             return shape;
         }
@@ -2779,7 +2772,7 @@ namespace BrakeDiscInspector_GUI_ROI
             return null;
         }
 
-        private void ApplyInspectionRotationToShape(Shape shape, double angle)
+        private void ApplyRoiRotationToShape(Shape shape, double angle)
         {
             if (shape.Tag is not RoiModel roiModel)
                 return;
@@ -2831,7 +2824,7 @@ namespace BrakeDiscInspector_GUI_ROI
 
             AppendLog($"[rotate] update target angle={angle:0.##} {BuildShapeLogContext(inspectionShape)}");
 
-            ApplyInspectionRotationToShape(inspectionShape, angle);
+            ApplyRoiRotationToShape(inspectionShape, angle);
 
             if (_layout?.Inspection != null)
             {
