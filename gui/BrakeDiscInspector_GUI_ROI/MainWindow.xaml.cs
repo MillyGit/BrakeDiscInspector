@@ -1928,6 +1928,9 @@ namespace BrakeDiscInspector_GUI_ROI
                     return;
                 }
 
+                var roiRect = new Rect2d(cropInfo.Left, cropInfo.Top, cropInfo.Width, cropInfo.Height);
+                var pivotPoint = new Point2d(cropInfo.PivotX, cropInfo.PivotY);
+
                 Mat? alphaMask = null;
                 try
                 {
@@ -1938,7 +1941,7 @@ namespace BrakeDiscInspector_GUI_ROI
                     string fname = $"{tag}_{ts}.png";
                     var outPath = System.IO.Path.Combine(baseDir, fname);
                     Cv2.ImWrite(outPath, cropWithAlpha);
-                    AppendLog($"[preview] Guardado {fname} en {baseDir} (w={cropRect.Width} h={cropRect.Height} ang={roi.AngleDeg:0.##})");
+                    AppendLog($"[preview] Guardado {fname} en {baseDir} ROI=({roiRect.X:0.##},{roiRect.Y:0.##},{roiRect.Width:0.##},{roiRect.Height:0.##}) pivot=({pivotPoint.X:0.##},{pivotPoint.Y:0.##}) => crop=({cropRect.X},{cropRect.Y},{cropRect.Width},{cropRect.Height}) ang={roi.AngleDeg:0.##}");
                 }
                 finally
                 {
