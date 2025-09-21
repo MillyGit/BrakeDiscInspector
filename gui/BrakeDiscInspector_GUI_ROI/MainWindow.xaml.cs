@@ -2090,11 +2090,20 @@ namespace BrakeDiscInspector_GUI_ROI
 
             var pivot = new Point2f((float)info.PivotX, (float)info.PivotY);
             using var rotMat = Cv2.GetRotationMatrix2D(pivot, angleDeg, 1.0);
+            using var rotMatInverse = new Mat();
+            Cv2.InvertAffineTransform(rotMat, rotMatInverse);
+
+            double m00 = rotMatInverse.At<double>(0, 0);
+            double m01 = rotMatInverse.At<double>(0, 1);
+            double m02 = rotMatInverse.At<double>(0, 2);
+            double m10 = rotMatInverse.At<double>(1, 0);
+            double m11 = rotMatInverse.At<double>(1, 1);
+            double m12 = rotMatInverse.At<double>(1, 2);
 
             Point2f Transform(double x, double y)
             {
-                double newX = rotMat.At<double>(0, 0) * x + rotMat.At<double>(0, 1) * y + rotMat.At<double>(0, 2);
-                double newY = rotMat.At<double>(1, 0) * x + rotMat.At<double>(1, 1) * y + rotMat.At<double>(1, 2);
+                double newX = m00 * x + m01 * y + m02;
+                double newY = m10 * x + m11 * y + m12;
                 return new Point2f((float)newX, (float)newY);
             }
 
