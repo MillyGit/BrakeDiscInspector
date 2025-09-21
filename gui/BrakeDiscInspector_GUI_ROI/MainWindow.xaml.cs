@@ -785,6 +785,9 @@ namespace BrakeDiscInspector_GUI_ROI
         // ====== Guardar pasos del wizard ======
         private void BtnSaveMaster_Click(object sender, RoutedEventArgs e)
         {
+
+            var layoutPath = MasterLayoutManager.GetDefaultPath(_preset);
+
             if (_tmpBuffer is null)
             {
                 var previousState = _state;
@@ -805,7 +808,6 @@ namespace BrakeDiscInspector_GUI_ROI
                     return;
                 }
 
-                var layoutPath = MasterLayoutManager.GetDefaultPath(_preset);
                 Exception? clearException = null;
                 try
                 {
@@ -917,7 +919,6 @@ namespace BrakeDiscInspector_GUI_ROI
             // Limpia preview/adorner y persiste
             ClearPreview();
 
-            var layoutPath = MasterLayoutManager.GetDefaultPath(_preset);
             Exception? saveException = null;
             try
             {
