@@ -676,15 +676,40 @@ namespace BrakeDiscInspector_GUI_ROI
             if (shape is Rectangle)
             {
                 roi.Shape = RoiShape.Rectangle;
-                roi.X = x; roi.Y = y; roi.Width = w; roi.Height = h;
+                roi.X = x;
+                roi.Y = y;
+                roi.Width = w;
+                roi.Height = h;
+                roi.CX = x + w / 2.0;
+                roi.CY = y + h / 2.0;
+                roi.R = 0.0;
+                roi.RInner = 0.0;
             }
             else if (shape is Ellipse)
             {
-                var r = w / 2.0;
+                double radiusX = w / 2.0;
+                double radiusY = h / 2.0;
+                double centerX = x + radiusX;
+                double centerY = y + radiusY;
+
                 roi.Shape = roi.Shape == RoiShape.Annulus ? RoiShape.Annulus : RoiShape.Circle;
-                roi.CX = x + r; roi.CY = y + r; roi.R = r;
-                if (roi.Shape == RoiShape.Annulus && (roi.RInner <= 0 || roi.RInner >= roi.R))
-                    roi.RInner = roi.R * 0.6;
+                roi.X = x;
+                roi.Y = y;
+                roi.Width = w;
+                roi.Height = h;
+                roi.CX = centerX;
+                roi.CY = centerY;
+                roi.R = Math.Max(radiusX, radiusY);
+
+                if (roi.Shape == RoiShape.Annulus)
+                {
+                    if (roi.RInner <= 0 || roi.RInner >= roi.R)
+                        roi.RInner = roi.R * 0.6;
+                }
+                else
+                {
+                    roi.RInner = 0.0;
+                }
             }
         }
     }
