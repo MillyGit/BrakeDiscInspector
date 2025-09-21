@@ -2089,7 +2089,7 @@ namespace BrakeDiscInspector_GUI_ROI
             double height = Math.Max(1.0, info.Height);
 
             var pivot = new Point2f((float)info.PivotX, (float)info.PivotY);
-            using var rotMat = Cv2.GetRotationMatrix2D(pivot, angleDeg, 1.0);
+            using var rotMat = Cv2.GetRotationMatrix2D(pivot, -angleDeg, 1.0);
             using var rotMatInverse = new Mat();
             Cv2.InvertAffineTransform(rotMat, rotMatInverse);
 
