@@ -1784,7 +1784,7 @@ namespace BrakeDiscInspector_GUI_ROI
                     return;
                 }
 
-                if (!TryGetRotatedCrop(src, cropInfo.CenterX, cropInfo.CenterY, cropInfo.Width, cropInfo.Height, roi.AngleDeg,
+                if (!TryGetRotatedCrop(src, cropInfo, roi.AngleDeg,
                     out var cropMat, out var cropRect))
                 {
                     AppendLog("[preview] No se pudo obtener el recorte rotado.");
@@ -1817,24 +1817,31 @@ namespace BrakeDiscInspector_GUI_ROI
 
         private readonly struct RoiCropInfo
         {
-            public RoiCropInfo(RoiShape shape, double centerX, double centerY, double width, double height, double radius, double innerRadius)
+            public RoiCropInfo(RoiShape shape, double left, double top, double width, double height,
+                double pivotX, double pivotY, double radius, double innerRadius)
             {
                 Shape = shape;
-                CenterX = centerX;
-                CenterY = centerY;
+                Left = left;
+                Top = top;
                 Width = width;
                 Height = height;
+                PivotX = pivotX;
+                PivotY = pivotY;
                 Radius = radius;
                 InnerRadius = innerRadius;
             }
 
             public RoiShape Shape { get; }
-            public double CenterX { get; }
-            public double CenterY { get; }
+            public double Left { get; }
+            public double Top { get; }
             public double Width { get; }
             public double Height { get; }
+            public double PivotX { get; }
+            public double PivotY { get; }
             public double Radius { get; }
             public double InnerRadius { get; }
+            public double CenterX => Left + Width / 2.0;
+            public double CenterY => Top + Height / 2.0;
         }
 
         private bool TryBuildRoiCropInfo(RoiModel roi, out RoiCropInfo info)
@@ -1850,9 +1857,12 @@ namespace BrakeDiscInspector_GUI_ROI
                     {
                         double width = Math.Max(1.0, roi.Width);
                         double height = Math.Max(1.0, roi.Height);
-                        double centerX = roi.X + width / 2.0;
-                        double centerY = roi.Y + height / 2.0;
-                        info = new RoiCropInfo(roi.Shape, centerX, centerY, width, height, 0, 0);
+                        double left = roi.X;
+                        double top = roi.Y;
+                        var pivotLocal = RoiAdorner.GetRotationPivotLocalPoint(roi, width, height);
+                        double pivotX = left + pivotLocal.X;
+                        double pivotY = top + pivotLocal.Y;
+                        info = new RoiCropInfo(roi.Shape, left, top, width, height, pivotX, pivotY, 0, 0);
                         return true;
                     }
                 case RoiShape.Circle:
@@ -1865,8 +1875,13 @@ namespace BrakeDiscInspector_GUI_ROI
                         height = Math.Max(height, radius * 2.0);
                         double centerX = roi.CX;
                         double centerY = roi.CY;
+                        double left = centerX - width / 2.0;
+                        double top = centerY - height / 2.0;
+                        var pivotLocal = RoiAdorner.GetRotationPivotLocalPoint(roi, width, height);
+                        double pivotX = left + pivotLocal.X;
+                        double pivotY = top + pivotLocal.Y;
                         double inner = Math.Clamp(roi.RInner, 0, radius);
-                        info = new RoiCropInfo(roi.Shape, centerX, centerY, width, height, radius, inner);
+                        info = new RoiCropInfo(roi.Shape, left, top, width, height, pivotX, pivotY, radius, inner);
                         return true;
                     }
                 default:
@@ -1924,7 +1939,7 @@ namespace BrakeDiscInspector_GUI_ROI
             return mask;
         }
 
-        private bool TryGetRotatedCrop(Mat source, double centerX, double centerY, double width, double height, double angleDeg,
+        private bool TryGetRotatedCrop(Mat source, RoiCropInfo info, double angleDeg,
             out Mat crop, out OpenCvSharp.Rect cropRect)
         {
             crop = new Mat();
@@ -1933,10 +1948,10 @@ namespace BrakeDiscInspector_GUI_ROI
             if (source.Empty())
                 return false;
 
-            width = Math.Max(1.0, width);
-            height = Math.Max(1.0, height);
+            double width = Math.Max(1.0, info.Width);
+            double height = Math.Max(1.0, info.Height);
 
-            var pivot = new Point2f((float)centerX, (float)centerY);
+            var pivot = new Point2f((float)info.PivotX, (float)info.PivotY);
             using var rotMat = Cv2.GetRotationMatrix2D(pivot, angleDeg, 1.0);
 
             Point2f Transform(double x, double y)
@@ -1951,12 +1966,26 @@ namespace BrakeDiscInspector_GUI_ROI
             Cv2.WarpAffine(source, rotated, rotMat, new OpenCvSharp.Size(source.Width, source.Height),
                 InterpolationFlags.Linear, BorderTypes.Constant, border);
 
-            var rotatedCenter = Transform(centerX, centerY);
+            Point2f[] corners =
+            {
+                Transform(info.Left, info.Top),
+                Transform(info.Left + width, info.Top),
+                Transform(info.Left + width, info.Top + height),
+                Transform(info.Left, info.Top + height)
+            };
 
-            int w = (int)Math.Round(width);
-            int h = (int)Math.Round(height);
-            int x = (int)Math.Round(rotatedCenter.X - width / 2.0);
-            int y = (int)Math.Round(rotatedCenter.Y - height / 2.0);
+            double minX = corners.Min(pt => (double)pt.X);
+            double maxX = corners.Max(pt => (double)pt.X);
+            double minY = corners.Min(pt => (double)pt.Y);
+            double maxY = corners.Max(pt => (double)pt.Y);
+
+            int x = (int)Math.Floor(minX);
+            int y = (int)Math.Floor(minY);
+            int w = (int)Math.Ceiling(maxX) - x;
+            int h = (int)Math.Ceiling(maxY) - y;
+
+            w = Math.Max(w, 1);
+            h = Math.Max(h, 1);
 
             if (rotated.Width <= 0 || rotated.Height <= 0)
                 return false;
@@ -2503,14 +2532,11 @@ namespace BrakeDiscInspector_GUI_ROI
         private Mat GetRotatedCrop(Mat bgr)
         {
             CurrentRoi.EnforceMinSize(10, 10);
-            var info = new RoiCropInfo(RoiShape.Rectangle, CurrentRoi.X, CurrentRoi.Y,
-                Math.Max(1.0, CurrentRoi.Width), Math.Max(1.0, CurrentRoi.Height), 0, 0);
+            if (!TryBuildRoiCropInfo(CurrentRoi, out var info))
+                return new Mat();
 
-            if (TryGetRotatedCrop(bgr, info.CenterX, info.CenterY, info.Width, info.Height, CurrentRoi.AngleDeg,
-                out var crop, out _))
-            {
+            if (TryGetRotatedCrop(bgr, info, CurrentRoi.AngleDeg, out var crop, out _))
                 return crop;
-            }
 
             return new Mat();
         }
@@ -2636,8 +2662,9 @@ namespace BrakeDiscInspector_GUI_ROI
 
             double left = Canvas.GetLeft(shape); if (double.IsNaN(left)) left = 0;
             double top = Canvas.GetTop(shape); if (double.IsNaN(top)) top = 0;
-            double pivotLocalX = width / 2.0;
-            double pivotLocalY = height / 2.0;
+            var pivotLocal = RoiAdorner.GetRotationPivotLocalPoint(roiModel, width, height);
+            double pivotLocalX = pivotLocal.X;
+            double pivotLocalY = pivotLocal.Y;
             double pivotCanvasX = left + pivotLocalX;
             double pivotCanvasY = top + pivotLocalY;
 
@@ -2693,8 +2720,9 @@ namespace BrakeDiscInspector_GUI_ROI
                 return;
             }
 
-            double pivotLocalX = width / 2.0;
-            double pivotLocalY = height / 2.0;
+            var pivotLocal = RoiAdorner.GetRotationPivotLocalPoint(roiModel, width, height);
+            double pivotLocalX = pivotLocal.X;
+            double pivotLocalY = pivotLocal.Y;
 
             double left = Canvas.GetLeft(shape); if (double.IsNaN(left)) left = 0;
             double top = Canvas.GetTop(shape); if (double.IsNaN(top)) top = 0;

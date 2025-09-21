@@ -159,13 +159,15 @@ namespace BrakeDiscInspector_GUI_ROI
             // 2) Corners y edges (posicionados alrededor)
             double r = 6;
             double angleRad = GetCurrentAngle() * Math.PI / 180.0;
-            Point center = new Point(w / 2.0, h / 2.0);
+
+            RoiModel? roi = _shape.Tag as RoiModel;
+            Point pivotLocal = GetRotationPivotLocalPoint(roi, w, h);
 
             Point[] cornerPositions = new Point[4];
-            cornerPositions[0] = GetCornerPosition(center, new Vector(-w / 2.0, -h / 2.0), angleRad);
-            cornerPositions[1] = GetCornerPosition(center, new Vector(w / 2.0, -h / 2.0), angleRad);
-            cornerPositions[2] = GetCornerPosition(center, new Vector(w / 2.0, h / 2.0), angleRad);
-            cornerPositions[3] = GetCornerPosition(center, new Vector(-w / 2.0, h / 2.0), angleRad);
+            cornerPositions[0] = RotatePointAroundPivot(GetCornerLocalPoint(Corner.NW, w, h), pivotLocal, angleRad);
+            cornerPositions[1] = RotatePointAroundPivot(GetCornerLocalPoint(Corner.NE, w, h), pivotLocal, angleRad);
+            cornerPositions[2] = RotatePointAroundPivot(GetCornerLocalPoint(Corner.SE, w, h), pivotLocal, angleRad);
+            cornerPositions[3] = RotatePointAroundPivot(GetCornerLocalPoint(Corner.SW, w, h), pivotLocal, angleRad);
 
             for (int i = 0; i < _corners.Length; i++)
             {
@@ -274,8 +276,8 @@ namespace BrakeDiscInspector_GUI_ROI
             newHeight = Math.Max(minSize, newHeight);
 
             Corner anchorCorner = GetOppositeCorner(movingCorner);
-            Point anchorWorld = GetCornerWorldPoint(anchorCorner, x, y, w, h, angleRad);
-            Point newCenter = ComputeCenterFromAnchor(anchorWorld, anchorCorner, newWidth, newHeight, angleRad);
+            Point anchorWorld = GetCornerWorldPoint(anchorCorner, roi, x, y, w, h, angleRad);
+            Point newCenter = ComputeCenterFromAnchor(anchorWorld, anchorCorner, roi, newWidth, newHeight, angleRad);
 
             ApplyResizeResult(newCenter, newWidth, newHeight, angleDeg, roi);
         }
@@ -319,11 +321,11 @@ namespace BrakeDiscInspector_GUI_ROI
             newHeight = Math.Max(minSize, newHeight);
 
             var (anchorA, anchorB) = GetEdgeAnchorCorners(edge);
-            Point anchorAWorld = GetCornerWorldPoint(anchorA, x, y, w, h, angleRad);
-            Point anchorBWorld = GetCornerWorldPoint(anchorB, x, y, w, h, angleRad);
+            Point anchorAWorld = GetCornerWorldPoint(anchorA, roi, x, y, w, h, angleRad);
+            Point anchorBWorld = GetCornerWorldPoint(anchorB, roi, x, y, w, h, angleRad);
 
-            Point centerA = ComputeCenterFromAnchor(anchorAWorld, anchorA, newWidth, newHeight, angleRad);
-            Point centerB = ComputeCenterFromAnchor(anchorBWorld, anchorB, newWidth, newHeight, angleRad);
+            Point centerA = ComputeCenterFromAnchor(anchorAWorld, anchorA, roi, newWidth, newHeight, angleRad);
+            Point centerB = ComputeCenterFromAnchor(anchorBWorld, anchorB, roi, newWidth, newHeight, angleRad);
             Point newCenter = new Point((centerA.X + centerB.X) / 2.0, (centerA.Y + centerB.Y) / 2.0);
 
             ApplyResizeResult(newCenter, newWidth, newHeight, angleDeg, roi);
@@ -342,16 +344,10 @@ namespace BrakeDiscInspector_GUI_ROI
             _rotationAngleAtDragStart = NormalizeAngle(GetCurrentAngle());
             _rotationAccumulatedAngle = 0;
 
-            UpdateRotationCenterIfNeeded();
-            if (_shape.RenderTransform is RotateTransform rotateTransform)
-            {
-                _rotationPivot = new Point(rotateTransform.CenterX, rotateTransform.CenterY);
-            }
-            else
-            {
-                var (width, height) = GetShapeSize();
-                _rotationPivot = new Point(width / 2.0, height / 2.0);
-            }
+            var (width, height) = GetShapeSize();
+            Point pivotLocal = GetRotationPivotLocalPoint(roi, width, height);
+            UpdateRotationCenterIfNeeded(roi, width, height);
+            _rotationPivot = pivotLocal;
 
             Point pointerStart = Mouse.GetPosition(_shape);
             Vector pointerVector = new Vector(pointerStart.X - _rotationPivot.X, pointerStart.Y - _rotationPivot.Y);
@@ -463,8 +459,9 @@ namespace BrakeDiscInspector_GUI_ROI
         private void ApplyRotation(double angleDeg, RoiModel roi)
         {
             var (width, height) = GetShapeSize();
-            double centerX = width / 2.0;
-            double centerY = height / 2.0;
+            Point pivot = GetRotationPivotLocalPoint(roi, width, height);
+            double centerX = pivot.X;
+            double centerY = pivot.Y;
 
             if (_shape.RenderTransform is RotateTransform rotate)
             {
@@ -569,6 +566,13 @@ namespace BrakeDiscInspector_GUI_ROI
             };
         }
 
+        private static Point GetCornerLocalPoint(Corner corner, double width, double height)
+        {
+            Point center = new Point(width / 2.0, height / 2.0);
+            Vector offset = GetCornerLocalVector(corner, width, height);
+            return new Point(center.X + offset.X, center.Y + offset.Y);
+        }
+
         private static (Corner a, Corner b) GetEdgeAnchorCorners(Edge edge)
         {
             return edge switch
@@ -588,10 +592,37 @@ namespace BrakeDiscInspector_GUI_ROI
             return new Vector(vector.X * cos - vector.Y * sin, vector.X * sin + vector.Y * cos);
         }
 
-        private static Point GetCornerPosition(Point center, Vector localOffset, double angleRad)
+        private static Point RotatePointAroundPivot(Point point, Point pivot, double angleRad)
         {
-            Vector rotated = RotateVector(localOffset, angleRad);
-            return new Point(center.X + rotated.X, center.Y + rotated.Y);
+            Vector relative = point - pivot;
+            Vector rotated = RotateVector(relative, angleRad);
+            return new Point(pivot.X + rotated.X, pivot.Y + rotated.Y);
+        }
+
+        internal static Point GetRotationPivotLocalPoint(RoiModel? roi, double width, double height)
+        {
+            double safeWidth = double.IsNaN(width) || width <= 0 ? 0 : width;
+            double safeHeight = double.IsNaN(height) || height <= 0 ? 0 : height;
+
+            double halfWidth = safeWidth / 2.0;
+            double halfHeight = safeHeight / 2.0;
+            Point center = new Point(halfWidth, halfHeight);
+
+            RoiShape shape = roi?.Shape ?? RoiShape.Rectangle;
+            Vector offset = shape switch
+            {
+                RoiShape.Rectangle => GetCornerLocalVector(Corner.NE, safeWidth, safeHeight),
+                RoiShape.Circle or RoiShape.Annulus => new Vector(halfWidth, 0),
+                _ => new Vector(0, 0)
+            };
+
+            return new Point(center.X + offset.X, center.Y + offset.Y);
+        }
+
+        internal static Point GetRotationPivotWorldPoint(RoiModel? roi, double left, double top, double width, double height)
+        {
+            Point pivotLocal = GetRotationPivotLocalPoint(roi, width, height);
+            return new Point(left + pivotLocal.X, top + pivotLocal.Y);
         }
 
         private static Point MidPoint(Point a, Point b)
@@ -599,19 +630,25 @@ namespace BrakeDiscInspector_GUI_ROI
             return new Point((a.X + b.X) / 2.0, (a.Y + b.Y) / 2.0);
         }
 
-        private static Point GetCornerWorldPoint(Corner corner, double left, double top, double width, double height, double angleRad)
+        private static Point GetCornerWorldPoint(Corner corner, RoiModel? roi, double left, double top, double width, double height, double angleRad)
         {
-            Vector local = GetCornerLocalVector(corner, width, height);
-            Vector rotated = RotateVector(local, angleRad);
-            Point center = new Point(left + width / 2.0, top + height / 2.0);
-            return new Point(center.X + rotated.X, center.Y + rotated.Y);
+            Point pivotLocal = GetRotationPivotLocalPoint(roi, width, height);
+            Point cornerLocal = GetCornerLocalPoint(corner, width, height);
+            Vector relative = cornerLocal - pivotLocal;
+            Vector rotated = RotateVector(relative, angleRad);
+            Point pivotWorld = new Point(left + pivotLocal.X, top + pivotLocal.Y);
+            return new Point(pivotWorld.X + rotated.X, pivotWorld.Y + rotated.Y);
         }
 
-        private static Point ComputeCenterFromAnchor(Point anchorWorld, Corner anchorCorner, double width, double height, double angleRad)
+        private static Point ComputeCenterFromAnchor(Point anchorWorld, Corner anchorCorner, RoiModel? roi, double width, double height, double angleRad)
         {
-            Vector local = GetCornerLocalVector(anchorCorner, width, height);
-            Vector rotated = RotateVector(local, angleRad);
-            return new Point(anchorWorld.X - rotated.X, anchorWorld.Y - rotated.Y);
+            Point pivotLocal = GetRotationPivotLocalPoint(roi, width, height);
+            Point cornerLocal = GetCornerLocalPoint(anchorCorner, width, height);
+            Vector relative = cornerLocal - pivotLocal;
+            Vector rotated = RotateVector(relative, angleRad);
+            Point pivotWorld = new Point(anchorWorld.X - rotated.X, anchorWorld.Y - rotated.Y);
+            Point topLeft = new Point(pivotWorld.X - pivotLocal.X, pivotWorld.Y - pivotLocal.Y);
+            return new Point(topLeft.X + width / 2.0, topLeft.Y + height / 2.0);
         }
 
         private void ApplyResizeResult(Point center, double width, double height, double angleDeg, RoiModel roi)
@@ -631,14 +668,14 @@ namespace BrakeDiscInspector_GUI_ROI
             _onChanged(RoiAdornerChangeKind.Delta, roi);
         }
 
-        private void UpdateRotationCenterIfNeeded()
+        private void UpdateRotationCenterIfNeeded(RoiModel? roi, double width, double height)
         {
             if (_shape.RenderTransform is not RotateTransform rotate)
                 return;
 
-            var (width, height) = GetShapeSize();
-            rotate.CenterX = width / 2.0;
-            rotate.CenterY = height / 2.0;
+            Point pivot = GetRotationPivotLocalPoint(roi, width, height);
+            rotate.CenterX = pivot.X;
+            rotate.CenterY = pivot.Y;
         }
 
         private void SyncModelFromShape(Shape shape, RoiModel roi)
