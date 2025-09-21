@@ -2734,10 +2734,12 @@ namespace BrakeDiscInspector_GUI_ROI
                 rotate.Angle = angle;
                 rotate.CenterX = pivotLocalX;
                 rotate.CenterY = pivotLocalY;
+                InvalidateAdornerFor(shape);
             }
             else
             {
                 shape.RenderTransform = new RotateTransform(angle, pivotLocalX, pivotLocalY);
+                InvalidateAdornerFor(shape);
             }
 
             AppendLog($"[rotate] apply role={roiModel.Role} shape={roiModel.Shape} pivotLocal=({pivotLocalX:0.##},{pivotLocalY:0.##}) pivotCanvas=({pivotCanvasX:0.##},{pivotCanvasY:0.##}) angle={angle:0.##}");
