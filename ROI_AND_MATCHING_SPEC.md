@@ -63,25 +63,41 @@ El **annulus** es un mecanismo opcional para delimitar un área circular de inte
 
 ---
 
-## 4) Matching (experimental)
+## 4) Matching maestro
 
-Además del análisis de defectos, se soporta un endpoint `/match_one` que compara imágenes o templates.
+Además del análisis de defectos, el backend expone `/match_master` (alias `/match_one`) para localizar un patrón maestro en una captura.
 
-### 4.1 Métodos posibles
+### 4.1 Parámetros soportados
 
-- **Template matching**: correlación de un ROI contra una plantilla de referencia.  
-- **File matching**: comparación entre dos imágenes de entrada.  
+- `image` (**obligatorio**): imagen completa donde buscar.
+- `template` (**obligatorio**): plantilla; si es PNG con canal alfa, éste se usa como máscara.
+- `feature`: `auto` (default), `sift`, `orb`, `tm_rot` o `geom`.
+- `thr`, `tm_thr`: umbrales de coincidencia.
+- `rot_range`, `scale_min`, `scale_max`: rango y escalas para el modo `tm_rot`.
+- `search_x`, `search_y`, `search_w`, `search_h`: restringen la búsqueda a un ROI previo.
+- `debug`: `1/true` para recibir capturas `debug.*` codificadas en Base64.
 
 ### 4.2 Respuesta
 
+La respuesta incluye siempre `found`/`stage` y, cuando hay éxito, coordenadas absolutas (`center_x`, `center_y`) y métricas (`confidence`, `tm_best`, `tm_thr`, `sift_orb`, etc.). Ejemplo:
+
 ```json
 {
-  "similarity": 0.94,
-  "matched": true
+  "found": true,
+  "stage": "TM_ROT_OK",
+  "center_x": 410.2,
+  "center_y": 302.7,
+  "confidence": 0.93,
+  "tm_best": 0.93,
+  "tm_thr": 0.8,
+  "tm_rot": {
+    "angle_deg": -2.0,
+    "scale": 1.01
+  }
 }
 ```
 
-Donde `similarity` es un valor normalizado ∈ [0,1].
+Si no se alcanza el umbral configurado se devuelve `found=false` junto con `reason`, `tm_best`, `crop_off` y el bloque `sift_orb` indicando el detector usado o el fallo.
 
 ---
 

@@ -31,13 +31,17 @@ multipart/form-data
 - **Tipo**: `application/json`  
 - **Body**: vacío
 
-### 1.3 `/match_one`
+### 1.3 `/match_master` (alias `/match_one`)
 
-- **Método**: POST  
-- **Tipo**: `multipart/form-data`  
-- **Body**:
-  - `template`: archivo de plantilla, o  
-  - `file1` + `file2`: imágenes a comparar
+- **Método**: POST
+- **Tipo**: `multipart/form-data`
+- **Campos obligatorios**:
+  - `image`: imagen donde buscar la plantilla.
+  - `template`: plantilla (PNG en BGR o BGRA para máscara implícita).
+- **Campos opcionales**:
+  - `feature`, `thr`, `tm_thr`, `rot_range`, `scale_min`, `scale_max`.
+  - `search_x`, `search_y`, `search_w`, `search_h` para limitar el área de búsqueda.
+  - `debug` (`1/true`) para incluir capturas base64 de depuración.
 
 ---
 
@@ -97,12 +101,24 @@ multipart/form-data
 }
 ```
 
-### 2.3 `/match_one`
+### 2.3 `/match_master` (alias `/match_one`)
 
 ```json
 {
-  "similarity": 0.94,
-  "matched": true
+  "found": true,
+  "stage": "TM_OK",
+  "center_x": 412.5,
+  "center_y": 298.0,
+  "confidence": 0.91,
+  "tm_best": 0.91,
+  "tm_thr": 0.8,
+  "bbox": [380.0, 260.0, 65.0, 76.0],
+  "sift_orb": {
+    "detector": "auto->orb",
+    "matches": 480,
+    "good": 132,
+    "confidence": 0.86
+  }
 }
 ```
 
@@ -138,8 +154,25 @@ class AnalyzeResponse {
 
 ```csharp
 class MatchingResponse {
-    public double similarity { get; set; }
-    public bool matched { get; set; }
+    public bool found { get; set; }
+    public string stage { get; set; }
+    public double center_x { get; set; }
+    public double center_y { get; set; }
+    public double confidence { get; set; }
+    public double tm_best { get; set; }
+    public double tm_thr { get; set; }
+    public MatchingDebug debug { get; set; } // opcional cuando se solicita
+}
+
+class MatchingDebug {
+    public string gray_png { get; set; }
+    public string tpl_gray_png { get; set; }
+    public MatchingStats stats { get; set; }
+}
+
+class MatchingStats {
+    public double gray_mean { get; set; }
+    public double gray_std { get; set; }
 }
 ```
 

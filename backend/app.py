@@ -626,7 +626,12 @@ def match_master():
     return jsonify(resp)
 
 
-    
+@app.post("/match_one")
+def match_one():
+    """Alias de compatibilidad que reutiliza la lógica de ``match_master``."""
+    return match_master()
+
+
 @app.post("/analyze")
 def analyze():
     ok, msg = _ensure_model()

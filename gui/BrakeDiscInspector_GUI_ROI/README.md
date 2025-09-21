@@ -18,7 +18,7 @@ Sistema de inspección visual de discos de freno mediante GUI en C# WPF y backen
 ## 3. Estructura del GUI (C#)
 - **MainWindow.xaml / .cs**: control principal de la UI y flujo de análisis.
 - **MainWindow.cs**: código parcial auxiliar.
-- **BackendAPI.cs**: comunicación HTTP con Flask (MatchMasterAsync, AnalyzeAsync, TryCropToPng).
+- **BackendAPI.cs**: comunicación HTTP con Flask (MatchMasterAsync → `/match_master` alias `/match_one`, AnalyzeAsync, TryCropToPng).
 - **LocalMatcher.cs**: coincidencia local con OpenCVSharp.
 - **RoiAdorner.cs / RoiOverlay.cs**: dibujo y manipulación de ROIs.
 - **PresetManager.cs**: gestión de parámetros de coincidencia.

@@ -39,7 +39,7 @@ pip install -r requirements.txt
 ```
 
 ### 2.3 Archivos importantes
-- `app.py`: entrypoint Flask, define endpoints `/analyze`, `/train_status`, `/match_one`
+- `app.py`: entrypoint Flask, define endpoints `/analyze`, `/train_status`, `/match_master` (alias `/match_one`)
 - `model/current_model.h5`: modelo entrenado
 - `model/threshold.txt`: umbral NG/OK
 - `utils/`: funciones auxiliares (letterbox, annulus, heatmap, schemas)

@@ -31,12 +31,12 @@ flowchart LR
   - `RoiAdorner.cs`: adorner de edición (mover, redimensionar y rotar mediante thumb NE).
 - **Overlays/**:
   - `RoiOverlay.cs`: dibuja el ROI en el `CanvasROI` **alineado** con el área visible del `<Image>` (letterbox).
-- **BackendAPI.cs**: cliente HTTP tipado (POST `/analyze`, GET `/train_status`, POST `/match_one`).
+- **BackendAPI.cs**: cliente HTTP tipado (POST `/analyze`, GET `/train_status`, POST `/match_master` alias `/match_one`).
 - **appsettings.json**: `Backend.BaseUrl`.
 
 ### 2.2 Backend (Flask)
 - **app.py**:
-  - Endpoints: `/analyze`, `/train_status`, `/match_one`.
+  - Endpoints: `/analyze`, `/train_status`, `/match_master` (alias `/match_one`).
   - Carga modelo `model/current_model.h5` y umbral `model/threshold.txt`.
   - Preprocesado (*letterbox*), inferencia, **Grad‑CAM**, codificación heatmap a PNG Base64.
 - **utils/**: utilidades (`letterbox`, `masks/annulus`, `heatmap Grad‑CAM`, `schemas`).
