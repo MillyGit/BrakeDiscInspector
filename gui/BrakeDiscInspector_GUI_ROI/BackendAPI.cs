@@ -5,6 +5,7 @@ using System.Net.Http.Headers;
 using System.Text.Json;
 using System.Threading.Tasks;
 using System.Windows; // Point, Rect
+using OpenCvSharp;
 using WRect = System.Windows.Rect;
 
 namespace BrakeDiscInspector_GUI_ROI
@@ -236,27 +237,65 @@ namespace BrakeDiscInspector_GUI_ROI
         // ========= util: recortar PNG desde ruta/rect
         public static bool TryCropToPng(string imagePathWin, WRect rect, out MemoryStream pngStream, out string fileName, Action<string>? log = null)
         {
-            pngStream = new MemoryStream();
+            pngStream = null;
             fileName = $"crop_{DateTime.Now:yyyyMMdd_HHmmssfff}.png";
 
             try
             {
-                using var bmp = new System.Drawing.Bitmap(imagePathWin);
+                using var src = Cv2.ImRead(imagePathWin, ImreadModes.Unchanged);
+                if (src.Empty())
+                {
+                    log?.Invoke("[TryCropToPng] failed to load image");
+                    pngStream = null;
+                    return false;
+                }
+
+                if (src.Width <= 0 || src.Height <= 0)
+                {
+                    log?.Invoke("[TryCropToPng] source image has invalid dimensions");
+                    pngStream = null;
+                    return false;
+                }
+
                 var x = Math.Max(0, (int)rect.X);
                 var y = Math.Max(0, (int)rect.Y);
                 var w = Math.Max(1, (int)rect.Width);
                 var h = Math.Max(1, (int)rect.Height);
-                if (x + w > bmp.Width) w = Math.Max(1, bmp.Width - x);
-                if (y + h > bmp.Height) h = Math.Max(1, bmp.Height - y);
-                using var crop = bmp.Clone(new System.Drawing.Rectangle(x, y, w, h), bmp.PixelFormat);
-                crop.Save(pngStream, System.Drawing.Imaging.ImageFormat.Png);
-                pngStream.Position = 0;
+
+                if (x >= src.Width) x = src.Width - 1;
+                if (y >= src.Height) y = src.Height - 1;
+
+                if (x < 0) x = 0;
+                if (y < 0) y = 0;
+
+                if (x + w > src.Width) w = Math.Max(1, src.Width - x);
+                if (y + h > src.Height) h = Math.Max(1, src.Height - y);
+
+                if (w <= 0 || h <= 0)
+                {
+                    log?.Invoke("[TryCropToPng] invalid crop dimensions");
+                    pngStream = null;
+                    return false;
+                }
+
+                var roi = new Rect(x, y, w, h);
+                using var roiMat = new Mat(src, roi);
+                using var cropMat = roiMat.Clone();
+
+                if (!Cv2.ImEncode(".png", cropMat, out var pngBytes) || pngBytes is null || pngBytes.Length == 0)
+                {
+                    log?.Invoke("[TryCropToPng] failed to encode PNG");
+                    pngStream = null;
+                    return false;
+                }
+
+                pngStream = new MemoryStream(pngBytes);
                 return true;
             }
             catch (Exception ex)
             {
                 log?.Invoke("[TryCropToPng] " + ex.Message);
-                pngStream.Dispose();
+                pngStream?.Dispose();
                 pngStream = null;
                 return false;
             }
