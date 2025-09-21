@@ -4,8 +4,8 @@ using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Text.Json;
 using System.Threading.Tasks;
-using System.Windows; // Point, Rect
 using OpenCvSharp;
+using WPoint = System.Windows.Point;
 using WRect = System.Windows.Rect;
 
 namespace BrakeDiscInspector_GUI_ROI
@@ -98,7 +98,7 @@ namespace BrakeDiscInspector_GUI_ROI
         }
 
         // ========= match one: template desde fichero
-        public static async Task<(bool ok, Point? center, double score, string? error)> MatchOneViaTemplateAsync(
+        public static async Task<(bool ok, WPoint? center, double score, string? error)> MatchOneViaTemplateAsync(
             string imagePathWin,
             string templatePngPath,
             double thr,
@@ -151,7 +151,7 @@ namespace BrakeDiscInspector_GUI_ROI
                 double score = root.TryGetProperty("confidence", out var cEl) ? cEl.GetDouble()
                              : root.TryGetProperty("score", out var sEl) ? sEl.GetDouble() : 0;
 
-                return (true, new Point(cx, cy), score, null);
+                return (true, new WPoint(cx, cy), score, null);
             }
             catch (Exception ex)
             {
@@ -161,7 +161,7 @@ namespace BrakeDiscInspector_GUI_ROI
         }
 
         // ========= match one: recortando desde la imagen
-        public static async Task<(bool ok, Point? center, double score, string? error)> MatchOneViaFilesAsync(
+        public static async Task<(bool ok, WPoint? center, double score, string? error)> MatchOneViaFilesAsync(
             string imagePathWin,
             WRect templateRect,
             double thr,
@@ -221,7 +221,7 @@ namespace BrakeDiscInspector_GUI_ROI
                 double score = root.TryGetProperty("confidence", out var cEl) ? cEl.GetDouble()
                              : root.TryGetProperty("score", out var sEl) ? sEl.GetDouble() : 0;
 
-                return (true, new Point(cx, cy), score, null);
+                return (true, new WPoint(cx, cy), score, null);
             }
             catch (Exception ex)
             {
