@@ -191,6 +191,67 @@ namespace BrakeDiscInspector_GUI_ROI
             };
         }
 
+        private bool TryClearCurrentStatePersistedRoi(out RoiRole? clearedRole)
+        {
+            clearedRole = GetCurrentStateRole();
+
+            switch (_state)
+            {
+                case MasterState.DrawM1_Pattern:
+                    if (_layout.Master1Pattern != null)
+                    {
+                        _layout.Master1Pattern = null;
+                        return true;
+                    }
+                    break;
+
+                case MasterState.DrawM1_Search:
+                    if (_layout.Master1Search != null)
+                    {
+                        _layout.Master1Search = null;
+                        return true;
+                    }
+                    break;
+
+                case MasterState.DrawM2_Pattern:
+                    if (_layout.Master2Pattern != null)
+                    {
+                        _layout.Master2Pattern = null;
+                        return true;
+                    }
+                    break;
+
+                case MasterState.DrawM2_Search:
+                    if (_layout.Master2Search != null)
+                    {
+                        _layout.Master2Search = null;
+                        return true;
+                    }
+                    break;
+
+                case MasterState.DrawInspection:
+                    if (_layout.Inspection != null)
+                    {
+                        _layout.Inspection = null;
+                        return true;
+                    }
+                    break;
+
+                case MasterState.Ready:
+                    if (_layout.Inspection != null)
+                    {
+                        _layout.Inspection = null;
+                        _state = MasterState.DrawInspection;
+                        return true;
+                    }
+
+                    _state = MasterState.DrawInspection;
+                    break;
+            }
+
+            return false;
+        }
+
 
         // ====== Imagen ======
         private void BtnLoadImage_Click(object sender, RoutedEventArgs e)
@@ -724,21 +785,51 @@ namespace BrakeDiscInspector_GUI_ROI
         // ====== Guardar pasos del wizard ======
         private void BtnSaveMaster_Click(object sender, RoutedEventArgs e)
         {
-            var reusedPersistedBuffer = false;
-
             if (_tmpBuffer is null)
             {
-                var persisted = GetCurrentStatePersistedRoi();
-                if (persisted != null)
+                var previousState = _state;
+                var cleared = TryClearCurrentStatePersistedRoi(out var clearedRole);
+
+                if (cleared)
+                    AppendLog($"[wizard] cleared ROI state={previousState} role={clearedRole}");
+                else
+                    AppendLog($"[wizard] no ROI to clear state={previousState} role={clearedRole}");
+
+                ClearPreview();
+                RedrawOverlay();
+                UpdateWizardState();
+
+                if (!cleared)
                 {
-                    _tmpBuffer = persisted.Clone();
-                    reusedPersistedBuffer = true;
+                    Snack("No hay ROI que eliminar. Dibuja un ROI válido antes de guardar.");
+                    return;
                 }
+
+                var layoutPath = MasterLayoutManager.GetDefaultPath(_preset);
+                Exception? clearException = null;
+                try
+                {
+                    MasterLayoutManager.Save(_preset, _layout);
+                    AppendLog($"[wizard] layout saved => {layoutPath}");
+                }
+                catch (Exception ex)
+                {
+                    clearException = ex;
+                    AppendLog($"[wizard] layout save FAILED => {layoutPath} :: {ex}");
+                }
+
+                if (clearException != null)
+                {
+                    Snack("Error guardando layout: " + clearException.Message);
+                    return;
+                }
+
+                var removalSummary = clearedRole?.ToString() ?? "ROI";
+                Snack($"ROI eliminado ({removalSummary}). Dibuja un ROI válido antes de guardar.");
+                return;
             }
 
-            if (_tmpBuffer is null) { Snack("Dibuja un ROI válido antes de guardar"); return; }
-
-            var bufferSource = reusedPersistedBuffer ? "reused" : "fresh";
+            var bufferSource = "fresh";
             RoiModel? savedRoi = null;
             RoiRole? savedRole = null;
 
