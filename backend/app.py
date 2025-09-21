@@ -82,6 +82,39 @@ def _encode_png(img: np.ndarray) -> Optional[str]:
     except Exception:
         return None
 
+
+def _generate_heatmap_b64(rgb_img: np.ndarray, mask: Optional[np.ndarray] = None) -> Optional[str]:
+    """Devuelve un heatmap tipo JET codificado en base64 (sin prefijo data URI)."""
+    try:
+        if rgb_img.ndim != 3 or rgb_img.shape[2] != 3:
+            return None
+        if rgb_img.size == 0:
+            return None
+        arr = np.ascontiguousarray(rgb_img.astype(np.uint8))
+        gray = cv2.cvtColor(arr, cv2.COLOR_RGB2GRAY)
+        lap = cv2.Laplacian(gray, cv2.CV_32F, ksize=3)
+        lap = np.abs(lap)
+        lap = cv2.GaussianBlur(lap, (5, 5), 0)
+        norm = cv2.normalize(lap, None, 0, 255, cv2.NORM_MINMAX)
+        norm = norm.astype(np.uint8)
+        heat = cv2.applyColorMap(norm, cv2.COLORMAP_JET)
+        if mask is not None:
+            mask_arr = np.array(mask, dtype=np.uint8)
+            if mask_arr.ndim == 2:
+                mask_u8 = np.where(mask_arr > 0, 255, 0).astype(np.uint8)
+            elif mask_arr.ndim == 3:
+                mask_u8 = np.where(mask_arr[..., 0] > 0, 255, 0).astype(np.uint8)
+            else:
+                mask_u8 = None
+            if mask_u8 is not None:
+                heat = cv2.bitwise_and(heat, heat, mask=mask_u8)
+        ok, buf = cv2.imencode(".png", heat)
+        if not ok:
+            return None
+        return base64.b64encode(buf.tobytes()).decode("ascii")
+    except Exception:
+        return None
+
 def _finite(x, lo=None, hi=None):
     """Devuelve float finito (clip a [lo,hi]) o None si NaN/Inf/err."""
     try:
@@ -660,21 +693,113 @@ def match_master():
     
 @app.post("/analyze")
 def analyze():
-    """
-    Stub temporal: recibe un 'image' (PNG del ROI de inspección),
-    calcula una métrica simple y devuelve label/score.
-    """
-    f = request.files.get("image")
-    if not f:
-        return jsonify({"ok": False, "error": "no image"}), 400
+    ok, msg = _ensure_model()
+    if not ok:
+        return jsonify({"error": f"model not loaded: {msg}"}), 503
+
+    file_storage = request.files.get("file")
+    if file_storage is None:
+        return jsonify({"error": "missing file"}), 400
+
+    data = file_storage.read()
+    if not data:
+        return jsonify({"error": "empty file"}), 400
+
     try:
-        arr = np.array(Image.open(io.BytesIO(f.read())).convert("L"))
-        # métrica simple: media de intensidad normalizada
-        score = float(arr.mean()) / 255.0
-        label = "good" if score < 0.5 else "defective"
-        return jsonify({"ok": True, "label": label, "score": score})
-    except Exception as e:
-        return jsonify({"ok": False, "error": str(e)}), 500
+        pil_src = Image.open(io.BytesIO(data))
+    except Exception:
+        return jsonify({"error": "invalid image"}), 400
+
+    try:
+        rgba = np.array(pil_src.convert("RGBA"), dtype=np.uint8)
+    except Exception:
+        return jsonify({"error": "invalid image"}), 400
+
+    if rgba.ndim != 3 or rgba.shape[2] < 3:
+        return jsonify({"error": "invalid image"}), 400
+
+    rgb = rgba[..., :3]
+    if rgb.size == 0:
+        return jsonify({"error": "empty image"}), 400
+
+    mask_bool: Optional[np.ndarray] = None
+    if rgba.shape[2] == 4:
+        alpha_mask = rgba[..., 3] > 0
+        if np.any(~alpha_mask):
+            mask_bool = alpha_mask
+
+    mask_file = request.files.get("mask")
+    if mask_file and mask_file.filename:
+        mask_bytes = mask_file.read()
+        if not mask_bytes:
+            return jsonify({"error": "empty mask"}), 400
+        try:
+            mask_img = Image.open(io.BytesIO(mask_bytes)).convert("L")
+            mask_arr = np.array(mask_img, dtype=np.uint8)
+        except Exception:
+            return jsonify({"error": "invalid mask"}), 400
+        if mask_arr.shape != rgb.shape[:2]:
+            return jsonify({"error": "mask size mismatch"}), 400
+        mask_from_file = mask_arr > 0
+        mask_bool = mask_from_file if mask_bool is None else (mask_bool & mask_from_file)
+    else:
+        annulus_raw = request.form.get("annulus")
+        if annulus_raw:
+            try:
+                annulus_json = json.loads(annulus_raw)
+                cx = float(annulus_json["cx"])
+                cy = float(annulus_json["cy"])
+                ro = float(annulus_json["ro"])
+                ri_raw = annulus_json.get("ri", 0.0)
+                ri = float(ri_raw) if ri_raw is not None else 0.0
+            except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+                return jsonify({"error": "invalid annulus"}), 400
+            if not np.isfinite(cx) or not np.isfinite(cy) or not np.isfinite(ro) or not np.isfinite(ri):
+                return jsonify({"error": "invalid annulus"}), 400
+            if ro <= 0 or ro <= ri:
+                return jsonify({"error": "invalid annulus"}), 400
+            h, w = rgb.shape[:2]
+            yy, xx = np.ogrid[:h, :w]
+            dist2 = (xx - cx) ** 2 + (yy - cy) ** 2
+            ann_mask = dist2 <= (ro ** 2)
+            if ri > 0:
+                ann_mask &= dist2 >= (ri ** 2)
+            mask_bool = ann_mask if mask_bool is None else (mask_bool & ann_mask)
+
+    rgb_for_model = rgb.copy()
+    if mask_bool is not None:
+        rgb_for_model[~mask_bool] = 0
+
+    try:
+        pre_cfg = _load_pre_cfg_from_request()
+        arr = preprocess_for_model(Image.fromarray(rgb_for_model), (600, 600), pre_cfg)
+        batch = np.expand_dims(arr, axis=0)
+        preds = _ensure_model.model.predict(batch, verbose=0).reshape((-1,))
+        score_raw = float(preds[0]) if preds.size else 0.0
+        score = _finite(score_raw, lo=0.0, hi=1.0)
+        if score is None:
+            raise ValueError("invalid score")
+        threshold = getattr(_ensure_model, "thr", 0.5)
+        thr = _finite(threshold, lo=0.0, hi=1.0)
+        if thr is None:
+            thr = 0.5
+        label = "NG" if score >= thr else "OK"
+        heatmap_b64 = _generate_heatmap_b64(rgb_for_model, mask_bool)
+        if heatmap_b64 is None:
+            blank = np.zeros((rgb_for_model.shape[0], rgb_for_model.shape[1], 3), dtype=np.uint8)
+            ok_png, buf = cv2.imencode(".png", blank)
+            heatmap_b64 = base64.b64encode(buf.tobytes()).decode("ascii") if ok_png else ""
+        return jsonify({
+            "label": label,
+            "score": float(score),
+            "threshold": float(thr),
+            "heatmap_png_b64": heatmap_b64,
+        })
+    except json.JSONDecodeError:
+        return jsonify({"error": "invalid annulus"}), 400
+    except Exception as exc:
+        log.exception("/analyze failed: %s", exc)
+        return jsonify({"error": "inference failed"}), 500
 
 
 # ========= /train_status =========
