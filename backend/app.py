@@ -299,14 +299,6 @@ def match_master():
             ("orb" if det == "orb" else "auto->orb"),
         )
 
-    def _match_template(img_gray, tpl_gray, mask=None):
-        if mask is not None:
-            try:
-                return cv2.matchTemplate(img_gray, tpl_gray, cv2.TM_CCORR_NORMED, mask=mask), cv2.TM_CCORR_NORMED
-            except TypeError:
-                pass
-        return cv2.matchTemplate(img_gray, tpl_gray, cv2.TM_CCOEFF_NORMED), cv2.TM_CCOEFF_NORMED
-
     # ---------- inputs ----------
     file_img = request.files.get("image")
     file_tpl = request.files.get("template")
@@ -342,21 +334,6 @@ def match_master():
         alpha   = None
 
     # máscara desde la plantilla
-    def _build_mask_from_tpl(bgr, alpha):
-        if alpha is not None:
-            m = (alpha > 0).astype(np.uint8) * 255
-        else:
-            g = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
-            zeros = int((g == 0).sum())
-            if zeros > 0.05 * g.size:
-                _, m = cv2.threshold(g, 0, 255, cv2.THRESH_BINARY)
-            else:
-                m = None
-        if m is not None:
-            k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
-            m = cv2.morphologyEx(m, cv2.MORPH_ERODE, k, iterations=1)
-        return m
-
     mask_tpl = _build_mask_from_tpl(tpl_bgr, alpha)
 
     # ---------- SEARCH ROI opcional ----------
@@ -380,48 +357,6 @@ def match_master():
     tpl_g = cv2.cvtColor(tpl_bgr, cv2.COLOR_BGR2GRAY)
 
     # ---------- bloque debug (opcional, igual que tu versión) ----------
-    def _encode_png(img):
-        try:
-            ok, buf = cv2.imencode(".png", img)
-            if not ok: return None
-            return "data:image/png;base64," + base64.b64encode(buf.tobytes()).decode("ascii")
-        except Exception:
-            return None
-
-    def _build_debug_block(img_bgr, tpl_bgr, mask_tpl):
-        dbg = {}
-        img_gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
-        b, g, r = cv2.split(img_bgr)
-        y = img_gray.astype(np.float32)
-        mad = (np.abs(r.astype(np.float32) - y) +
-               np.abs(g.astype(np.float32) - y) +
-               np.abs(b.astype(np.float32) - y)) / 3.0
-        mad = cv2.normalize(mad, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
-        color_heat_img = cv2.applyColorMap(mad, cv2.COLORMAP_JET)
-
-        dbg["gray_png"]       = _encode_png(img_gray)
-        dbg["color_loss_png"] = _encode_png(color_heat_img)
-
-        tpl_g2 = cv2.cvtColor(tpl_bgr, cv2.COLOR_BGR2GRAY)
-        b2, g2, r2 = cv2.split(tpl_bgr)
-        y2 = tpl_g2.astype(np.float32)
-        mad2 = (np.abs(r2.astype(np.float32) - y2) +
-                np.abs(g2.astype(np.float32) - y2) +
-                np.abs(b2.astype(np.float32) - y2)) / 3.0
-        mad2 = cv2.normalize(mad2, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
-        color_heat_tpl = cv2.applyColorMap(mad2, cv2.COLORMAP_JET)
-        if mask_tpl is not None:
-            m3 = cv2.merge([mask_tpl, mask_tpl, mask_tpl])
-            color_heat_tpl = np.where(m3 > 0, color_heat_tpl, 0)
-            tpl_g_vis = np.where(mask_tpl > 0, tpl_g2, 0)
-        else:
-            tpl_g_vis = tpl_g2
-
-        dbg["mask_png"]           = _encode_png(mask_tpl) if mask_tpl is not None else None
-        dbg["tpl_gray_png"]       = _encode_png(tpl_g_vis)
-        dbg["tpl_color_loss_png"] = _encode_png(color_heat_tpl)
-        return dbg
-
     debug_block = _build_debug_block(img_np, tpl_bgr, mask_tpl) if dbg_req else None
 
     # Helper para ajustar salida a coordenadas absolutas de la imagen original
