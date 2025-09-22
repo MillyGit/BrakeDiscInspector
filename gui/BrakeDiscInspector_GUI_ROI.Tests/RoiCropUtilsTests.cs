@@ -24,10 +24,22 @@ public class RoiCropUtilsTests
         Cv2.Line(source, new Point(roiRect.Right - 2, roiRect.Top), new Point(roiRect.Right - 2, roiRect.Bottom - 1),
             Scalar.All(120), 2);
 
-        double pivotX = left + width / 2.0;
-        double pivotY = top + height / 2.0;
-        var info = new RoiCropInfo(RoiShape.Rectangle, left, top, width, height, pivotX, pivotY, 0, 0);
         const double angleDeg = 37.0;
+
+        var roi = new RoiModel
+        {
+            Shape = RoiShape.Rectangle,
+            X = left + width / 2.0,
+            Y = top + height / 2.0,
+            Width = width,
+            Height = height
+        };
+
+        Assert.True(RoiCropUtils.TryBuildRoiCropInfo(roi, out var info));
+        Assert.Equal(left, info.Left);
+        Assert.Equal(top, info.Top);
+        Assert.Equal(width, info.Width);
+        Assert.Equal(height, info.Height);
 
         Assert.True(RoiCropUtils.TryGetRotatedCrop(source, info, angleDeg, out var actualCrop, out var actualRect));
         using var actual = actualCrop;
