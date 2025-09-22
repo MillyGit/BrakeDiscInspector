@@ -41,6 +41,21 @@ The MCP covers every change that can affect:
 - **Logs**: Locations and rotation policies are maintained in [`LOGGING.md`](../../LOGGING.md).
 - **Scripts**: PowerShell utilities live in [`scripts/`](../../scripts) for setup and runtime management.
 
+## Model & Dataset Update Playbook
+
+1. **Coloca los artefactos base** siguiendo las rutas prescritas en el [README](../../README.md#backend-python):
+   - Sustituye `backend/model/current_model.h5` y `backend/model/threshold.txt` con las nuevas versiones aprobadas, preservando los nombres de archivo para que el backend los cargue automáticamente.
+   - Si la actualización incluye dataset auxiliar (muestras de verificación o logs de entrenamiento), archívalos en el repositorio correspondiente y enlázalos en la bitácora.
+2. **Ejecuta los tests rápidos** descritos en [`DEV_GUIDE.md` §2.5](../../DEV_GUIDE.md#25-tests-básicos) para validar la carga inicial:
+   - Asegúrate de que el backend se inicie sin errores y luego ejecuta `curl http://127.0.0.1:5000/train_status` para confirmar que la metadata del modelo refleja los artefactos recién colocados.
+   - Registra la salida del comando y, si procede, añade la evidencia de `curl /analyze` con un crop de control para comprobar coherencia.
+3. **Documenta métricas y umbral** empleando la estructura de respuesta definida en [`DATA_FORMATS.md` §2.2](../../DATA_FORMATS.md#22-train_status):
+   - Copia los campos relevantes (`threshold`, `artifacts.model`, `artifacts.threshold`, `model_runtime`) en la bitácora de evaluación y resalta cualquier desviación frente al release anterior.
+   - Si `/analyze` se usó para smoke tests, captura `label`, `score` y `threshold` del JSON de salida para respaldar la decisión del Data Steward.
+4. **Actualiza la trazabilidad** en [`latest_updates.md`](latest_updates.md):
+   - Inserta una entrada fechada con responsable, versión del modelo/dataset, métricas clave y enlaces a la evidencia (`curl`, reportes, capturas).
+   - Menciona explícitamente que los artefactos fueron colocados conforme al README y que los tests rápidos del DEV_GUIDE se completaron, de modo que otros roles puedan seguir el mismo flujo operativo.
+
 ## Logging & Observability Coordination
 
 Logging expectations for the platform are centralised in [`LOGGING.md`](../../LOGGING.md) and must be treated as release
