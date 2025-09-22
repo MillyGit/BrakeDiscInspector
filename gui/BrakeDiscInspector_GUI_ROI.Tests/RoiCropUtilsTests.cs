@@ -29,8 +29,8 @@ public class RoiCropUtilsTests
         var roi = new RoiModel
         {
             Shape = RoiShape.Rectangle,
-            X = left + width / 2.0,
-            Y = top + height / 2.0,
+            X = left,
+            Y = top,
             Width = width,
             Height = height
         };
