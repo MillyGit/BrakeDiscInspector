@@ -16,20 +16,15 @@ namespace BrakeDiscInspector_GUI_ROI
             if (string.IsNullOrWhiteSpace(_currentImagePathWin) || !File.Exists(_currentImagePathWin))
             { Snack("No hay imagen cargada"); return; }
 
-
-            var tplM1 = RoiToRect(_layout.Master1Pattern);
-            var tplM2 = RoiToRect(_layout.Master2Pattern);
-
-
             var r1 = await BackendAPI.MatchOneViaFilesAsync(
-            _currentImagePathWin, tplM1,
+            _currentImagePathWin, _layout.Master1Pattern,
             _preset.MatchThr, _preset.RotRange, _preset.ScaleMin, _preset.ScaleMax,
             string.IsNullOrWhiteSpace(_preset.Feature) ? "auto" : _preset.Feature,
             0.8, false, "M1", AppendLog);
 
 
             var r2 = await BackendAPI.MatchOneViaFilesAsync(
-            _currentImagePathWin, tplM2,
+            _currentImagePathWin, _layout.Master2Pattern,
             _preset.MatchThr, _preset.RotRange, _preset.ScaleMin, _preset.ScaleMax,
             string.IsNullOrWhiteSpace(_preset.Feature) ? "auto" : _preset.Feature,
             0.8, false, "M2", AppendLog);
@@ -62,9 +57,7 @@ namespace BrakeDiscInspector_GUI_ROI
             if (string.IsNullOrWhiteSpace(_currentImagePathWin) || !File.Exists(_currentImagePathWin))
             { Snack("No hay imagen cargada"); return; }
 
-
-            var inspRect = RoiToRect(_layout.Inspection);
-            var resp = await BackendAPI.AnalyzeAsync(_currentImagePathWin, inspRect, _preset, AppendLog);
+            var resp = await BackendAPI.AnalyzeAsync(_currentImagePathWin, _layout.Inspection, _preset, AppendLog);
             if (!resp.ok) { Snack("Analyze backend: " + (resp.error ?? "error desconocido")); return; }
             Snack($"Resultado: {resp.label} (score={resp.score:0.000})");
         }

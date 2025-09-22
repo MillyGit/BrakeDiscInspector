@@ -1141,7 +1141,7 @@ namespace BrakeDiscInspector_GUI_ROI
                     // Fallback: recorte desde la imagen actual (no ideal, pero seguimos)
                     AppendLog("[WARN] M1 sin patrón PNG guardado. Fallback a recorte de la imagen actual.");
                     r1 = await BackendAPI.MatchOneViaFilesAsync(
-                        _currentImagePathWin, tpl1Rect,
+                        _currentImagePathWin, _layout.Master1Pattern!,
                         _preset.MatchThr, _preset.RotRange, _preset.ScaleMin, _preset.ScaleMax,
                         string.IsNullOrWhiteSpace(_preset.Feature) ? "auto" : _preset.Feature,
                         0.8, false, "M1", AppendLog);
@@ -1175,7 +1175,7 @@ namespace BrakeDiscInspector_GUI_ROI
                 {
                     AppendLog("[WARN] M2 sin patrón PNG guardado. Fallback a recorte de la imagen actual.");
                     r2 = await BackendAPI.MatchOneViaFilesAsync(
-                        _currentImagePathWin, tpl2Rect,
+                        _currentImagePathWin, _layout.Master2Pattern!,
                         _preset.MatchThr, _preset.RotRange, _preset.ScaleMin, _preset.ScaleMax,
                         string.IsNullOrWhiteSpace(_preset.Feature) ? "auto" : _preset.Feature,
                         0.8, false, "M2", AppendLog);
@@ -1392,8 +1392,7 @@ namespace BrakeDiscInspector_GUI_ROI
             if (_layout.Inspection == null) { Snack("Falta ROI de Inspección"); return; }
 
 
-            var inspRect = RoiToRect(_layout.Inspection);
-            var resp = await BackendAPI.AnalyzeAsync(_currentImagePathWin, inspRect, _preset, AppendLog);
+            var resp = await BackendAPI.AnalyzeAsync(_currentImagePathWin, _layout.Inspection, _preset, AppendLog);
             if (!resp.ok)
             {
                 Snack(resp.error ?? "Error en Analyze");
@@ -1700,7 +1699,7 @@ namespace BrakeDiscInspector_GUI_ROI
         // ===== En MainWindow.xaml.cs =====
         private async Task<(bool ok, System.Windows.Point? center, double score, string? error)> TryMatchOneViaFilesAsync(
             string imagePathWin,
-            WRect templateRect,
+            RoiModel templateRoi,
             string which,
             double thr,
             double rotRange,
@@ -1713,6 +1712,7 @@ namespace BrakeDiscInspector_GUI_ROI
             var swTotal = System.Diagnostics.Stopwatch.StartNew();
 
             MemoryStream? tplStream = null; // NO usar 'using var' si se va a pasar como contenido del multipart
+            MemoryStream? maskStream = null;
 
             try
             {
@@ -1739,7 +1739,8 @@ namespace BrakeDiscInspector_GUI_ROI
                 mp.Add(new System.Net.Http.ByteArrayContent(imgBytes), "image", System.IO.Path.GetFileName(imagePathWin));
 
                 // 2) Template (crop) — NO usar 'using var' con out/ref
-                if (!BackendAPI.TryCropToPng(imagePathWin, templateRect, out tplStream, out var tplName, AppendLog))
+                var templateRect = RoiToRect(templateRoi);
+                if (!BackendAPI.TryCropToPng(imagePathWin, templateRoi, out tplStream, out maskStream, out var tplName, AppendLog))
                 {
                     var msg = "crop template failed";
                     AppendLog($"[MATCH] {which} ERROR: {msg}");
@@ -1747,6 +1748,10 @@ namespace BrakeDiscInspector_GUI_ROI
                 }
                 tplStream.Position = 0;
                 AppendLog($"[MATCH] {which} bytes(template)={tplStream.Length:n0} rect=({(int)templateRect.X},{(int)templateRect.Y},{(int)templateRect.Width},{(int)templateRect.Height})");
+                if (maskStream != null)
+                {
+                    AppendLog($"[MATCH] {which} mask bytes={maskStream.Length:n0} (embebida como alfa)");
+                }
                 mp.Add(new System.Net.Http.StreamContent(tplStream), "template", string.IsNullOrWhiteSpace(tplName) ? "template.png" : tplName);
 
                 // 3) Parámetros
@@ -1819,6 +1824,7 @@ namespace BrakeDiscInspector_GUI_ROI
 
                 // Liberar el stream del template manualmente (no se pudo usar 'using var' por el out)
                 try { tplStream?.Dispose(); } catch { /* noop */ }
+                try { maskStream?.Dispose(); } catch { /* noop */ }
             }
         }
 
@@ -1931,13 +1937,13 @@ namespace BrakeDiscInspector_GUI_ROI
                     return;
                 }
 
-                if (!TryBuildRoiCropInfo(roi, out var cropInfo))
+                if (!RoiCropUtils.TryBuildRoiCropInfo(roi, out var cropInfo))
                 {
                     AppendLog("[preview] ROI no soportado para recorte.");
                     return;
                 }
 
-                if (!TryGetRotatedCrop(src, cropInfo, roi.AngleDeg,
+                if (!RoiCropUtils.TryGetRotatedCrop(src, cropInfo, roi.AngleDeg,
                     out var cropMat, out var cropRect))
                 {
                     AppendLog("[preview] No se pudo obtener el recorte rotado.");
@@ -1950,8 +1956,8 @@ namespace BrakeDiscInspector_GUI_ROI
                 Mat? alphaMask = null;
                 try
                 {
-                    alphaMask = BuildRoiMask(cropInfo, cropRect);
-                    using var cropWithAlpha = ConvertCropToBgra(cropMat, alphaMask);
+                    alphaMask = RoiCropUtils.BuildRoiMask(cropInfo, cropRect);
+                    using var cropWithAlpha = RoiCropUtils.ConvertCropToBgra(cropMat, alphaMask);
 
                     string ts = DateTime.Now.ToString("yyyyMMdd_HHmmssfff");
                     string fname = $"{tag}_{ts}.png";
@@ -1971,209 +1977,6 @@ namespace BrakeDiscInspector_GUI_ROI
             }
         }
 
-        private readonly struct RoiCropInfo
-        {
-            public RoiCropInfo(RoiShape shape, double left, double top, double width, double height,
-                double pivotX, double pivotY, double radius, double innerRadius)
-            {
-                Shape = shape;
-                Left = left;
-                Top = top;
-                Width = width;
-                Height = height;
-                PivotX = pivotX;
-                PivotY = pivotY;
-                Radius = radius;
-                InnerRadius = innerRadius;
-            }
-
-            public RoiShape Shape { get; }
-            public double Left { get; }
-            public double Top { get; }
-            public double Width { get; }
-            public double Height { get; }
-            public double PivotX { get; }
-            public double PivotY { get; }
-            public double Radius { get; }
-            public double InnerRadius { get; }
-            public double CenterX => Left + Width / 2.0;
-            public double CenterY => Top + Height / 2.0;
-        }
-
-        private bool TryBuildRoiCropInfo(RoiModel roi, out RoiCropInfo info)
-        {
-            info = default;
-
-            if (roi == null)
-                return false;
-
-            switch (roi.Shape)
-            {
-                case RoiShape.Rectangle:
-                    {
-                        double width = Math.Max(1.0, roi.Width);
-                        double height = Math.Max(1.0, roi.Height);
-                        double left = roi.X;
-                        double top = roi.Y;
-                        var pivotLocal = RoiAdorner.GetRotationPivotLocalPoint(roi, width, height);
-                        double pivotX = left + pivotLocal.X;
-                        double pivotY = top + pivotLocal.Y;
-                        info = new RoiCropInfo(roi.Shape, left, top, width, height, pivotX, pivotY, 0, 0);
-                        return true;
-                    }
-                case RoiShape.Circle:
-                case RoiShape.Annulus:
-                    {
-                        double radius = Math.Max(roi.R, 0.5);
-                        double width = roi.Width > 0 ? roi.Width : radius * 2.0;
-                        double height = roi.Height > 0 ? roi.Height : radius * 2.0;
-                        width = Math.Max(width, radius * 2.0);
-                        height = Math.Max(height, radius * 2.0);
-                        double centerX = roi.CX;
-                        double centerY = roi.CY;
-                        double left = centerX - width / 2.0;
-                        double top = centerY - height / 2.0;
-                        var pivotLocal = RoiAdorner.GetRotationPivotLocalPoint(roi, width, height);
-                        double pivotX = left + pivotLocal.X;
-                        double pivotY = top + pivotLocal.Y;
-                        double inner = Math.Clamp(roi.RInner, 0, radius);
-                        info = new RoiCropInfo(roi.Shape, left, top, width, height, pivotX, pivotY, radius, inner);
-                        return true;
-                    }
-                default:
-                    return false;
-            }
-        }
-
-        private Mat BuildRoiMask(RoiCropInfo info, OpenCvSharp.Rect cropRect)
-        {
-            int width = Math.Max(1, cropRect.Width);
-            int height = Math.Max(1, cropRect.Height);
-            var mask = new Mat(new OpenCvSharp.Size(width, height), MatType.CV_8UC1, Scalar.All(0));
-
-            switch (info.Shape)
-            {
-                case RoiShape.Rectangle:
-                    mask.SetTo(Scalar.All(255));
-                    break;
-
-                case RoiShape.Circle:
-                case RoiShape.Annulus:
-                    {
-                        mask.SetTo(Scalar.All(0));
-                        var center = new OpenCvSharp.Point(width / 2, height / 2);
-                        double scaleX = width / Math.Max(info.Width, 1.0);
-                        double scaleY = height / Math.Max(info.Height, 1.0);
-                        double scale = Math.Min(scaleX, scaleY);
-                        double baseOuter = info.Radius > 0 ? info.Radius : Math.Min(info.Width, info.Height) / 2.0;
-                        int outerRadius = (int)Math.Round(baseOuter * scale);
-                        int maxRadius = Math.Max(1, Math.Min(width, height) / 2);
-                        outerRadius = Math.Clamp(Math.Max(outerRadius, 1), 1, maxRadius);
-
-                        if (outerRadius <= 0)
-                        {
-                            mask.SetTo(Scalar.All(255));
-                            break;
-                        }
-
-                        Cv2.Circle(mask, center, outerRadius, Scalar.All(255), -1, LineTypes.AntiAlias);
-
-                        if (info.Shape == RoiShape.Annulus)
-                        {
-                            double baseInner = Math.Min(info.InnerRadius, baseOuter);
-                            int innerRadius = (int)Math.Round(baseInner * scale);
-                            innerRadius = Math.Clamp(innerRadius, 0, Math.Max(outerRadius - 1, 0));
-                            if (innerRadius > 0)
-                            {
-                                Cv2.Circle(mask, center, innerRadius, Scalar.All(0), -1, LineTypes.AntiAlias);
-                            }
-                        }
-                        break;
-                    }
-            }
-
-            return mask;
-        }
-
-        private bool TryGetRotatedCrop(Mat source, RoiCropInfo info, double angleDeg,
-            out Mat crop, out OpenCvSharp.Rect cropRect)
-        {
-            crop = new Mat();
-            cropRect = default;
-
-            if (source.Empty())
-                return false;
-
-            double width = Math.Max(1.0, info.Width);
-            double height = Math.Max(1.0, info.Height);
-
-            var pivot = new Point2f((float)info.PivotX, (float)info.PivotY);
-            using var rotMat = Cv2.GetRotationMatrix2D(pivot, -angleDeg, 1.0);
-            using var rotated = new Mat();
-            Scalar border = source.Channels() == 4 ? new Scalar(0, 0, 0, 0) : Scalar.All(0);
-            Cv2.WarpAffine(source, rotated, rotMat, new OpenCvSharp.Size(source.Width, source.Height),
-                InterpolationFlags.Linear, BorderTypes.Constant, border);
-
-            int x = (int)Math.Floor(info.Left);
-            int y = (int)Math.Floor(info.Top);
-            int w = (int)Math.Ceiling(info.Left + width) - x;
-            int h = (int)Math.Ceiling(info.Top + height) - y;
-
-            w = Math.Max(w, 1);
-            h = Math.Max(h, 1);
-
-            if (rotated.Width <= 0 || rotated.Height <= 0)
-                return false;
-
-            x = Math.Clamp(x, 0, rotated.Width - 1);
-            y = Math.Clamp(y, 0, rotated.Height - 1);
-            w = Math.Clamp(w, 1, rotated.Width - x);
-            h = Math.Clamp(h, 1, rotated.Height - y);
-
-            if (w <= 0 || h <= 0)
-                return false;
-
-            cropRect = new OpenCvSharp.Rect(x, y, w, h);
-            crop.Dispose();
-            crop = new Mat(rotated, cropRect).Clone();
-            return true;
-        }
-
-        private Mat ConvertCropToBgra(Mat crop, Mat? alphaMask)
-        {
-            Mat output;
-            if (crop.Channels() == 4)
-            {
-                output = crop.Clone();
-            }
-            else if (crop.Channels() == 3)
-            {
-                output = new Mat();
-                Cv2.CvtColor(crop, output, ColorConversionCodes.BGR2BGRA);
-            }
-            else
-            {
-                output = new Mat();
-                Cv2.CvtColor(crop, output, ColorConversionCodes.GRAY2BGRA);
-            }
-
-            if (alphaMask != null)
-            {
-                using var alphaChannel = output.ExtractChannel(3);
-                if (alphaMask.Rows == output.Rows && alphaMask.Cols == output.Cols)
-                {
-                    alphaMask.CopyTo(alphaChannel);
-                }
-                else
-                {
-                    using var resized = new Mat();
-                    Cv2.Resize(alphaMask, resized, new OpenCvSharp.Size(output.Cols, output.Rows), 0, 0, InterpolationFlags.Nearest);
-                    resized.CopyTo(alphaChannel);
-                }
-            }
-
-            return output;
-        }
 
         // === 1) Snapshot de configuración y paths ===
         private void LogPathSnapshot()
@@ -2735,10 +2538,10 @@ namespace BrakeDiscInspector_GUI_ROI
         {
             CurrentRoi.EnforceMinSize(10, 10);
             var currentModel = BuildCurrentRoiModel();
-            if (!TryBuildRoiCropInfo(currentModel, out var info))
+            if (!RoiCropUtils.TryBuildRoiCropInfo(currentModel, out var info))
                 return new Mat();
 
-            if (TryGetRotatedCrop(bgr, info, currentModel.AngleDeg, out var crop, out _))
+            if (RoiCropUtils.TryGetRotatedCrop(bgr, info, currentModel.AngleDeg, out var crop, out _))
                 return crop;
 
             return new Mat();

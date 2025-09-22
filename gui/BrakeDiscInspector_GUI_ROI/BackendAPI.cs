@@ -6,7 +6,6 @@ using System.Text.Json;
 using System.Threading.Tasks;
 using OpenCvSharp;
 using WPoint = System.Windows.Point;
-using WRect = System.Windows.Rect;
 
 namespace BrakeDiscInspector_GUI_ROI
 {
@@ -74,19 +73,21 @@ namespace BrakeDiscInspector_GUI_ROI
 
         // ========= /analyze (sobrecarga 4 args que usa tu MainWindow)
         public static async Task<(bool ok, string? label, double score, string? error, double threshold)> AnalyzeAsync(
-            string imagePathWin, WRect inspRect, PresetFile preset, Action<string>? log = null)
+            string imagePathWin, RoiModel inspectionRoi, PresetFile preset, Action<string>? log = null)
         {
             try
             {
                 if (!File.Exists(imagePathWin)) return (false, null, 0, "image not found", 0);
 
-                if (!TryCropToPng(imagePathWin, inspRect, out var pngMs, out var name, log))
+                if (!TryCropToPng(imagePathWin, inspectionRoi, out var pngMs, out var maskMs, out var name, log))
                     return (false, null, 0, "crop failed", 0);
 
                 using (pngMs)
+                using (maskMs)
                 {
                     var bytes = pngMs.ToArray();
-                    var resp = await AnalyzeAsync(bytes, null, null);
+                    byte[]? maskBytes = maskMs?.ToArray();
+                    var resp = await AnalyzeAsync(bytes, maskBytes, null);
                     return (true, resp.label, resp.score, null, resp.threshold);
                 }
             }
@@ -163,7 +164,7 @@ namespace BrakeDiscInspector_GUI_ROI
         // ========= match one: recortando desde la imagen
         public static async Task<(bool ok, WPoint? center, double score, string? error)> MatchOneViaFilesAsync(
             string imagePathWin,
-            WRect templateRect,
+            RoiModel templateRoi,
             double thr,
             double rotRange,
             double scaleMin,
@@ -175,6 +176,7 @@ namespace BrakeDiscInspector_GUI_ROI
             Action<string>? log = null)
         {
             MemoryStream? tplStream = null;
+            MemoryStream? maskStream = null;
             try
             {
                 string url = BaseUrl.TrimEnd('/') + MatchEndpoint;
@@ -184,11 +186,15 @@ namespace BrakeDiscInspector_GUI_ROI
 
                 mp.Add(new ByteArrayContent(File.ReadAllBytes(imagePathWin)), "image", Path.GetFileName(imagePathWin));
 
-                if (!TryCropToPng(imagePathWin, templateRect, out tplStream, out var tplName, log))
+                if (!TryCropToPng(imagePathWin, templateRoi, out tplStream, out maskStream, out var tplName, log))
                     return (false, null, 0, "crop template failed");
 
                 tplStream.Position = 0;
                 mp.Add(new StreamContent(tplStream), "template", string.IsNullOrWhiteSpace(tplName) ? "template.png" : tplName);
+                if (maskStream != null)
+                {
+                    log?.Invoke($"[MatchOneViaFiles] mask bytes={maskStream.Length:n0} (alpha en template)");
+                }
 
                 mp.Add(new StringContent(tag), "tag");
                 mp.Add(new StringContent(thr.ToString(System.Globalization.CultureInfo.InvariantCulture)), "thr");
@@ -231,72 +237,103 @@ namespace BrakeDiscInspector_GUI_ROI
             finally
             {
                 try { tplStream?.Dispose(); } catch { /* noop */ }
+                try { maskStream?.Dispose(); } catch { /* noop */ }
             }
         }
 
         // ========= util: recortar PNG desde ruta/rect
-        public static bool TryCropToPng(string imagePathWin, WRect rect, out MemoryStream pngStream, out string fileName, Action<string>? log = null)
+        public static bool TryCropToPng(string imagePathWin, RoiModel roi, out MemoryStream pngStream, out MemoryStream? maskStream, out string fileName, Action<string>? log = null)
         {
             pngStream = null;
+            maskStream = null;
             fileName = $"crop_{DateTime.Now:yyyyMMdd_HHmmssfff}.png";
 
             try
             {
+                if (roi == null)
+                {
+                    log?.Invoke("[TryCropToPng] ROI null");
+                    return false;
+                }
+
                 using var src = Cv2.ImRead(imagePathWin, ImreadModes.Unchanged);
                 if (src.Empty())
                 {
                     log?.Invoke("[TryCropToPng] failed to load image");
-                    pngStream = null;
                     return false;
                 }
 
-                if (src.Width <= 0 || src.Height <= 0)
+                if (!RoiCropUtils.TryBuildRoiCropInfo(roi, out var info))
                 {
-                    log?.Invoke("[TryCropToPng] source image has invalid dimensions");
-                    pngStream = null;
+                    log?.Invoke("[TryCropToPng] unsupported ROI shape");
                     return false;
                 }
 
-                var x = Math.Max(0, (int)rect.X);
-                var y = Math.Max(0, (int)rect.Y);
-                var w = Math.Max(1, (int)rect.Width);
-                var h = Math.Max(1, (int)rect.Height);
-
-                if (x >= src.Width) x = src.Width - 1;
-                if (y >= src.Height) y = src.Height - 1;
-
-                if (x < 0) x = 0;
-                if (y < 0) y = 0;
-
-                if (x + w > src.Width) w = Math.Max(1, src.Width - x);
-                if (y + h > src.Height) h = Math.Max(1, src.Height - y);
-
-                if (w <= 0 || h <= 0)
+                if (!RoiCropUtils.TryGetRotatedCrop(src, info, roi.AngleDeg, out var cropMat, out var cropRect))
                 {
-                    log?.Invoke("[TryCropToPng] invalid crop dimensions");
-                    pngStream = null;
+                    log?.Invoke("[TryCropToPng] failed to get rotated crop");
                     return false;
                 }
 
-                var roi = new Rect(x, y, w, h);
-                using var roiMat = new Mat(src, roi);
-                using var cropMat = roiMat.Clone();
-
-                if (!Cv2.ImEncode(".png", cropMat, out var pngBytes) || pngBytes is null || pngBytes.Length == 0)
+                Mat? maskMat = null;
+                Mat? encodeMat = null;
+                try
                 {
-                    log?.Invoke("[TryCropToPng] failed to encode PNG");
-                    pngStream = null;
-                    return false;
-                }
+                    bool needsMask = roi.Shape == RoiShape.Circle || roi.Shape == RoiShape.Annulus;
+                    if (needsMask)
+                    {
+                        maskMat = RoiCropUtils.BuildRoiMask(info, cropRect);
+                        encodeMat = RoiCropUtils.ConvertCropToBgra(cropMat, maskMat);
+                    }
+                    else
+                    {
+                        encodeMat = cropMat;
+                    }
 
-                pngStream = new MemoryStream(pngBytes);
-                return true;
+                    if (!Cv2.ImEncode(".png", encodeMat, out var pngBytes) || pngBytes is null || pngBytes.Length == 0)
+                    {
+                        log?.Invoke("[TryCropToPng] failed to encode PNG");
+                        return false;
+                    }
+
+                    pngStream = new MemoryStream(pngBytes);
+
+                    if (needsMask && maskMat != null)
+                    {
+                        if (Cv2.ImEncode(".png", maskMat, out var maskBytes) && maskBytes != null && maskBytes.Length > 0)
+                        {
+                            maskStream = new MemoryStream(maskBytes);
+                        }
+                        else
+                        {
+                            log?.Invoke("[TryCropToPng] failed to encode mask PNG");
+                            maskStream = null;
+                        }
+                    }
+
+                    log?.Invoke($"[TryCropToPng] ROI={roi.Shape} rect=({info.Left:0.##},{info.Top:0.##},{info.Width:0.##},{info.Height:0.##}) pivot=({info.PivotX:0.##},{info.PivotY:0.##}) crop=({cropRect.X},{cropRect.Y},{cropRect.Width},{cropRect.Height}) angle={roi.AngleDeg:0.##}");
+                    return true;
+                }
+                finally
+                {
+                    if (!ReferenceEquals(encodeMat, cropMat))
+                    {
+                        encodeMat?.Dispose();
+                    }
+                    maskMat?.Dispose();
+                    cropMat.Dispose();
+                }
             }
             catch (Exception ex)
             {
                 log?.Invoke("[TryCropToPng] " + ex.Message);
                 pngStream?.Dispose();
                 pngStream = null;
+                if (maskStream != null)
+                {
+                    maskStream.Dispose();
+                    maskStream = null;
+                }
                 return false;
             }
         }
