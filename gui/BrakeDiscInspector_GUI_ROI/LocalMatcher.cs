@@ -185,10 +185,15 @@ namespace BrakeDiscInspector_GUI_ROI
         {
             if (r.Shape == RoiShape.Rectangle)
             {
-                int x = (int)Math.Round(r.X);
-                int y = (int)Math.Round(r.Y);
-                int w = (int)Math.Round(r.Width);
-                int h = (int)Math.Round(r.Height);
+                double left = r.X;
+                double top = r.Y;
+                double right = r.X + r.Width;
+                double bottom = r.Y + r.Height;
+
+                int x = (int)Math.Floor(left);
+                int y = (int)Math.Floor(top);
+                int w = (int)Math.Ceiling(right - x);
+                int h = (int)Math.Ceiling(bottom - y);
                 x = Math.Clamp(x, 0, img.Width - 1);
                 y = Math.Clamp(y, 0, img.Height - 1);
                 w = Math.Clamp(w, 1, img.Width - x);
@@ -197,11 +202,15 @@ namespace BrakeDiscInspector_GUI_ROI
             }
             else
             {
-                int rOut = (int)Math.Round(r.R);
-                int x = (int)Math.Round(r.CX - rOut);
-                int y = (int)Math.Round(r.CY - rOut);
-                int w = 2 * rOut;
-                int h = 2 * rOut;
+                double left = r.CX - r.R;
+                double top = r.CY - r.R;
+                double right = r.CX + r.R;
+                double bottom = r.CY + r.R;
+
+                int x = (int)Math.Floor(left);
+                int y = (int)Math.Floor(top);
+                int w = (int)Math.Ceiling(right - x);
+                int h = (int)Math.Ceiling(bottom - y);
                 x = Math.Clamp(x, 0, img.Width - 1);
                 y = Math.Clamp(y, 0, img.Height - 1);
                 w = Math.Clamp(w, 1, img.Width - x);
