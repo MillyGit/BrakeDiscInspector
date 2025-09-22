@@ -47,8 +47,8 @@ namespace BrakeDiscInspector_GUI_ROI
                     {
                         double width = Math.Max(1.0, roi.Width);
                         double height = Math.Max(1.0, roi.Height);
-                        double left = roi.X - width / 2.0;
-                        double top = roi.Y - height / 2.0;
+                        double left = roi.X;
+                        double top = roi.Y;
                         var pivotLocal = RoiAdorner.GetRotationPivotLocalPoint(roi, width, height);
                         double pivotX = left + pivotLocal.X;
                         double pivotY = top + pivotLocal.Y;
