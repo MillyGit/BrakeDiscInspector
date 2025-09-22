@@ -1189,19 +1189,14 @@ namespace BrakeDiscInspector_GUI_ROI
             var mid = new WPoint((c1.Value.X + c2.Value.X) / 2.0, (c1.Value.Y + c2.Value.Y) / 2.0);
             AppendLog($"[FLOW] mid=({mid.X:0.##},{mid.Y:0.##})");
 
+            var (c1Canvas, c2Canvas, midCanvas) = ConvertMasterPointsToCanvas(c1.Value, c2.Value, mid);
+
             // Limpiamos SOLO marcas de análisis anteriores y redibujamos ROIs persistentes
             RedrawOverlay();
             ClearAnalysisMarksOnly();
 
             // Cruces + etiquetas
-            DrawLabeledCross(c1.Value.X, c1.Value.Y, "M1",
-                             WBrushes.LimeGreen, Brushes.Black, Brushes.White, 20, 2);
-
-            DrawLabeledCross(c2.Value.X, c2.Value.Y, "M2",
-                             WBrushes.LimeGreen, Brushes.Black, Brushes.White, 20, 2);
-
-            DrawLabeledCross(mid.X, mid.Y, "MID",
-                             WBrushes.OrangeRed, Brushes.Black, Brushes.White, 24, 3);
+            DrawMasterMarkers(c1Canvas, c2Canvas, midCanvas, withLabels: true);
 
 
             // 5) Reubicar inspección si existe
@@ -1223,9 +1218,7 @@ namespace BrakeDiscInspector_GUI_ROI
             AppendLog("[FLOW] Layout guardado");
 
             // Mantén las cruces visibles
-            DrawCross(c1.Value.X, c1.Value.Y, 20, WBrushes.LimeGreen, 2);
-            DrawCross(c2.Value.X, c2.Value.Y, 20, WBrushes.LimeGreen, 2);
-            DrawCross(mid.X, mid.Y, 24, WBrushes.OrangeRed, 3);
+            DrawMasterMarkers(c1Canvas, c2Canvas, midCanvas, withLabels: false);
 
             Snack($"Masters OK. Scores: M1={s1:0.000}, M2={s2:0.000}. ROI inspección reubicado.");
             _state = MasterState.Ready;
@@ -2261,6 +2254,35 @@ namespace BrakeDiscInspector_GUI_ROI
             return ok;
         }
 
+
+        private (WPoint c1Canvas, WPoint c2Canvas, WPoint midCanvas) ConvertMasterPointsToCanvas(WPoint c1Image, WPoint c2Image, WPoint midImage)
+        {
+            var c1Canvas = ImagePxToCanvasPt(c1Image.X, c1Image.Y);
+            var c2Canvas = ImagePxToCanvasPt(c2Image.X, c2Image.Y);
+            var midCanvas = ImagePxToCanvasPt(midImage.X, midImage.Y);
+            return (c1Canvas, c2Canvas, midCanvas);
+        }
+
+        private void DrawMasterMarkers(WPoint c1Canvas, WPoint c2Canvas, WPoint midCanvas, bool withLabels)
+        {
+            if (withLabels)
+            {
+                DrawLabeledCross(c1Canvas.X, c1Canvas.Y, "M1",
+                                 WBrushes.LimeGreen, Brushes.Black, Brushes.White, 20, 2);
+
+                DrawLabeledCross(c2Canvas.X, c2Canvas.Y, "M2",
+                                 WBrushes.LimeGreen, Brushes.Black, Brushes.White, 20, 2);
+
+                DrawLabeledCross(midCanvas.X, midCanvas.Y, "MID",
+                                 WBrushes.OrangeRed, Brushes.Black, Brushes.White, 24, 3);
+            }
+            else
+            {
+                DrawCross(c1Canvas.X, c1Canvas.Y, 20, WBrushes.LimeGreen, 2);
+                DrawCross(c2Canvas.X, c2Canvas.Y, 20, WBrushes.LimeGreen, 2);
+                DrawCross(midCanvas.X, midCanvas.Y, 24, WBrushes.OrangeRed, 3);
+            }
+        }
 
         // Si tu DrawCross no marca Tag, añade esta variante para que sea limpiable selectivamente
         private void DrawCross(double x, double y, int size, Brush brush, double thickness)

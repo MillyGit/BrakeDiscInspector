@@ -41,6 +41,7 @@ namespace BrakeDiscInspector_GUI_ROI
 
             var c1 = r1.center.Value; var c2 = r2.center.Value;
             var mid = new System.Windows.Point((c1.X + c2.X) / 2.0, (c1.Y + c2.Y) / 2.0);
+            var (c1Canvas, c2Canvas, midCanvas) = ConvertMasterPointsToCanvas(c1, c2, mid);
 
 
             if (_layout.Inspection == null) { Snack("Falta ROI de Inspección"); return; }
@@ -49,9 +50,9 @@ namespace BrakeDiscInspector_GUI_ROI
 
 
             RedrawOverlay();
-            DrawCross(c1.X, c1.Y, 20, Brushes.LimeGreen, 2);
-            DrawCross(c2.X, c2.Y, 20, Brushes.Orange, 2);
-            DrawCross(mid.X, mid.Y, 24, Brushes.Red, 2);
+            DrawCross(c1Canvas.X, c1Canvas.Y, 20, Brushes.LimeGreen, 2);
+            DrawCross(c2Canvas.X, c2Canvas.Y, 20, Brushes.Orange, 2);
+            DrawCross(midCanvas.X, midCanvas.Y, 24, Brushes.Red, 2);
         }
 
 
