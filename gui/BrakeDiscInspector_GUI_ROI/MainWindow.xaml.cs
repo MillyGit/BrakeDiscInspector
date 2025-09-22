@@ -869,6 +869,13 @@ namespace BrakeDiscInspector_GUI_ROI
                     savedRoi = _layout.Master1Pattern;
 
                     // Preview (si hay imagen cargada)
+                    {
+                        var displayRect = GetImageDisplayRect();
+                        var (pw, ph) = GetImagePixelSize();
+                        double scale = displayRect.Width / System.Math.Max(1.0, pw);
+                        AppendLog($"[save] scale={scale:0.####} dispRect=({displayRect.Left:0.##},{displayRect.Top:0.##})");
+                        AppendLog($"[save] ROI image : {savedRoi}");
+                    }
                     SaveRoiCropPreview(_layout.Master1Pattern, "M1_pattern");
 
                     _tmpBuffer = null;
