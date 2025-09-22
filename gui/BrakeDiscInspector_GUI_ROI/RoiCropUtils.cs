@@ -92,7 +92,9 @@ namespace BrakeDiscInspector_GUI_ROI
             double height = Math.Max(1.0, info.Height);
 
             var pivot = new Point2f((float)info.PivotX, (float)info.PivotY);
-            using var rotMat = Cv2.GetRotationMatrix2D(pivot, angleDeg, 1.0);
+            // WPF angles are clockwise, while OpenCV expects counter-clockwise angles.
+            // Invert the sign so that rotations match the ROI drawn in the UI.
+            using var rotMat = Cv2.GetRotationMatrix2D(pivot, -angleDeg, 1.0);
             using var rotated = new Mat();
             Scalar border = source.Channels() == 4 ? new Scalar(0, 0, 0, 0) : Scalar.All(0);
             Cv2.WarpAffine(source, rotated, rotMat, new Size(source.Width, source.Height),
