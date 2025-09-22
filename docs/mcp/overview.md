@@ -41,6 +41,34 @@ The MCP covers every change that can affect:
 - **Logs**: Locations and rotation policies are maintained in [`LOGGING.md`](../../LOGGING.md).
 - **Scripts**: PowerShell utilities live in [`scripts/`](../../scripts) for setup and runtime management.
 
+## Logging & Observability Coordination
+
+Logging expectations for the platform are centralised in [`LOGGING.md`](../../LOGGING.md) and must be treated as release
+gates so that troubleshooting is reliable across teams.
+
+- **Eventos mínimos**:
+  - Backend: iniciar carga de modelo, umbral vigente, cada request `/analyze`, `/train_status` y `/match_master`,
+    incluyendo bytes recibidos, `label/score/threshold`, latencia y `logger.exception` ante errores.
+  - GUI: arranque de la app, carga de imágenes (anonimizadas), ajustes ROI, solicitudes **Analyze** con tamaño PNG y
+    respuesta (`label/score/threshold`).
+- **Correlación GUI–backend**: toda solicitud **Analyze** debe llevar `X-Correlation-Id` generado en la GUI y los
+  logs del backend deben persistirlo para seguimiento de punta a punta.
+- **Métricas mínimas**: capturar media y p95 de latencia de `/analyze`, conteo de decisiones `OK/NG` y errores por tipo
+  (decoding/model/annulus) como base para los tableros de observabilidad.
+- **Rotación**: rotar `backend.log` semanalmente (logrotate/Task Scheduler) y asegurar retención comprimida de al menos
+  ocho ciclos.
+
+| Ítem | Validación pre-release | Validación post-release |
+|------|-----------------------|-------------------------|
+| Eventos mínimos backend | Backend Lead verifica trazas recientes en `backend/logs/` | Backend Lead audita resumen de logs tras la primera hora del despliegue |
+| Eventos mínimos GUI | GUI Lead revisa archivo `gui.log` generado durante smoke tests | GUI Lead confirma correlaciones con muestras reales del release |
+| Correlación `X-Correlation-Id` | Backend Lead y GUI Lead validan encabezados en pruebas de extremo a extremo | MCP Maintainer revisa reportes de correlación en el informe post-mortem del release |
+| Métricas mínimas | Backend Lead valida exportación/consulta del tablero de latencias y conteos | MCP Maintainer compila métricas y las anexa a la bitácora del release |
+| Rotación | Backend Lead confirma configuración activa de logrotate/Task Scheduler | MCP Maintainer verifica que no haya crecido el volumen fuera de los límites acordados |
+
+> Cualquier desviación (ajuste de niveles de log, nueva herramienta de observabilidad, cambios en rotación, etc.) debe
+> registrarse en [`latest_updates.md`](latest_updates.md) con fecha y responsables para mantener trazabilidad.
+
 ## Release Cadence
 
 - **GUI + Backend Releases**: Target coordinated releases so ROI contracts and REST endpoints remain synchronized.
