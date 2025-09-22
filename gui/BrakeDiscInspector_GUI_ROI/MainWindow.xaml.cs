@@ -2093,42 +2093,15 @@ namespace BrakeDiscInspector_GUI_ROI
 
             var pivot = new Point2f((float)info.PivotX, (float)info.PivotY);
             using var rotMat = Cv2.GetRotationMatrix2D(pivot, -angleDeg, 1.0);
-            double m00 = rotMat.At<double>(0, 0);
-            double m01 = rotMat.At<double>(0, 1);
-            double m02 = rotMat.At<double>(0, 2);
-            double m10 = rotMat.At<double>(1, 0);
-            double m11 = rotMat.At<double>(1, 1);
-            double m12 = rotMat.At<double>(1, 2);
-
-            Point2f Transform(double x, double y)
-            {
-                double newX = m00 * x + m01 * y + m02;
-                double newY = m10 * x + m11 * y + m12;
-                return new Point2f((float)newX, (float)newY);
-            }
-
             using var rotated = new Mat();
             Scalar border = source.Channels() == 4 ? new Scalar(0, 0, 0, 0) : Scalar.All(0);
             Cv2.WarpAffine(source, rotated, rotMat, new OpenCvSharp.Size(source.Width, source.Height),
                 InterpolationFlags.Linear, BorderTypes.Constant, border);
 
-            Point2f[] corners =
-            {
-                Transform(info.Left, info.Top),
-                Transform(info.Left + width, info.Top),
-                Transform(info.Left + width, info.Top + height),
-                Transform(info.Left, info.Top + height)
-            };
-
-            double minX = corners.Min(pt => (double)pt.X);
-            double maxX = corners.Max(pt => (double)pt.X);
-            double minY = corners.Min(pt => (double)pt.Y);
-            double maxY = corners.Max(pt => (double)pt.Y);
-
-            int x = (int)Math.Floor(minX);
-            int y = (int)Math.Floor(minY);
-            int w = (int)Math.Ceiling(maxX) - x;
-            int h = (int)Math.Ceiling(maxY) - y;
+            int x = (int)Math.Floor(info.Left);
+            int y = (int)Math.Floor(info.Top);
+            int w = (int)Math.Ceiling(info.Left + width) - x;
+            int h = (int)Math.Ceiling(info.Top + height) - y;
 
             w = Math.Max(w, 1);
             h = Math.Max(h, 1);
