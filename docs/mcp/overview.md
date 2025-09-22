@@ -47,6 +47,15 @@ The MCP covers every change that can affect:
 - **Emergency Fixes**: Document hotfixes in [`latest_updates.md`](latest_updates.md) with context and mitigation steps.
 - **Model Refreshes**: Run evaluation pipelines and capture metrics before swapping `current_model.h5`.
 
+### Release Readiness Checklist
+
+- [ ] Ejecuta los `curl` de `/train_status` y `/analyze`, captura sus respuestas y adjunta la evidencia en la bitácora del release siguiendo las pruebas de humo descritas en [`DEPLOYMENT.md` §3](../../DEPLOYMENT.md#3-pruebas-de-humo-smoke-tests) y en los tests básicos del backend en [`DEV_GUIDE.md` §2.5](../../DEV_GUIDE.md#25-tests-básicos).
+- [ ] Documenta un resumen de los resultados anteriores (incluyendo umbrales reportados y etiquetas devueltas) en el paquete de notas de release para auditar el comportamiento del modelo antes del envío.
+- [ ] Confirma que `gui/BrakeDiscInspector_GUI_ROI/appsettings.json` apunta al backend correcto según las directrices de despliegue de GUI en [`DEPLOYMENT.md` §2.2](../../DEPLOYMENT.md#22-gui) y la configuración detallada en [`DEV_GUIDE.md` §3.3](../../DEV_GUIDE.md#33-configuración).
+- [ ] Recorre el checklist final de despliegue en [`DEPLOYMENT.md` §10](../../DEPLOYMENT.md#10-checklist-de-despliegue) y marca cada ítem antes de solicitar la ventana coordinada.
+
+> Al completar la lista, enlaza el resultado en [`latest_updates.md`](latest_updates.md) cada vez que se programe un release coordinado.
+
 ## Maintaining this Folder
 
 - Keep files in `docs/mcp/` scoped to MCP coordination topics.
