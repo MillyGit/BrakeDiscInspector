@@ -84,7 +84,7 @@ namespace BrakeDiscInspector_GUI_ROI
         private const double LabelOffsetY = -20;  // desplazamiento hacia arriba de la cruz
 
         private ROI CurrentRoi = new ROI { X = 200, Y = 150, Width = 100, Height = 80, AngleDeg = 0, Legend = "M1" };
-        private Mat bgrFrame; // tu frame actual
+        private Mat? bgrFrame; // tu frame actual
         private bool UseAnnulus = false;
 
         public MainWindow()
@@ -277,6 +277,29 @@ namespace BrakeDiscInspector_GUI_ROI
             ImgMain.Source = _imgSourceBI;
             _imgW = _imgSourceBI.PixelWidth;
             _imgH = _imgSourceBI.PixelHeight;
+
+            try
+            {
+                var newFrame = Cv2.ImRead(path, ImreadModes.Color);
+                if (newFrame == null || newFrame.Empty())
+                {
+                    newFrame?.Dispose();
+                    bgrFrame?.Dispose();
+                    bgrFrame = null;
+                    MessageBox.Show("No se pudo leer la imagen para análisis.");
+                }
+                else
+                {
+                    bgrFrame?.Dispose();
+                    bgrFrame = newFrame;
+                }
+            }
+            catch (Exception ex)
+            {
+                bgrFrame?.Dispose();
+                bgrFrame = null;
+                MessageBox.Show($"Error al leer la imagen: {ex.Message}");
+            }
 
             SyncOverlayToImage();
 
@@ -2732,7 +2755,8 @@ namespace BrakeDiscInspector_GUI_ROI
             try
             {
                 // 1) Validaciones básicas
-                if (bgrFrame == null || bgrFrame.Empty())
+                var currentFrame = bgrFrame;
+                if (currentFrame == null || currentFrame.Empty())
                 {
                     MessageBox.Show("No hay imagen cargada.");
                     return;
@@ -2740,7 +2764,7 @@ namespace BrakeDiscInspector_GUI_ROI
 
                 // 2) Obtener el crop YA ROTADO desde tu ROI actual
                 //    Nota: se asume que tienes implementado GetRotatedCrop(Mat bgr)
-                using var crop = GetRotatedCrop(bgrFrame);
+                using var crop = GetRotatedCrop(currentFrame);
                 if (crop == null || crop.Empty())
                 {
                     MessageBox.Show("No se pudo obtener el recorte.");
