@@ -929,7 +929,7 @@ namespace BrakeDiscInspector_GUI_ROI
                     if (!IsAllowedMasterShape(_tmpBuffer.Shape)) { Snack("Master: usa rectángulo o círculo"); return; }
                     _tmpBuffer.Role = savedRole.Value;
 
-                    _layout.Master1Pattern = CanvasToImage(_tmpBuffer).Clone();
+                    _layout.Master1Pattern = _tmpBuffer.Clone();
                     savedRoi = _layout.Master1Pattern;
                     // Preview (si hay imagen cargada)
                     {
@@ -953,7 +953,7 @@ namespace BrakeDiscInspector_GUI_ROI
                     AppendLog($"[wizard] save state={_state} role={savedRole} source={bufferSource} roi={DescribeRoi(_tmpBuffer)}");
                     _tmpBuffer.Role = savedRole.Value;
 
-                    _layout.Master1Search = CanvasToImage(_tmpBuffer).Clone();
+                    _layout.Master1Search = _tmpBuffer.Clone();
                     savedRoi = _layout.Master1Search;
                     SaveRoiCropPreview(_layout.Master1Search, "M1_search");
 
@@ -967,7 +967,7 @@ namespace BrakeDiscInspector_GUI_ROI
                     if (!IsAllowedMasterShape(_tmpBuffer.Shape)) { Snack("Master: usa rectángulo o círculo"); return; }
                     _tmpBuffer.Role = savedRole.Value;
 
-                    _layout.Master2Pattern = CanvasToImage(_tmpBuffer).Clone();
+                    _layout.Master2Pattern = _tmpBuffer.Clone();
                     savedRoi = _layout.Master2Pattern;
                     SaveRoiCropPreview(_layout.Master2Pattern, "M2_pattern");
 
@@ -983,7 +983,7 @@ namespace BrakeDiscInspector_GUI_ROI
                     AppendLog($"[wizard] save state={_state} role={savedRole} source={bufferSource} roi={DescribeRoi(_tmpBuffer)}");
                     _tmpBuffer.Role = savedRole.Value;
 
-                    _layout.Master2Search = CanvasToImage(_tmpBuffer).Clone();
+                    _layout.Master2Search = _tmpBuffer.Clone();
                     savedRoi = _layout.Master2Search;
                     SaveRoiCropPreview(_layout.Master2Search, "M2_search");
 
@@ -998,7 +998,7 @@ namespace BrakeDiscInspector_GUI_ROI
                     AppendLog($"[wizard] save state={_state} role={savedRole} source={bufferSource} roi={DescribeRoi(_tmpBuffer)}");
                     _tmpBuffer.Role = savedRole.Value;
 
-                    _layout.Inspection = CanvasToImage(_tmpBuffer).Clone();
+                    _layout.Inspection = _tmpBuffer.Clone();
                     savedRoi = _layout.Inspection;
                     SyncCurrentRoiFromInspection(_layout.Inspection);
 
