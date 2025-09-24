@@ -3092,11 +3092,10 @@ namespace BrakeDiscInspector_GUI_ROI
             if (CanvasROI.Parent is not FrameworkElement parent) return;
             var imgTopLeft = ImgMain.TranslatePoint(new System.Windows.Point(0, 0), parent);
 
-            // Forzar a píxel de dispositivo (evita drift al redimensionar)
-            double left = Math.Round(imgTopLeft.X + displayRect.Left);
-            double top = Math.Round(imgTopLeft.Y + displayRect.Top);
-            double w = Math.Round(displayRect.Width);
-            double h = Math.Round(displayRect.Height);
+            double left = imgTopLeft.X + displayRect.Left;
+            double top = imgTopLeft.Y + displayRect.Top;
+            double w = displayRect.Width;
+            double h = displayRect.Height;
 
             CanvasROI.HorizontalAlignment = HorizontalAlignment.Left;
             CanvasROI.VerticalAlignment = VerticalAlignment.Top;
