@@ -51,6 +51,19 @@ namespace BrakeDiscInspector_GUI_ROI
         }
 
 
+        private (System.Windows.Point c1Canvas, System.Windows.Point c2Canvas, System.Windows.Point midCanvas) ConvertMasterPointsToCanvas(
+            System.Windows.Point c1,
+            System.Windows.Point c2,
+            System.Windows.Point mid)
+        {
+            var c1Canvas = ImagePxToCanvasPt(c1.X, c1.Y);
+            var c2Canvas = ImagePxToCanvasPt(c2.X, c2.Y);
+            var midCanvas = ImagePxToCanvasPt(mid.X, mid.Y);
+
+            return (c1Canvas, c2Canvas, midCanvas);
+        }
+
+
         public async Task AnalyzeInspectionViaBackend()
         {
             if (_layout?.Inspection == null) { Snack("Falta ROI de Inspección"); return; }
