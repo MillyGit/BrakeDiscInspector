@@ -33,6 +33,7 @@ using WLine = System.Windows.Shapes.Line;
 using WPoint = System.Windows.Point;
 using WRect = System.Windows.Rect;
 using WRectShape = System.Windows.Shapes.Rectangle;
+using Path = System.IO.Path;
 
 namespace BrakeDiscInspector_GUI_ROI
 {
@@ -73,11 +74,23 @@ namespace BrakeDiscInspector_GUI_ROI
 
         private Action<string>? _uiLog;
 
+        // Cache de la última sincronización del overlay
+        private double _canvasLeftPx = 0;
+        private double _canvasTopPx = 0;
+        private double _canvasWpx = 0;
+        private double _canvasHpx = 0;
+        private double _sx = 1.0;   // escala imagen->canvas en X
+        private double _sy = 1.0;   // escala imagen->canvas en Y
+
+
+        // === File Logger ===
+        private static readonly object _fileLogLock = new object();
+        private static string _fileLogPath = string.Empty;
         // Si tu overlay se llama distinto, ajusta esta propiedad (o referencia directa en los métodos).
         // Por ejemplo, si en XAML tienes <Canvas x:Name="Overlay"> usa ese nombre aquí.
         private Canvas OverlayCanvas => CanvasROI;
 
-        private const string ANALYSIS_TAG = "ANALYSIS_MARK";
+        private const string ANALYSIS_TAG = "analysis-mark";
 
         // === Helpers de overlay ===
         private const double LabelOffsetX = 10;   // desplazamiento a la derecha de la cruz
@@ -87,11 +100,21 @@ namespace BrakeDiscInspector_GUI_ROI
         private Mat? bgrFrame; // tu frame actual
         private bool UseAnnulus = false;
 
+        private bool _syncScheduled;
+        private int _syncRetryCount;
+        private const int MaxSyncRetries = 3;
+        // overlay diferido
+        private bool _overlayNeedsRedraw;
         public MainWindow()
         {
             InitializeComponent();
             _preset = PresetManager.LoadOrDefault(_preset);
             _uiLog = s => Dispatcher.BeginInvoke(new Action(() => AppendLog(s)));
+
+            // start file logger early
+            InitFileLogger();
+            AppendLog($"[LOG] File initialized at '{_fileLogPath}'");
+
 
 
             InitUI();
@@ -265,7 +288,7 @@ namespace BrakeDiscInspector_GUI_ROI
         private void LoadImage(string path)
         {
             _currentImagePathWin = path;
-            _currentImagePathBackend = path; // no normalization needed for multipart
+            _currentImagePathBackend = path;
             _currentImagePath = _currentImagePathWin;
 
             _imgSourceBI = new BitmapImage();
@@ -301,26 +324,55 @@ namespace BrakeDiscInspector_GUI_ROI
                 MessageBox.Show($"Error al leer la imagen: {ex.Message}");
             }
 
-            SyncOverlayToImage();
+            // 🔧 clave: forzar reprogramación aunque el scheduler se hubiera quedado “true”
+            ScheduleSyncOverlay(force: true);
 
             AppendLog($"Imagen cargada: {_imgW}x{_imgH}  (Canvas: {CanvasROI.ActualWidth:0}x{CanvasROI.ActualHeight:0})");
-            RedrawOverlay();
+            RedrawOverlaySafe();
         }
+
+        private bool IsOverlayAligned()
+        {
+            var disp = GetImageDisplayRect();
+            if (disp.Width <= 0 || disp.Height <= 0) return false;
+
+            double dw = Math.Abs(CanvasROI.ActualWidth - disp.Width);
+            double dh = Math.Abs(CanvasROI.ActualHeight - disp.Height);
+            return dw <= 0.5 && dh <= 0.5; // tolerancia sub-px
+        }
+
+        private void RedrawOverlaySafe()
+        {
+            if (IsOverlayAligned())
+            {
+                RedrawOverlay();
+                _overlayNeedsRedraw = false;
+            }
+            else
+            {
+                _overlayNeedsRedraw = true;
+                ScheduleSyncOverlay(force: true);
+                AppendLog("[guard] Redraw pospuesto (overlay aún no alineado)");
+            }
+        }
+
+
 
         private void MainWindow_Loaded(object sender, RoutedEventArgs e)
         {
-            SyncOverlayToImage();
+            ScheduleSyncOverlay(force: true);
         }
 
         private void MainWindow_SizeChanged(object sender, SizeChangedEventArgs e)
         {
-            SyncOverlayToImage();
+            ScheduleSyncOverlay(force: true);
         }
 
         private void ImgMain_SizeChanged(object sender, SizeChangedEventArgs e)
         {
-            SyncOverlayToImage();
+            ScheduleSyncOverlay(force: true);
         }
+
 
         // ====== Ratón & dibujo ======
         private RoiShape ReadShapeForCurrentStep()
@@ -422,14 +474,23 @@ namespace BrakeDiscInspector_GUI_ROI
             var handledBefore = e.Handled;
             AppendLog($"[canvas+] Down HB={handledBefore} src={e.OriginalSource?.GetType().Name}, over={over?.GetType().Name}");
 
-            // 1) Si hay un Thumb bajo el puntero → el adorner se encarga (resize/moveThumb)
+            // ⛑️ No permitir interacción si el overlay no está alineado aún
+            if (!IsOverlayAligned())
+            {
+                AppendLog("[guard] overlay no alineado todavía → reprogramo sync y cancelo este click");
+                ScheduleSyncOverlay(force: true);
+                e.Handled = true;
+                return;
+            }
+
+            // 1) Thumb → lo gestiona el adorner
             if (over is System.Windows.Controls.Primitives.Thumb)
             {
                 AppendLog("[canvas+] Down ignorado (Thumb debajo) -> Adorner manejará");
                 return;
             }
 
-            // 2) Si clicas dentro de un ROI (Shape con RoiModel) → iniciamos ARRASTRE
+            // 2) Arrastre de ROI existente
             if (e.OriginalSource is Shape sShape && sShape.Tag is RoiModel)
             {
                 _dragShape = sShape;
@@ -441,11 +502,11 @@ namespace BrakeDiscInspector_GUI_ROI
 
                 CanvasROI.CaptureMouse();
                 AppendLog($"[drag] start HB={handledBefore} on {sShape.GetType().Name} at {_dragStart.X:0},{_dragStart.Y:0} orig=({_dragOrigX:0},{_dragOrigY:0})");
-                e.Handled = true; // prevenimos que otro control secuestre el drag
+                e.Handled = true;
                 return;
             }
 
-            // 3) Si clicas en Canvas vacío → iniciamos DIBUJO
+            // 3) Dibujo nuevo ROI en canvas vacío
             if (e.OriginalSource is Canvas)
             {
                 _isDrawing = true;
@@ -460,6 +521,7 @@ namespace BrakeDiscInspector_GUI_ROI
 
             AppendLog($"[canvas+] Down ignorado (src={e.OriginalSource?.GetType().Name})");
         }
+
 
         private void Canvas_MouseMoveEx(object sender, System.Windows.Input.MouseEventArgs e)
         {
@@ -806,6 +868,7 @@ namespace BrakeDiscInspector_GUI_ROI
         }
 
         // ====== Guardar pasos del wizard ======
+        // ====== Guardar pasos del wizard ======
         private void BtnSaveMaster_Click(object sender, RoutedEventArgs e)
         {
 
@@ -822,7 +885,7 @@ namespace BrakeDiscInspector_GUI_ROI
                     AppendLog($"[wizard] no ROI to clear state={previousState} role={clearedRole}");
 
                 ClearPreview();
-                RedrawOverlay();
+                RedrawOverlaySafe();
                 UpdateWizardState();
 
                 if (!cleared)
@@ -865,9 +928,9 @@ namespace BrakeDiscInspector_GUI_ROI
                     AppendLog($"[wizard] save state={_state} role={savedRole} source={bufferSource} roi={DescribeRoi(_tmpBuffer)}");
                     if (!IsAllowedMasterShape(_tmpBuffer.Shape)) { Snack("Master: usa rectángulo o círculo"); return; }
                     _tmpBuffer.Role = savedRole.Value;
-                    _layout.Master1Pattern = _tmpBuffer.Clone();
-                    savedRoi = _layout.Master1Pattern;
 
+                    _layout.Master1Pattern = CanvasToImage(_tmpBuffer).Clone();
+                    savedRoi = _layout.Master1Pattern;
                     // Preview (si hay imagen cargada)
                     {
                         var displayRect = GetImageDisplayRect();
@@ -889,9 +952,9 @@ namespace BrakeDiscInspector_GUI_ROI
                     savedRole = RoiRole.Master1Search;
                     AppendLog($"[wizard] save state={_state} role={savedRole} source={bufferSource} roi={DescribeRoi(_tmpBuffer)}");
                     _tmpBuffer.Role = savedRole.Value;
-                    _layout.Master1Search = _tmpBuffer.Clone();
-                    savedRoi = _layout.Master1Search;
 
+                    _layout.Master1Search = CanvasToImage(_tmpBuffer).Clone();
+                    savedRoi = _layout.Master1Search;
                     SaveRoiCropPreview(_layout.Master1Search, "M1_search");
 
                     _tmpBuffer = null;
@@ -903,9 +966,9 @@ namespace BrakeDiscInspector_GUI_ROI
                     AppendLog($"[wizard] save state={_state} role={savedRole} source={bufferSource} roi={DescribeRoi(_tmpBuffer)}");
                     if (!IsAllowedMasterShape(_tmpBuffer.Shape)) { Snack("Master: usa rectángulo o círculo"); return; }
                     _tmpBuffer.Role = savedRole.Value;
-                    _layout.Master2Pattern = _tmpBuffer.Clone();
-                    savedRoi = _layout.Master2Pattern;
 
+                    _layout.Master2Pattern = CanvasToImage(_tmpBuffer).Clone();
+                    savedRoi = _layout.Master2Pattern;
                     SaveRoiCropPreview(_layout.Master2Pattern, "M2_pattern");
 
                     _tmpBuffer = null;
@@ -919,9 +982,9 @@ namespace BrakeDiscInspector_GUI_ROI
                     savedRole = RoiRole.Master2Search;
                     AppendLog($"[wizard] save state={_state} role={savedRole} source={bufferSource} roi={DescribeRoi(_tmpBuffer)}");
                     _tmpBuffer.Role = savedRole.Value;
-                    _layout.Master2Search = _tmpBuffer.Clone();
-                    savedRoi = _layout.Master2Search;
 
+                    _layout.Master2Search = CanvasToImage(_tmpBuffer).Clone();
+                    savedRoi = _layout.Master2Search;
                     SaveRoiCropPreview(_layout.Master2Search, "M2_search");
 
                     _tmpBuffer = null;
@@ -934,7 +997,8 @@ namespace BrakeDiscInspector_GUI_ROI
                     savedRole = RoiRole.Inspection;
                     AppendLog($"[wizard] save state={_state} role={savedRole} source={bufferSource} roi={DescribeRoi(_tmpBuffer)}");
                     _tmpBuffer.Role = savedRole.Value;
-                    _layout.Inspection = _tmpBuffer.Clone();
+
+                    _layout.Inspection = CanvasToImage(_tmpBuffer).Clone();
                     savedRoi = _layout.Inspection;
                     SyncCurrentRoiFromInspection(_layout.Inspection);
 
@@ -1222,7 +1286,7 @@ namespace BrakeDiscInspector_GUI_ROI
             var (c1Canvas, c2Canvas, midCanvas) = ConvertMasterPointsToCanvas(c1.Value, c2.Value, mid);
 
             // Limpiamos SOLO marcas de análisis anteriores y redibujamos ROIs persistentes
-            RedrawOverlay();
+            RedrawOverlaySafe();
             ClearAnalysisMarksOnly();
 
             // Cruces + etiquetas
@@ -1241,7 +1305,7 @@ namespace BrakeDiscInspector_GUI_ROI
 
             MoveInspectionTo(_layout.Inspection, mid.X, mid.Y);
             ClipInspectionROI(_layout.Inspection, _imgW, _imgH);
-            RedrawOverlay();
+            RedrawOverlaySafe();
             AppendLog("[FLOW] Inspection movida y recortada");
 
             MasterLayoutManager.Save(_preset, _layout);
@@ -1273,6 +1337,13 @@ namespace BrakeDiscInspector_GUI_ROI
         private void AppendLog(string line)
         {
             AppendLogBulk(new[] { line });
+            try
+            {
+                // Mirror the exact text shown in UI into the file
+                WriteFileLog($"[{DateTime.Now:HH:mm:ss.fff}] " + line);
+            }
+            catch { /* noop */ }
+
         }
 
         private void AppendLogBulk(IEnumerable<string> lines)
@@ -1303,9 +1374,49 @@ namespace BrakeDiscInspector_GUI_ROI
 
 
 
+
+        // Initialize file logger; creates logs\ui_*.log under the app base directory
+        private void InitFileLogger()
+        {
+            try
+            {
+                var baseDir = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "logs");
+                System.IO.Directory.CreateDirectory(baseDir);
+                _fileLogPath = System.IO.Path.Combine(baseDir, $"ui_{DateTime.Now:yyyyMMdd_HHmmss}.log");
+                var header = $"[{DateTime.Now:HH:mm:ss.fff}] === UI LOG START ==={Environment.NewLine}";
+                lock (_fileLogLock)
+                {
+                    System.IO.File.AppendAllText(_fileLogPath, header);
+                }
+                try { System.Diagnostics.Debug.WriteLine("[LOG] File: " + _fileLogPath); } catch { /* noop */ }
+            }
+            catch { /* ignore */ }
+        }
+
+
+        // Write a single line to the file log (thread-safe). Adds newline automatically.
+        private void WriteFileLog(string line)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(_fileLogPath)) return;
+                lock (_fileLogLock)
+                {
+                    System.IO.File.AppendAllText(_fileLogPath, line + System.Environment.NewLine);
+                }
+            }
+            catch { /* noop */ }
+        }
+
         private void NetLog(string line)
         {
             try { AppendLog("[NET] " + line); } catch { /* noop */ }
+            try
+            {
+                WriteFileLog("[NET] " + line);
+            }
+            catch { /* noop */ }
+
         }
 
         // --------- AppendLog (para evitar CS0119 en invocaciones) ---------
@@ -1443,7 +1554,7 @@ namespace BrakeDiscInspector_GUI_ROI
         private void BtnLoadLayout_Click(object sender, RoutedEventArgs e)
         {
             _layout = MasterLayoutManager.LoadOrNew(_preset);
-            RedrawOverlay();
+            RedrawOverlaySafe();
             Snack("Layout cargado.");
             UpdateWizardState();
         }
@@ -1690,11 +1801,11 @@ namespace BrakeDiscInspector_GUI_ROI
 
         private class MatchOneResult
         {
-        public bool ok { get; set; }
-        public double x { get; set; }
-        public double y { get; set; }
-        public double score { get; set; }
-        public string error { get; set; } = "";
+            public bool ok { get; set; }
+            public double x { get; set; }
+            public double y { get; set; }
+            public double score { get; set; }
+            public string error { get; set; } = "";
         }
 
         // Reemplazo robusto: acepta {ok,x,y,score} y también {found,center_x,center_y,confidence}
@@ -1844,10 +1955,10 @@ namespace BrakeDiscInspector_GUI_ROI
 
         private class AnalyzeResp
         {
-        public bool ok { get; set; }
-        public string label { get; set; } = "";
-        public double score { get; set; }
-        public string error { get; set; } = "";
+            public bool ok { get; set; }
+            public string label { get; set; } = "";
+            public double score { get; set; }
+            public string error { get; set; } = "";
         }
 
         private static string SerializeRoiToJson(RoiModel roi)
@@ -1922,55 +2033,85 @@ namespace BrakeDiscInspector_GUI_ROI
             $"BrakeDiscInspector_NET_{System.Diagnostics.Process.GetCurrentProcess().Id}.log");
 
         // Guarda un recorte PNG del ROI (patrón/búsqueda) en roi_previews/, junto a la imagen cargada.
+
+        private Mat GetUiMatOrReadFromDisk()
+        {
+            if (ImgMain?.Source is System.Windows.Media.Imaging.BitmapSource bs)
+            {
+                // Misma imagen que ve la UI
+                return OpenCvSharp.WpfExtensions.BitmapSourceConverter.ToMat(bs);
+            }
+
+            if (!string.IsNullOrWhiteSpace(_currentImagePathWin))
+            {
+                var m = Cv2.ImRead(_currentImagePathWin, ImreadModes.Unchanged);
+                if (!m.Empty()) return m;
+            }
+
+            throw new InvalidOperationException("No hay imagen en la UI ni ruta válida para leer.");
+        }
+
+        private string EnsureAndGetPreviewDir()
+        {
+            var imgDir = System.IO.Path.GetDirectoryName(_currentImagePathWin) ?? "";
+            var previewDir = System.IO.Path.Combine(imgDir, "roi_previews");
+            System.IO.Directory.CreateDirectory(previewDir);
+            return previewDir;
+        }
+
+
+
         private void SaveRoiCropPreview(RoiModel roi, string tag)
         {
             try
             {
-                if (string.IsNullOrWhiteSpace(_currentImagePathWin) || !System.IO.File.Exists(_currentImagePathWin))
+                if (roi == null)
                 {
-                    AppendLog("[preview] No hay imagen cargada; no se guarda preview.");
+                    AppendLog("[preview] ROI == null");
                     return;
                 }
 
-                string baseDir = System.IO.Path.Combine(
-                    System.IO.Path.GetDirectoryName(_currentImagePathWin) ?? "",
-                    "roi_previews");
-                System.IO.Directory.CreateDirectory(baseDir);
+                // Asegurar que el ROI está en coordenadas de IMAGEN (no canvas)
+                RoiModel roiImage = LooksLikeCanvasCoords(roi) ? CanvasToImage(roi) : roi.Clone();
 
-                using var src = Cv2.ImRead(_currentImagePathWin, ImreadModes.Unchanged);
-                if (src.Empty())
-                {
-                    AppendLog("[preview] No se pudo leer la imagen fuente.");
-                    return;
-                }
-
-                if (!RoiCropUtils.TryBuildRoiCropInfo(roi, out var cropInfo))
+                // 1) Construir la info del recorte desde el ROI en coords de imagen
+                if (!RoiCropUtils.TryBuildRoiCropInfo(roiImage, out var cropInfo))
                 {
                     AppendLog("[preview] ROI no soportado para recorte.");
                     return;
                 }
 
-                if (!RoiCropUtils.TryGetRotatedCrop(src, cropInfo, roi.AngleDeg,
+                // 2) Usar EXACTAMENTE la misma imagen que ve la UI
+                using var src = GetUiMatOrReadFromDisk();
+                if (src.Empty())
+                {
+                    AppendLog("[preview] Imagen fuente vacía.");
+                    return;
+                }
+
+                // 3) Recorte rotado (respeta ángulo del ROI). WPF horario vs OpenCV antihorario ya se corrige en utils
+                if (!RoiCropUtils.TryGetRotatedCrop(src, cropInfo, roiImage.AngleDeg,
                     out var cropMat, out var cropRect))
                 {
                     AppendLog("[preview] No se pudo obtener el recorte rotado.");
                     return;
                 }
 
-                var roiRect = new Rect2d(cropInfo.Left, cropInfo.Top, cropInfo.Width, cropInfo.Height);
-                var pivotPoint = new Point2d(cropInfo.PivotX, cropInfo.PivotY);
-
+                // 4) Máscara alfa según forma (Rect / Circle / Annulus)
                 Mat? alphaMask = null;
                 try
                 {
                     alphaMask = RoiCropUtils.BuildRoiMask(cropInfo, cropRect);
                     using var cropWithAlpha = RoiCropUtils.ConvertCropToBgra(cropMat, alphaMask);
 
+                    var outDir = EnsureAndGetPreviewDir();
                     string ts = DateTime.Now.ToString("yyyyMMdd_HHmmssfff");
                     string fname = $"{tag}_{ts}.png";
-                    var outPath = System.IO.Path.Combine(baseDir, fname);
+                    var outPath = System.IO.Path.Combine(outDir, fname);
+
                     Cv2.ImWrite(outPath, cropWithAlpha);
-                    AppendLog($"[preview] Guardado {fname} en {baseDir} ROI=({roiRect.X:0.##},{roiRect.Y:0.##},{roiRect.Width:0.##},{roiRect.Height:0.##}) pivot=({pivotPoint.X:0.##},{pivotPoint.Y:0.##}) => crop=({cropRect.X},{cropRect.Y},{cropRect.Width},{cropRect.Height}) ang={roi.AngleDeg:0.##}");
+                    AppendLog($"[preview] Guardado {fname} ROI=({cropInfo.Left:0.#},{cropInfo.Top:0.#},{cropInfo.Width:0.#},{cropInfo.Height:0.#}) " +
+                              $"crop=({cropRect.X},{cropRect.Y},{cropRect.Width},{cropRect.Height}) ang={roiImage.AngleDeg:0.##}");
                 }
                 finally
                 {
@@ -1983,6 +2124,8 @@ namespace BrakeDiscInspector_GUI_ROI
                 AppendLog("[preview] error: " + ex.Message);
             }
         }
+
+
 
 
         // === 1) Snapshot de configuración y paths ===
@@ -2085,6 +2228,25 @@ namespace BrakeDiscInspector_GUI_ROI
 
             AppendLog("== VERIFY: fin verificación ==");
             return ok;
+        }
+        private bool LooksLikeCanvasCoords(RoiModel r)
+        {
+            var (pw, ph) = GetImagePixelSize();
+            var disp = GetImageDisplayRect();
+
+            // Si el ROI “cabe” dentro del tamaño del canvas/área visible y no excede claramente,
+            // asumimos que está en coords CANVAS (no imagen).
+            bool withinCanvas =
+                r.X >= -1 && r.Y >= -1 &&
+                r.Width <= disp.Width + 2 &&
+                r.Height <= disp.Height + 2;
+
+            // Si además el tamaño aparente es similar al canvas (no a la imagen en píxeles), reforzamos la sospecha.
+            bool notImageScale =
+                r.Width > 0 && r.Height > 0 &&
+                (r.Width > pw || r.Height > ph);
+
+            return withinCanvas && notImageScale;
         }
 
 
@@ -2196,7 +2358,7 @@ namespace BrakeDiscInspector_GUI_ROI
 
             var toRemove = CanvasROI.Children
                 .OfType<FrameworkElement>()
-                .Where(el => (el.Tag as string) == ANALYSIS_TAG)
+                .Where(el => (el.Tag as string) == "analysis-mark")
                 .ToList();
 
             foreach (var el in toRemove)
@@ -2207,7 +2369,7 @@ namespace BrakeDiscInspector_GUI_ROI
         private void ResetAnalysisMarks()
         {
             RemoveAnalysisMarks();
-            RedrawOverlay(); // tu método existente que repinta los ROIs
+            RedrawOverlaySafe(); // tu método existente que repinta los ROIs
             AppendLog("[ANALYZE] Limpiadas marcas de análisis (cruces).");
         }
 
@@ -2610,6 +2772,7 @@ namespace BrakeDiscInspector_GUI_ROI
                 // 7) Decodificar heatmap y pintarlo en el Image del XAML
                 var heatBytes = Convert.FromBase64String(resp.heatmap_png_b64);
                 using var heat = OpenCvSharp.Cv2.ImDecode(heatBytes, OpenCvSharp.ImreadModes.Color);
+
                 if (HeatmapImage != null)
                     HeatmapImage.Source = WriteableBitmapConverter.ToWriteableBitmap(heat);
 
@@ -2817,112 +2980,106 @@ namespace BrakeDiscInspector_GUI_ROI
                 displayRect.Top + pImg.Y * scale);
         }
 
+        /// Convierte un punto en píxeles de imagen -> punto en CanvasROI (coordenadas locales del Canvas)
         private System.Windows.Point ImagePxToCanvasPt(double px, double py)
         {
-            var displayRect = GetImageDisplayRect();
-            if (displayRect.Width <= 0 || displayRect.Height <= 0)
-                return new System.Windows.Point(0, 0);
-
-            var (pw, ph) = GetImagePixelSize();
-            if (pw <= 0 || ph <= 0)
-                return new System.Windows.Point(0, 0);
-
-            // Traduce usando el mismo helper que otros cálculos y resta el offset del letterbox
-            // para llevar el punto al sistema local del CanvasROI.
-            var pointInImage = ImgToCanvas(new System.Windows.Point(px, py));
-            return new System.Windows.Point(pointInImage.X - displayRect.Left, pointInImage.Y - displayRect.Top);
+            var (sx, sy) = GetCanvasScales();
+            // Redondeamos al DIP final para que no haya medias coordenadas visuales
+            double x = Math.Round(px * sx);
+            double y = Math.Round(py * sy);
+            return new System.Windows.Point(x, y);
         }
+
+
+
 
         private System.Windows.Point CanvasToImage(System.Windows.Point pCanvas)
         {
-            var displayRect = GetImageDisplayRect();
-            var (pw, ph) = GetImagePixelSize();
-            if (pw <= 0 || ph <= 0 || displayRect.Width <= 0 || displayRect.Height <= 0)
-                return new System.Windows.Point(0, 0);
-
-            double scale = displayRect.Width / pw;
-            return new System.Windows.Point(
-                pCanvas.X / scale,
-                pCanvas.Y / scale);
+            var (sx, sy) = GetCanvasScales();
+            if (sx <= 0 || sy <= 0) return new System.Windows.Point(0, 0);
+            return new System.Windows.Point(pCanvas.X / sx, pCanvas.Y / sy);
         }
+
 
         private RoiModel CanvasToImage(RoiModel roiCanvas)
         {
             var result = roiCanvas.Clone();
-            var displayRect = GetImageDisplayRect();
-            var (pw, ph) = GetImagePixelSize();
-            if (pw <= 0 || ph <= 0 || displayRect.Width <= 0 || displayRect.Height <= 0)
-                return result;
-
-            double scale = displayRect.Width / pw;
+            var (sx, sy) = GetCanvasScales();
+            if (sx <= 0 || sy <= 0) return result;
 
             result.AngleDeg = roiCanvas.AngleDeg;
 
             if (result.Shape == RoiShape.Rectangle)
             {
-                result.X = roiCanvas.X / scale;
-                result.Y = roiCanvas.Y / scale;
-                result.Width = roiCanvas.Width / scale;
-                result.Height = roiCanvas.Height / scale;
+                result.X = roiCanvas.X / sx;
+                result.Y = roiCanvas.Y / sy;
+                result.Width = roiCanvas.Width / sx;
+                result.Height = roiCanvas.Height / sy;
+
                 result.CX = result.X + result.Width / 2.0;
                 result.CY = result.Y + result.Height / 2.0;
                 result.R = Math.Max(result.Width, result.Height) / 2.0;
             }
             else
             {
-                result.CX = roiCanvas.CX / scale;
-                result.CY = roiCanvas.CY / scale;
-                result.R = roiCanvas.R / scale;
+                result.CX = roiCanvas.CX / sx;
+                result.CY = roiCanvas.CY / sy;
+                double s = (sx + sy) * 0.5; // robusto para círculos
+                result.R = roiCanvas.R / s;
                 if (result.Shape == RoiShape.Annulus)
-                    result.RInner = roiCanvas.RInner / scale;
+                    result.RInner = roiCanvas.RInner / s;
+
                 result.X = result.CX - result.R;
                 result.Y = result.CY - result.R;
                 result.Width = result.R * 2.0;
                 result.Height = result.R * 2.0;
             }
-
             return result;
         }
+
+
 
         private RoiModel ImageToCanvas(RoiModel roiImage)
         {
             var result = roiImage.Clone();
-            var displayRect = GetImageDisplayRect();
-            var (pw, ph) = GetImagePixelSize();
-            if (pw <= 0 || ph <= 0 || displayRect.Width <= 0 || displayRect.Height <= 0)
-                return result;
-
-            double scale = displayRect.Width / pw;
+            var (sx, sy) = GetCanvasScales();
+            if (sx <= 0 || sy <= 0) return result;
 
             result.AngleDeg = roiImage.AngleDeg;
 
             if (result.Shape == RoiShape.Rectangle)
             {
-                result.X = roiImage.X * scale;
-                result.Y = roiImage.Y * scale;
-                result.Width = roiImage.Width * scale;
-                result.Height = roiImage.Height * scale;
+                result.X = roiImage.X * sx;
+                result.Y = roiImage.Y * sy;
+                result.Width = roiImage.Width * sx;
+                result.Height = roiImage.Height * sy;
+
                 result.CX = result.X + result.Width / 2.0;
                 result.CY = result.Y + result.Height / 2.0;
                 result.R = Math.Max(result.Width, result.Height) / 2.0;
             }
             else
             {
-                result.CX = roiImage.CX * scale;
-                result.CY = roiImage.CY * scale;
-                result.R = roiImage.R * scale;
+                result.CX = roiImage.CX * sx;
+                result.CY = roiImage.CY * sy;
+                double s = (sx + sy) * 0.5;
+                result.R = roiImage.R * s;
                 if (result.Shape == RoiShape.Annulus)
-                    result.RInner = roiImage.RInner * scale;
+                    result.RInner = roiImage.RInner * s;
+
                 result.X = result.CX - result.R;
                 result.Y = result.CY - result.R;
                 result.Width = result.R * 2.0;
                 result.Height = result.R * 2.0;
             }
-
             return result;
         }
 
+
+
         // === Sincroniza CanvasROI para que SE ACOMODE EXACTAMENTE al área visible de la imagen (letterbox) ===
+        // === Sincroniza CanvasROI para que SE ACOMODE EXACTAMENTE al área visible de la imagen ===
+        // === Sincroniza CanvasROI EXACTAMENTE al área visible de la imagen (letterbox) ===
         private void SyncOverlayToImage()
         {
             if (ImgMain == null || CanvasROI == null) return;
@@ -2931,16 +3088,122 @@ namespace BrakeDiscInspector_GUI_ROI
             var displayRect = GetImageDisplayRect();
             if (displayRect.Width <= 0 || displayRect.Height <= 0) return;
 
+            // Coordenadas de ImgMain respecto al mismo padre que CanvasROI
+            if (CanvasROI.Parent is not FrameworkElement parent) return;
+            var imgTopLeft = ImgMain.TranslatePoint(new System.Windows.Point(0, 0), parent);
+
+            // Forzar a píxel de dispositivo (evita drift al redimensionar)
+            double left = Math.Round(imgTopLeft.X + displayRect.Left);
+            double top = Math.Round(imgTopLeft.Y + displayRect.Top);
+            double w = Math.Round(displayRect.Width);
+            double h = Math.Round(displayRect.Height);
+
             CanvasROI.HorizontalAlignment = HorizontalAlignment.Left;
             CanvasROI.VerticalAlignment = VerticalAlignment.Top;
-            CanvasROI.Margin = new Thickness(displayRect.Left, displayRect.Top, 0, 0);
-            CanvasROI.Width = displayRect.Width;
-            CanvasROI.Height = displayRect.Height;
+            CanvasROI.Margin = new Thickness(left, top, 0, 0);
+            CanvasROI.Width = w;
+            CanvasROI.Height = h;
 
-            AppendLog($"[sync] Canvas={displayRect.Width:0}x{displayRect.Height:0}  Offset=({displayRect.Left:0},{displayRect.Top:0})  Image={bmp.PixelWidth}x{bmp.PixelHeight}");
+            // Estabilidad visual
+            CanvasROI.SnapsToDevicePixels = true;
+            RenderOptions.SetEdgeMode(CanvasROI, EdgeMode.Aliased);
+
+            AppendLog($"[sync] Canvas px=({w:0}x{h:0}) Offset=({left:0},{top:0})  Img={bmp.PixelWidth}x{bmp.PixelHeight}");
 
             RedrawOverlay();
+
+            // Dentro de SyncOverlayToImage(), al final:
+            var disp = GetImageDisplayRect();
+            AppendLog($"[sync] set width/height=({disp.Width:0}x{disp.Height:0}) margin=({CanvasROI.Margin.Left:0},{CanvasROI.Margin.Top:0})");
+            AppendLog($"[sync] AFTER layout? canvasActual=({CanvasROI.ActualWidth:0}x{CanvasROI.ActualHeight:0}) imgActual=({ImgMain.ActualWidth:0}x{ImgMain.ActualHeight:0})");
         }
+
+        private void ScheduleSyncOverlay(bool force = false)
+        {
+            if (force)
+            {
+                _syncScheduled = false;
+                _syncRetryCount = 0;
+            }
+            if (_syncScheduled) return;
+
+            _syncScheduled = true;
+            _syncRetryCount = 0;
+            Dispatcher.BeginInvoke(new Action(SyncOverlayAfterLayout),
+                System.Windows.Threading.DispatcherPriority.Render);
+        }
+
+
+
+        private void SyncOverlayAfterLayout()
+        {
+            var disp0 = GetImageDisplayRect();
+            if (disp0.Width <= 0 || disp0.Height <= 0)
+            {
+                if (_syncRetryCount++ < MaxSyncRetries)
+                {
+                    AppendLog($"[sync-mismatch] disp=(0x0) canvasActual=({CanvasROI.ActualWidth:0}x{CanvasROI.ActualHeight:0}) try={_syncRetryCount}");
+                    _syncScheduled = true;
+                    Dispatcher.BeginInvoke(new Action(SyncOverlayAfterLayout),
+                        System.Windows.Threading.DispatcherPriority.Render);
+                }
+                else
+                {
+                    _syncScheduled = false; // no quedar “enganchado”
+                }
+                return;
+            }
+
+            _syncScheduled = false;
+            SyncOverlayToImage(); // ← coloca CanvasROI exactamente sobre el letterbox
+
+            var disp = GetImageDisplayRect();
+            double dw = Math.Abs(CanvasROI.ActualWidth - disp.Width);
+            double dh = Math.Abs(CanvasROI.ActualHeight - disp.Height);
+
+            if ((dw > 0.5 || dh > 0.5) && _syncRetryCount++ < MaxSyncRetries)
+            {
+                AppendLog($"[sync-mismatch] disp=({disp.Width:0}x{disp.Height:0}) canvasActual=({CanvasROI.ActualWidth:0}x{CanvasROI.ActualHeight:0}) try={_syncRetryCount}");
+                _syncScheduled = true;
+                Dispatcher.BeginInvoke(new Action(SyncOverlayAfterLayout),
+                    System.Windows.Threading.DispatcherPriority.Render);
+                return;
+            }
+
+            // ✅ Alineado: si había redibujo pendiente, hazlo ahora
+            if (_overlayNeedsRedraw)
+            {
+                AppendLog("[sync] overlay pendiente → redibujar ahora");
+                RedrawOverlay();
+                _overlayNeedsRedraw = false;
+            }
+        }
+
+
+
+        private (double sx, double sy) GetCanvasScales()
+        {
+            var (pw, ph) = GetImagePixelSize();
+            if (pw <= 0 || ph <= 0)
+                return (1.0, 1.0);
+
+            // 1ª opción: lo que REALMENTE se está pintando (CanvasROI ya sincr.)
+            double cw = CanvasROI?.ActualWidth ?? 0;
+            double ch = CanvasROI?.ActualHeight ?? 0;
+            if (cw > 0 && ch > 0)
+                return (cw / pw, ch / ph);
+
+            // Fallback: letterbox calculado (por si el Canvas aún no está listo)
+            var disp = GetImageDisplayRect();
+            if (disp.Width > 0 && disp.Height > 0)
+                return (disp.Width / pw, disp.Height / ph);
+
+            return (1.0, 1.0);
+        }
+
+
+
+
 
 
 
