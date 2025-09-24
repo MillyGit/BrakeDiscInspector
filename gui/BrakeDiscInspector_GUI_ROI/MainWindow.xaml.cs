@@ -4,6 +4,7 @@ using OpenCvSharp;
 using OpenCvSharp.WpfExtensions;
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Net.Http;
@@ -69,9 +70,6 @@ namespace BrakeDiscInspector_GUI_ROI
         private const double DragLogMovementThreshold = 5.0; // px (canvas)
         private const double DragLogAngleThreshold = 1.0;    // grados
 
-        // Marca para identificar las cruces de análisis y poder borrarlas sin tocar los ROIs
-        private const string AnalysisTag = "analysis-mark";
-
         private Action<string>? _uiLog;
 
         // Cache de la última sincronización del overlay
@@ -105,6 +103,7 @@ namespace BrakeDiscInspector_GUI_ROI
         private const int MaxSyncRetries = 3;
         // overlay diferido
         private bool _overlayNeedsRedraw;
+        private bool _analysisViewActive;
         public MainWindow()
         {
             InitializeComponent();
@@ -149,6 +148,7 @@ namespace BrakeDiscInspector_GUI_ROI
 
 
             UpdateWizardState();
+            ApplyPresetToUI(_preset);
         }
 
         private void UpdateWizardState()
@@ -183,6 +183,11 @@ namespace BrakeDiscInspector_GUI_ROI
                 Tabs.SelectedItem = TabInspection;
             else
                 Tabs.SelectedItem = TabAnalyze;
+
+            if (_analysisViewActive && _state != MasterState.Ready)
+            {
+                ResetAnalysisMarks();
+            }
 
             // Botón "Analizar Master" disponible en cuanto M1+M2 estén definidos
             BtnAnalyzeMaster.IsEnabled = mastersReady;
@@ -1283,15 +1288,10 @@ namespace BrakeDiscInspector_GUI_ROI
             var mid = new WPoint((c1.Value.X + c2.Value.X) / 2.0, (c1.Value.Y + c2.Value.Y) / 2.0);
             AppendLog($"[FLOW] mid=({mid.X:0.##},{mid.Y:0.##})");
 
-            var (c1Canvas, c2Canvas, midCanvas) = ConvertMasterPointsToCanvas(c1.Value, c2.Value, mid);
+            EnterAnalysisView();
 
-            // Limpiamos SOLO marcas de análisis anteriores y redibujamos ROIs persistentes
-            RedrawOverlaySafe();
-            ClearAnalysisMarksOnly();
-
-            // Cruces + etiquetas
-            DrawMasterMarkers(c1Canvas, c2Canvas, midCanvas, withLabels: true);
-
+            DrawMasterMatch(_layout.Master1Pattern!, c1.Value, "M1", WBrushes.LimeGreen, withLabel: false);
+            DrawMasterMatch(_layout.Master2Pattern!, c2.Value, "M2", WBrushes.Red, withLabel: false);
 
             // 5) Reubicar inspección si existe
             if (_layout.Inspection == null)
@@ -1305,14 +1305,10 @@ namespace BrakeDiscInspector_GUI_ROI
 
             MoveInspectionTo(_layout.Inspection, mid.X, mid.Y);
             ClipInspectionROI(_layout.Inspection, _imgW, _imgH);
-            RedrawOverlaySafe();
             AppendLog("[FLOW] Inspection movida y recortada");
 
             MasterLayoutManager.Save(_preset, _layout);
             AppendLog("[FLOW] Layout guardado");
-
-            // Mantén las cruces visibles
-            DrawMasterMarkers(c1Canvas, c2Canvas, midCanvas, withLabels: false);
 
             Snack($"Masters OK. Scores: M1={s1:0.000}, M2={s2:0.000}. ROI inspección reubicado.");
             _state = MasterState.Ready;
@@ -1493,10 +1489,7 @@ namespace BrakeDiscInspector_GUI_ROI
             }
 
             // 4) Leer preset desde la UI
-            _preset.MatchThr = (int)Math.Round(double.TryParse(TxtThr.Text, out var t) ? t : 85);
-            _preset.RotRange = (int)Math.Round(double.TryParse(TxtRot.Text, out var rr) ? rr : 10);
-            _preset.ScaleMin = double.TryParse(TxtSMin.Text, out var smin) ? smin : 0.95;
-            _preset.ScaleMax = double.TryParse(TxtSMax.Text, out var smax) ? smax : 1.05;
+            SyncPresetFromUI();
 
             // 5) Lanzar análisis
             _ = AnalyzeMastersAsync();
@@ -1530,8 +1523,75 @@ namespace BrakeDiscInspector_GUI_ROI
 
 
         // ====== Preset/Layout ======
+        private static double ParseDoubleOrDefault(string? text, double defaultValue)
+        {
+            if (double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out var value))
+                return value;
+            if (double.TryParse(text, NumberStyles.Float, CultureInfo.CurrentCulture, out value))
+                return value;
+            return defaultValue;
+        }
+
+        private static string NormalizeFeature(string? feature)
+        {
+            return string.IsNullOrWhiteSpace(feature)
+                ? "auto"
+                : feature.Trim().ToLowerInvariant();
+        }
+
+        private static string GetFeatureLabel(object? item)
+        {
+            return item switch
+            {
+                ComboBoxItem cbi => (cbi.Content?.ToString() ?? string.Empty).Trim(),
+                _ => (item?.ToString() ?? string.Empty).Trim()
+            };
+        }
+
+        private string ReadFeatureFromUI()
+        {
+            return NormalizeFeature(GetFeatureLabel(ComboFeature.SelectedItem));
+        }
+
+        private void SetFeatureSelection(string feature)
+        {
+            string normalized = NormalizeFeature(feature);
+            foreach (var item in ComboFeature.Items)
+            {
+                if (NormalizeFeature(GetFeatureLabel(item)) == normalized)
+                {
+                    ComboFeature.SelectedItem = item;
+                    return;
+                }
+            }
+            if (ComboFeature.Items.Count > 0 && ComboFeature.SelectedIndex < 0)
+            {
+                ComboFeature.SelectedIndex = 0;
+            }
+        }
+
+        private void ApplyPresetToUI(PresetFile preset)
+        {
+            preset.Feature = NormalizeFeature(preset.Feature);
+            TxtThr.Text = preset.MatchThr.ToString(CultureInfo.InvariantCulture);
+            TxtRot.Text = preset.RotRange.ToString(CultureInfo.InvariantCulture);
+            TxtSMin.Text = preset.ScaleMin.ToString(CultureInfo.InvariantCulture);
+            TxtSMax.Text = preset.ScaleMax.ToString(CultureInfo.InvariantCulture);
+            SetFeatureSelection(preset.Feature);
+        }
+
+        private void SyncPresetFromUI()
+        {
+            _preset.MatchThr = (int)Math.Round(ParseDoubleOrDefault(TxtThr.Text, _preset.MatchThr));
+            _preset.RotRange = (int)Math.Round(ParseDoubleOrDefault(TxtRot.Text, _preset.RotRange));
+            _preset.ScaleMin = ParseDoubleOrDefault(TxtSMin.Text, _preset.ScaleMin);
+            _preset.ScaleMax = ParseDoubleOrDefault(TxtSMax.Text, _preset.ScaleMax);
+            _preset.Feature = ReadFeatureFromUI();
+        }
+
         private void BtnSavePreset_Click(object sender, RoutedEventArgs e)
         {
+            SyncPresetFromUI();
             var s = new SaveFileDialog { Filter = "Preset JSON|*.json", FileName = "preset.json" };
             if (s.ShowDialog() == true) PresetManager.Save(_preset, s.FileName);
             Snack("Preset guardado.");
@@ -1542,6 +1602,10 @@ namespace BrakeDiscInspector_GUI_ROI
             var o = new OpenFileDialog { Filter = "Preset JSON|*.json" };
             if (o.ShowDialog() != true) return;
             _preset = PresetManager.Load(o.FileName);
+            ApplyPresetToUI(_preset);
+            _layout = MasterLayoutManager.LoadOrNew(_preset);
+            ResetAnalysisMarks();
+            UpdateWizardState();
             Snack("Preset cargado.");
         }
 
@@ -1554,7 +1618,7 @@ namespace BrakeDiscInspector_GUI_ROI
         private void BtnLoadLayout_Click(object sender, RoutedEventArgs e)
         {
             _layout = MasterLayoutManager.LoadOrNew(_preset);
-            RedrawOverlaySafe();
+            ResetAnalysisMarks();
             Snack("Layout cargado.");
             UpdateWizardState();
         }
@@ -2250,32 +2314,103 @@ namespace BrakeDiscInspector_GUI_ROI
         }
 
 
-        private (WPoint c1Canvas, WPoint c2Canvas, WPoint midCanvas) ConvertMasterPointsToCanvas(WPoint c1Image, WPoint c2Image, WPoint midImage)
+        private void DrawMasterMatch(RoiModel pattern, System.Windows.Point matchImageCenter, string label, Brush color, bool withLabel)
         {
-            var c1Canvas = ImagePxToCanvasPt(c1Image.X, c1Image.Y);
-            var c2Canvas = ImagePxToCanvasPt(c2Image.X, c2Image.Y);
-            var midCanvas = ImagePxToCanvasPt(midImage.X, midImage.Y);
-            return (c1Canvas, c2Canvas, midCanvas);
-        }
+            if (CanvasROI == null) return;
 
-        private void DrawMasterMarkers(WPoint c1Canvas, WPoint c2Canvas, WPoint midCanvas, bool withLabels)
-        {
-            if (withLabels)
+            var centerCanvas = ImagePxToCanvasPt(matchImageCenter.X, matchImageCenter.Y);
+
+            if (withLabel)
             {
-                DrawLabeledCross(c1Canvas.X, c1Canvas.Y, "M1",
-                                 WBrushes.LimeGreen, Brushes.Black, Brushes.White, 20, 2);
-
-                DrawLabeledCross(c2Canvas.X, c2Canvas.Y, "M2",
-                                 WBrushes.LimeGreen, Brushes.Black, Brushes.White, 20, 2);
-
-                DrawLabeledCross(midCanvas.X, midCanvas.Y, "MID",
-                                 WBrushes.OrangeRed, Brushes.Black, Brushes.White, 24, 3);
+                DrawLabeledCross(centerCanvas.X, centerCanvas.Y, label,
+                                 color, Brushes.Black, Brushes.White, 24, 2.5);
             }
             else
             {
-                DrawCross(c1Canvas.X, c1Canvas.Y, 20, WBrushes.LimeGreen, 2);
-                DrawCross(c2Canvas.X, c2Canvas.Y, 20, WBrushes.LimeGreen, 2);
-                DrawCross(midCanvas.X, midCanvas.Y, 24, WBrushes.OrangeRed, 3);
+                DrawCross(centerCanvas.X, centerCanvas.Y, 24, color, 2.5);
+            }
+
+            DrawMatchSilhouette(pattern, matchImageCenter, color);
+        }
+
+        private void DrawMatchSilhouette(RoiModel pattern, System.Windows.Point matchImageCenter, Brush stroke)
+        {
+            if (CanvasROI == null) return;
+
+            var silhouetteImage = pattern.Clone();
+            silhouetteImage.AngleDeg = pattern.AngleDeg;
+
+            if (silhouetteImage.Shape == RoiShape.Rectangle)
+            {
+                silhouetteImage.Width = pattern.Width;
+                silhouetteImage.Height = pattern.Height;
+                silhouetteImage.X = matchImageCenter.X - silhouetteImage.Width / 2.0;
+                silhouetteImage.Y = matchImageCenter.Y - silhouetteImage.Height / 2.0;
+            }
+            else
+            {
+                silhouetteImage.R = pattern.R;
+                silhouetteImage.RInner = pattern.RInner;
+                silhouetteImage.CX = matchImageCenter.X;
+                silhouetteImage.CY = matchImageCenter.Y;
+                silhouetteImage.X = silhouetteImage.CX - silhouetteImage.R;
+                silhouetteImage.Y = silhouetteImage.CY - silhouetteImage.R;
+                silhouetteImage.Width = silhouetteImage.R * 2.0;
+                silhouetteImage.Height = silhouetteImage.R * 2.0;
+            }
+
+            var canvasRoi = ImageToCanvas(silhouetteImage);
+
+            void SetCommonShapeProps(Shape shape, double thickness, DoubleCollection? dash = null)
+            {
+                shape.Stroke = stroke;
+                shape.StrokeThickness = thickness;
+                shape.Fill = Brushes.Transparent;
+                shape.SnapsToDevicePixels = true;
+                shape.Tag = ANALYSIS_TAG;
+                if (dash != null)
+                    shape.StrokeDashArray = dash;
+                Panel.SetZIndex(shape, 9996);
+                CanvasROI.Children.Add(shape);
+            }
+
+            if (canvasRoi.Shape == RoiShape.Rectangle)
+            {
+                var rect = new WRectShape
+                {
+                    Width = Math.Max(0, canvasRoi.Width),
+                    Height = Math.Max(0, canvasRoi.Height)
+                };
+                Canvas.SetLeft(rect, canvasRoi.X);
+                Canvas.SetTop(rect, canvasRoi.Y);
+                rect.RenderTransformOrigin = new System.Windows.Point(0.5, 0.5);
+                if (Math.Abs(canvasRoi.AngleDeg) > 0.01)
+                {
+                    rect.RenderTransform = new RotateTransform(canvasRoi.AngleDeg);
+                }
+                SetCommonShapeProps(rect, 2.4, new DoubleCollection { 6, 3 });
+            }
+            else if (canvasRoi.Shape == RoiShape.Circle || canvasRoi.Shape == RoiShape.Annulus)
+            {
+                void AddCircle(double radius, double thickness, DoubleCollection? dash = null)
+                {
+                    if (radius <= 0) return;
+                    double diameter = radius * 2.0;
+                    var ellipse = new WEllipse
+                    {
+                        Width = diameter,
+                        Height = diameter
+                    };
+                    Canvas.SetLeft(ellipse, canvasRoi.CX - radius);
+                    Canvas.SetTop(ellipse, canvasRoi.CY - radius);
+                    SetCommonShapeProps(ellipse, thickness, dash);
+                }
+
+                AddCircle(canvasRoi.R, 2.4, new DoubleCollection { 6, 3 });
+                if (canvasRoi.Shape == RoiShape.Annulus && canvasRoi.RInner > 0)
+                {
+                    AddCircle(canvasRoi.RInner, 1.8);
+                }
             }
         }
 
@@ -2291,7 +2426,7 @@ namespace BrakeDiscInspector_GUI_ROI
                 Stroke = brush,
                 StrokeThickness = thickness,
                 SnapsToDevicePixels = true,
-                Tag = "analysis-mark"
+                Tag = ANALYSIS_TAG
             };
             var line2 = new System.Windows.Shapes.Line
             {
@@ -2302,8 +2437,10 @@ namespace BrakeDiscInspector_GUI_ROI
                 Stroke = brush,
                 StrokeThickness = thickness,
                 SnapsToDevicePixels = true,
-                Tag = "analysis-mark"
+                Tag = ANALYSIS_TAG
             };
+            Panel.SetZIndex(line1, 9999);
+            Panel.SetZIndex(line2, 9999);
             CanvasROI.Children.Add(line1);
             CanvasROI.Children.Add(line2);
         }
@@ -2337,7 +2474,7 @@ namespace BrakeDiscInspector_GUI_ROI
                 BorderThickness = new Thickness(0.8),
                 Child = tb,
                 Opacity = 0.92,
-                Tag = "analysis-mark"   // para limpiar sólo marcas de análisis
+                Tag = ANALYSIS_TAG   // para limpiar sólo marcas de análisis
             };
 
             Canvas.SetLeft(border, x + LabelOffsetX);
@@ -2358,7 +2495,7 @@ namespace BrakeDiscInspector_GUI_ROI
 
             var toRemove = CanvasROI.Children
                 .OfType<FrameworkElement>()
-                .Where(el => (el.Tag as string) == "analysis-mark")
+                .Where(el => (el.Tag as string) == ANALYSIS_TAG)
                 .ToList();
 
             foreach (var el in toRemove)
@@ -2369,7 +2506,7 @@ namespace BrakeDiscInspector_GUI_ROI
         private void ResetAnalysisMarks()
         {
             RemoveAnalysisMarks();
-            RedrawOverlaySafe(); // tu método existente que repinta los ROIs
+            ExitAnalysisView();
             AppendLog("[ANALYZE] Limpiadas marcas de análisis (cruces).");
         }
 
@@ -2379,12 +2516,12 @@ namespace BrakeDiscInspector_GUI_ROI
         {
             if (OverlayCanvas == null) return;
 
-            // Elimina únicamente las formas con Tag == AnalysisTag (no toca los ROIs ni previews)
+            // Elimina únicamente las formas con Tag == ANALYSIS_TAG (no toca los ROIs ni previews)
             for (int i = OverlayCanvas.Children.Count - 1; i >= 0; i--)
             {
                 if (OverlayCanvas.Children[i] is Shape sh &&
                     sh.Tag is string tag &&
-                    tag == AnalysisTag)
+                    tag == ANALYSIS_TAG)
                 {
                     OverlayCanvas.Children.RemoveAt(i);
                 }
@@ -2394,10 +2531,10 @@ namespace BrakeDiscInspector_GUI_ROI
 
         private void ClearAnalysisMarksOnly()
         {
-            // Quita TODO lo que tenga Tag="analysis-mark" y deja intactos los ROIs persistentes
+            // Quita TODO lo que tenga Tag=ANALYSIS_TAG y deja intactos los ROIs persistentes
             for (int i = CanvasROI.Children.Count - 1; i >= 0; i--)
             {
-                if (CanvasROI.Children[i] is FrameworkElement fe && Equals(fe.Tag, "analysis-mark"))
+                if (CanvasROI.Children[i] is FrameworkElement fe && Equals(fe.Tag, ANALYSIS_TAG))
                     CanvasROI.Children.RemoveAt(i);
             }
         }
@@ -2418,9 +2555,34 @@ namespace BrakeDiscInspector_GUI_ROI
             }
         }
 
+        private void EnterAnalysisView()
+        {
+            _analysisViewActive = true;
+            ClearAnalysisMarksOnly();
+            ClearPersistedRoisFromCanvas();
+
+            if (_previewShape != null)
+            {
+                CanvasROI.Children.Remove(_previewShape);
+                _previewShape = null;
+            }
+        }
+
+        private void ExitAnalysisView()
+        {
+            _analysisViewActive = false;
+            RedrawOverlaySafe();
+        }
+
         private void RedrawOverlay()
         {
             if (CanvasROI == null) return;
+
+            if (_analysisViewActive)
+            {
+                ClearPersistedRoisFromCanvas();
+                return;
+            }
 
             var roiShapes = CanvasROI.Children
                 .OfType<Shape>()
@@ -2619,7 +2781,7 @@ namespace BrakeDiscInspector_GUI_ROI
                 StrokeThickness = thickness,
                 SnapsToDevicePixels = true,
                 IsHitTestVisible = false,
-                Tag = AnalysisTag
+                Tag = ANALYSIS_TAG
             };
             var l2 = new Line
             {
@@ -2631,7 +2793,7 @@ namespace BrakeDiscInspector_GUI_ROI
                 StrokeThickness = thickness,
                 SnapsToDevicePixels = true,
                 IsHitTestVisible = false,
-                Tag = AnalysisTag
+                Tag = ANALYSIS_TAG
             };
 
             // Aseguramos que las cruces queden por encima de los ROIs
