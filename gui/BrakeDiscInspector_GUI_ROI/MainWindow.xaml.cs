@@ -3145,10 +3145,9 @@ namespace BrakeDiscInspector_GUI_ROI
         /// Convierte un punto en píxeles de imagen -> punto en CanvasROI (coordenadas locales del Canvas)
         private System.Windows.Point ImagePxToCanvasPt(double px, double py)
         {
-            var (sx, sy) = GetCanvasScales();
-            // Redondeamos al DIP final para que no haya medias coordenadas visuales
-            double x = Math.Round(px * sx);
-            double y = Math.Round(py * sy);
+            var (scaleX, scaleY, offsetX, offsetY) = GetImageToCanvasTransform();
+            double x = px * scaleX + offsetX;
+            double y = py * scaleY + offsetY;
             return new System.Windows.Point(x, y);
         }
 
@@ -3157,26 +3156,28 @@ namespace BrakeDiscInspector_GUI_ROI
 
         private System.Windows.Point CanvasToImage(System.Windows.Point pCanvas)
         {
-            var (sx, sy) = GetCanvasScales();
-            if (sx <= 0 || sy <= 0) return new System.Windows.Point(0, 0);
-            return new System.Windows.Point(pCanvas.X / sx, pCanvas.Y / sy);
+            var (scaleX, scaleY, offsetX, offsetY) = GetImageToCanvasTransform();
+            if (scaleX <= 0 || scaleY <= 0) return new System.Windows.Point(0, 0);
+            double ix = (pCanvas.X - offsetX) / scaleX;
+            double iy = (pCanvas.Y - offsetY) / scaleY;
+            return new System.Windows.Point(ix, iy);
         }
 
 
         private RoiModel CanvasToImage(RoiModel roiCanvas)
         {
             var result = roiCanvas.Clone();
-            var (sx, sy) = GetCanvasScales();
-            if (sx <= 0 || sy <= 0) return result;
+            var (scaleX, scaleY, offsetX, offsetY) = GetImageToCanvasTransform();
+            if (scaleX <= 0 || scaleY <= 0) return result;
 
             result.AngleDeg = roiCanvas.AngleDeg;
 
             if (result.Shape == RoiShape.Rectangle)
             {
-                result.X = roiCanvas.X / sx;
-                result.Y = roiCanvas.Y / sy;
-                result.Width = roiCanvas.Width / sx;
-                result.Height = roiCanvas.Height / sy;
+                result.X = (roiCanvas.X - offsetX) / scaleX;
+                result.Y = (roiCanvas.Y - offsetY) / scaleY;
+                result.Width = roiCanvas.Width / scaleX;
+                result.Height = roiCanvas.Height / scaleY;
 
                 result.CX = result.X + result.Width / 2.0;
                 result.CY = result.Y + result.Height / 2.0;
@@ -3184,9 +3185,13 @@ namespace BrakeDiscInspector_GUI_ROI
             }
             else
             {
-                result.CX = roiCanvas.CX / sx;
-                result.CY = roiCanvas.CY / sy;
-                double s = (sx + sy) * 0.5; // robusto para círculos
+                result.CX = (roiCanvas.CX - offsetX) / scaleX;
+                result.CY = (roiCanvas.CY - offsetY) / scaleY;
+
+                double s = (scaleX + scaleY) * 0.5;
+                if (s <= 0)
+                    s = scaleX > 0 ? scaleX : scaleY;
+
                 result.R = roiCanvas.R / s;
                 if (result.Shape == RoiShape.Annulus)
                     result.RInner = roiCanvas.RInner / s;
@@ -3204,17 +3209,17 @@ namespace BrakeDiscInspector_GUI_ROI
         private RoiModel ImageToCanvas(RoiModel roiImage)
         {
             var result = roiImage.Clone();
-            var (sx, sy) = GetCanvasScales();
-            if (sx <= 0 || sy <= 0) return result;
+            var (scaleX, scaleY, offsetX, offsetY) = GetImageToCanvasTransform();
+            if (scaleX <= 0 || scaleY <= 0) return result;
 
             result.AngleDeg = roiImage.AngleDeg;
 
             if (result.Shape == RoiShape.Rectangle)
             {
-                result.X = roiImage.X * sx;
-                result.Y = roiImage.Y * sy;
-                result.Width = roiImage.Width * sx;
-                result.Height = roiImage.Height * sy;
+                result.X = roiImage.X * scaleX + offsetX;
+                result.Y = roiImage.Y * scaleY + offsetY;
+                result.Width = roiImage.Width * scaleX;
+                result.Height = roiImage.Height * scaleY;
 
                 result.CX = result.X + result.Width / 2.0;
                 result.CY = result.Y + result.Height / 2.0;
@@ -3222,9 +3227,13 @@ namespace BrakeDiscInspector_GUI_ROI
             }
             else
             {
-                result.CX = roiImage.CX * sx;
-                result.CY = roiImage.CY * sy;
-                double s = (sx + sy) * 0.5;
+                result.CX = roiImage.CX * scaleX + offsetX;
+                result.CY = roiImage.CY * scaleY + offsetY;
+
+                double s = (scaleX + scaleY) * 0.5;
+                if (s <= 0)
+                    s = scaleX > 0 ? scaleX : scaleY;
+
                 result.R = roiImage.R * s;
                 if (result.Shape == RoiShape.Annulus)
                     result.RInner = roiImage.RInner * s;
@@ -3342,24 +3351,43 @@ namespace BrakeDiscInspector_GUI_ROI
 
 
 
-        private (double sx, double sy) GetCanvasScales()
+        private (double scaleX, double scaleY, double offsetX, double offsetY) GetImageToCanvasTransform()
         {
             var (pw, ph) = GetImagePixelSize();
             if (pw <= 0 || ph <= 0)
-                return (1.0, 1.0);
+                return (1.0, 1.0, 0.0, 0.0);
 
-            // 1ª opción: lo que REALMENTE se está pintando (CanvasROI ya sincr.)
-            double cw = CanvasROI?.ActualWidth ?? 0;
-            double ch = CanvasROI?.ActualHeight ?? 0;
-            if (cw > 0 && ch > 0)
-                return (cw / pw, ch / ph);
+            double scaleX = 0.0;
+            double scaleY = 0.0;
 
-            // Fallback: letterbox calculado (por si el Canvas aún no está listo)
-            var disp = GetImageDisplayRect();
-            if (disp.Width > 0 && disp.Height > 0)
-                return (disp.Width / pw, disp.Height / ph);
+            if (CanvasROI != null)
+            {
+                if (CanvasROI.ActualWidth > 0)
+                    scaleX = CanvasROI.ActualWidth / pw;
+                if (CanvasROI.ActualHeight > 0)
+                    scaleY = CanvasROI.ActualHeight / ph;
+            }
 
-            return (1.0, 1.0);
+            if (scaleX <= 0 || scaleY <= 0)
+            {
+                var disp = GetImageDisplayRect();
+                if (disp.Width > 0 && disp.Height > 0)
+                {
+                    scaleX = disp.Width / pw;
+                    scaleY = disp.Height / ph;
+                }
+            }
+
+            if (scaleX <= 0) scaleX = 1.0;
+            if (scaleY <= 0) scaleY = 1.0;
+
+            // CanvasROI está alineado con el área visible de la imagen, por lo que las
+            // coordenadas locales (0,0) ya representan la esquina superior izquierda.
+            // Mantener offset en cero evita que las conversiones añadan desplazamientos.
+            const double offsetX = 0.0;
+            const double offsetY = 0.0;
+
+            return (scaleX, scaleY, offsetX, offsetY);
         }
 
 
