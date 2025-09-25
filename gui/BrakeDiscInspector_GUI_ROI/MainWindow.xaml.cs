@@ -35,6 +35,7 @@ using WPoint = System.Windows.Point;
 using WRect = System.Windows.Rect;
 using WRectShape = System.Windows.Shapes.Rectangle;
 using Path = System.IO.Path;
+using WSize = System.Windows.Size;
 
 namespace BrakeDiscInspector_GUI_ROI
 {
@@ -2801,7 +2802,7 @@ namespace BrakeDiscInspector_GUI_ROI
             if (CanvasROI == null)
                 return;
 
-            element.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+            element.Measure(new WSize(double.PositiveInfinity, double.PositiveInfinity));
             var desired = element.DesiredSize;
 
             double left = Canvas.GetLeft(shape);
