@@ -1737,6 +1737,8 @@ namespace BrakeDiscInspector_GUI_ROI
             }
 
             AppendLog($"[model] sync {roiPixel.Role} => {DescribeRoi(roiPixel)}");
+
+            UpdatePersistentLabelForShape(shape);
         }
 
         private void UpdateLayoutFromPixel(RoiModel roiPixel)
