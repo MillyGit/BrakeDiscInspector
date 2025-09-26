@@ -1233,7 +1233,7 @@ namespace BrakeDiscInspector_GUI_ROI
                         _currentImagePathWin, tpl1Path,
                         _preset.MatchThr, _preset.RotRange, _preset.ScaleMin, _preset.ScaleMax,
                         string.IsNullOrWhiteSpace(_preset.Feature) ? "auto" : _preset.Feature,
-                        0.8, "M1", AppendLog);
+                        0.8, "M1", _layout.Master1Search, AppendLog);
                 }
                 else
                 {
@@ -1243,7 +1243,7 @@ namespace BrakeDiscInspector_GUI_ROI
                         _currentImagePathWin, _layout.Master1Pattern!,
                         _preset.MatchThr, _preset.RotRange, _preset.ScaleMin, _preset.ScaleMax,
                         string.IsNullOrWhiteSpace(_preset.Feature) ? "auto" : _preset.Feature,
-                        0.8, false, "M1", AppendLog);
+                        0.8, false, "M1", _layout.Master1Search, AppendLog);
                 }
 
                 if (r1.ok && r1.center.HasValue)
@@ -1268,7 +1268,7 @@ namespace BrakeDiscInspector_GUI_ROI
                         _currentImagePathWin, tpl2Path,
                         _preset.MatchThr, _preset.RotRange, _preset.ScaleMin, _preset.ScaleMax,
                         string.IsNullOrWhiteSpace(_preset.Feature) ? "auto" : _preset.Feature,
-                        0.8, "M2", AppendLog);
+                        0.8, "M2", _layout.Master2Search, AppendLog);
                 }
                 else
                 {
@@ -1277,7 +1277,7 @@ namespace BrakeDiscInspector_GUI_ROI
                         _currentImagePathWin, _layout.Master2Pattern!,
                         _preset.MatchThr, _preset.RotRange, _preset.ScaleMin, _preset.ScaleMax,
                         string.IsNullOrWhiteSpace(_preset.Feature) ? "auto" : _preset.Feature,
-                        0.8, false, "M2", AppendLog);
+                        0.8, false, "M2", _layout.Master2Search, AppendLog);
                 }
 
                 if (r2.ok && r2.center.HasValue)

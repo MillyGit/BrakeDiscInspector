@@ -1,4 +1,5 @@
 using System;
+using System.Globalization;
 using System.IO;
 using System.Net.Http;
 using System.Net.Http.Headers;
@@ -109,6 +110,7 @@ namespace BrakeDiscInspector_GUI_ROI
             string feature,
             double tmThr,
             string tag,
+            RoiModel? searchRoi = null,
             Action<string>? log = null)
         {
             try
@@ -122,13 +124,15 @@ namespace BrakeDiscInspector_GUI_ROI
                 mp.Add(new ByteArrayContent(File.ReadAllBytes(templatePngPath)), "template", Path.GetFileName(templatePngPath));
 
                 mp.Add(new StringContent(tag), "tag");
-                mp.Add(new StringContent(thr.ToString(System.Globalization.CultureInfo.InvariantCulture)), "thr");
-                mp.Add(new StringContent(rotRange.ToString(System.Globalization.CultureInfo.InvariantCulture)), "rot_range");
-                mp.Add(new StringContent(scaleMin.ToString(System.Globalization.CultureInfo.InvariantCulture)), "scale_min");
-                mp.Add(new StringContent(scaleMax.ToString(System.Globalization.CultureInfo.InvariantCulture)), "scale_max");
+                mp.Add(new StringContent(thr.ToString(CultureInfo.InvariantCulture)), "thr");
+                mp.Add(new StringContent(rotRange.ToString(CultureInfo.InvariantCulture)), "rot_range");
+                mp.Add(new StringContent(scaleMin.ToString(CultureInfo.InvariantCulture)), "scale_min");
+                mp.Add(new StringContent(scaleMax.ToString(CultureInfo.InvariantCulture)), "scale_max");
                 mp.Add(new StringContent(string.IsNullOrWhiteSpace(feature) ? "auto" : feature), "feature");
-                mp.Add(new StringContent(tmThr.ToString(System.Globalization.CultureInfo.InvariantCulture)), "tm_thr");
+                mp.Add(new StringContent(tmThr.ToString(CultureInfo.InvariantCulture)), "tm_thr");
                 mp.Add(new StringContent("0"), "debug");
+
+                AddSearchParameters(mp, searchRoi);
 
                 using var cts = new System.Threading.CancellationTokenSource(TimeSpan.FromSeconds(30));
                 var resp = await hc.PostAsync(url, mp, cts.Token);
@@ -173,6 +177,7 @@ namespace BrakeDiscInspector_GUI_ROI
             double tmThr,
             bool debug,
             string tag,
+            RoiModel? searchRoi = null,
             Action<string>? log = null)
         {
             MemoryStream? tplStream = null;
@@ -197,13 +202,15 @@ namespace BrakeDiscInspector_GUI_ROI
                 }
 
                 mp.Add(new StringContent(tag), "tag");
-                mp.Add(new StringContent(thr.ToString(System.Globalization.CultureInfo.InvariantCulture)), "thr");
-                mp.Add(new StringContent(rotRange.ToString(System.Globalization.CultureInfo.InvariantCulture)), "rot_range");
-                mp.Add(new StringContent(scaleMin.ToString(System.Globalization.CultureInfo.InvariantCulture)), "scale_min");
-                mp.Add(new StringContent(scaleMax.ToString(System.Globalization.CultureInfo.InvariantCulture)), "scale_max");
+                mp.Add(new StringContent(thr.ToString(CultureInfo.InvariantCulture)), "thr");
+                mp.Add(new StringContent(rotRange.ToString(CultureInfo.InvariantCulture)), "rot_range");
+                mp.Add(new StringContent(scaleMin.ToString(CultureInfo.InvariantCulture)), "scale_min");
+                mp.Add(new StringContent(scaleMax.ToString(CultureInfo.InvariantCulture)), "scale_max");
                 mp.Add(new StringContent(string.IsNullOrWhiteSpace(feature) ? "auto" : feature), "feature");
-                mp.Add(new StringContent(tmThr.ToString(System.Globalization.CultureInfo.InvariantCulture)), "tm_thr");
+                mp.Add(new StringContent(tmThr.ToString(CultureInfo.InvariantCulture)), "tm_thr");
                 mp.Add(new StringContent(debug ? "1" : "0"), "debug");
+
+                AddSearchParameters(mp, searchRoi);
 
                 using var cts = new System.Threading.CancellationTokenSource(TimeSpan.FromSeconds(30));
                 var resp = await hc.PostAsync(url, mp, cts.Token);
@@ -239,6 +246,59 @@ namespace BrakeDiscInspector_GUI_ROI
                 try { tplStream?.Dispose(); } catch { /* noop */ }
                 try { maskStream?.Dispose(); } catch { /* noop */ }
             }
+        }
+
+        private static void AddSearchParameters(MultipartFormDataContent mp, RoiModel? searchRoi)
+        {
+            if (searchRoi == null)
+                return;
+
+            if (!TryGetSearchRect(searchRoi, out var x, out var y, out var w, out var h))
+                return;
+
+            mp.Add(new StringContent(x.ToString(CultureInfo.InvariantCulture)), "search_x");
+            mp.Add(new StringContent(y.ToString(CultureInfo.InvariantCulture)), "search_y");
+            mp.Add(new StringContent(w.ToString(CultureInfo.InvariantCulture)), "search_w");
+            mp.Add(new StringContent(h.ToString(CultureInfo.InvariantCulture)), "search_h");
+        }
+
+        private static bool TryGetSearchRect(RoiModel roi, out int x, out int y, out int w, out int h)
+        {
+            x = y = 0;
+            w = h = 0;
+
+            if (roi == null)
+                return false;
+
+            double sx, sy, sw, sh;
+
+            switch (roi.Shape)
+            {
+                case RoiShape.Circle:
+                case RoiShape.Annulus:
+                    sx = roi.CX - roi.R;
+                    sy = roi.CY - roi.R;
+                    sw = roi.R * 2.0;
+                    sh = roi.R * 2.0;
+                    break;
+                case RoiShape.Rectangle:
+                default:
+                    sx = roi.X;
+                    sy = roi.Y;
+                    sw = roi.Width;
+                    sh = roi.Height;
+                    break;
+            }
+
+            if (double.IsNaN(sx) || double.IsNaN(sy) || double.IsNaN(sw) || double.IsNaN(sh))
+                return false;
+
+            x = Math.Max(0, (int)Math.Round(sx));
+            y = Math.Max(0, (int)Math.Round(sy));
+            w = Math.Max(1, (int)Math.Round(sw));
+            h = Math.Max(1, (int)Math.Round(sh));
+
+            return w > 0 && h > 0;
         }
 
         // ========= util: recortar PNG desde ruta/rect

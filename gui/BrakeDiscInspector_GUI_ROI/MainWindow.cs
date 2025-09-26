@@ -20,14 +20,14 @@ namespace BrakeDiscInspector_GUI_ROI
             _currentImagePathWin, _layout.Master1Pattern,
             _preset.MatchThr, _preset.RotRange, _preset.ScaleMin, _preset.ScaleMax,
             string.IsNullOrWhiteSpace(_preset.Feature) ? "auto" : _preset.Feature,
-            0.8, false, "M1", AppendLog);
+            0.8, false, "M1", _layout.Master1Search, AppendLog);
 
 
             var r2 = await BackendAPI.MatchOneViaFilesAsync(
             _currentImagePathWin, _layout.Master2Pattern,
             _preset.MatchThr, _preset.RotRange, _preset.ScaleMin, _preset.ScaleMax,
             string.IsNullOrWhiteSpace(_preset.Feature) ? "auto" : _preset.Feature,
-            0.8, false, "M2", AppendLog);
+            0.8, false, "M2", _layout.Master2Search, AppendLog);
 
 
             if (!r1.ok || r1.center == null) { Snack("No se encontró Master 1" + (r1.error != null ? $" ({r1.error})" : "")); return; }
