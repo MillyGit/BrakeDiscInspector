@@ -3540,14 +3540,29 @@ namespace BrakeDiscInspector_GUI_ROI
             if (pw <= 0 || ph <= 0)
                 return (1.0, 0.0, 0.0);
 
-            double canvasWidth = CanvasROI?.ActualWidth ?? CanvasROI?.Width ?? 0.0;
-            double canvasHeight = CanvasROI?.ActualHeight ?? CanvasROI?.Height ?? 0.0;
+            var displayRect = GetImageDisplayRect();
+            bool overlayAligned = IsOverlayAligned();
+
+            double canvasWidth = 0.0;
+            double canvasHeight = 0.0;
+
+            if (overlayAligned)
+            {
+                canvasWidth = CanvasROI?.ActualWidth ?? CanvasROI?.Width ?? 0.0;
+                canvasHeight = CanvasROI?.ActualHeight ?? CanvasROI?.Height ?? 0.0;
+            }
+
+            if (!overlayAligned || canvasWidth <= 0 || canvasHeight <= 0)
+            {
+                canvasWidth = displayRect.Width;
+                canvasHeight = displayRect.Height;
+            }
 
             if (canvasWidth <= 0 || canvasHeight <= 0)
             {
-                var displayRect = GetImageDisplayRect();
-                canvasWidth = displayRect.Width;
-                canvasHeight = displayRect.Height;
+                // Último recurso: usa las dimensiones actuales del canvas aunque no estén alineadas.
+                canvasWidth = CanvasROI?.ActualWidth ?? CanvasROI?.Width ?? 0.0;
+                canvasHeight = CanvasROI?.ActualHeight ?? CanvasROI?.Height ?? 0.0;
             }
 
             if (canvasWidth <= 0 || canvasHeight <= 0)
