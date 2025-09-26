@@ -226,6 +226,17 @@ namespace BrakeDiscInspector_GUI_ROI
             };
         }
 
+        private bool ShouldEnableRoiEditing(RoiRole role)
+        {
+            if (role == RoiRole.Inspection)
+            {
+                return _state == MasterState.DrawInspection || _state == MasterState.Ready;
+            }
+
+            var currentRole = GetCurrentStateRole();
+            return currentRole.HasValue && currentRole.Value == role;
+        }
+
         private bool TryClearCurrentStatePersistedRoi(out RoiRole? clearedRole)
         {
             clearedRole = GetCurrentStateRole();
@@ -2729,7 +2740,14 @@ namespace BrakeDiscInspector_GUI_ROI
                     _roiShapesById[canvasInfo.Id] = shape;
                     UpdatePersistentLabel(canvasInfo);
                 }
-                AttachRoiAdorner(shape);
+
+                bool enableEditing = ShouldEnableRoiEditing(roi.Role);
+                shape.IsHitTestVisible = enableEditing;
+
+                if (enableEditing)
+                {
+                    AttachRoiAdorner(shape);
+                }
             }
 
             AddPersistentRoi(_layout.Master1Search);
