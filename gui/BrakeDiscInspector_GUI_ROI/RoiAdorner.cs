@@ -34,6 +34,7 @@ namespace BrakeDiscInspector_GUI_ROI
         private readonly Thumb[] _corners = new Thumb[4]; // NW, NE (rot), SE, SW
         private readonly Thumb[] _edges = new Thumb[4];   // N, E, S, W
         private readonly Thumb _rotationThumb;
+        private readonly Thumb _innerRadiusThumb;
 
         private bool _isRotating;
         private double _rotationAngleAtDragStart;
@@ -72,6 +73,10 @@ namespace BrakeDiscInspector_GUI_ROI
                 StyleThumb(_edges[i], 6, 6, 6, 6, Cursors.SizeAll);
             }
 
+            _innerRadiusThumb = new Thumb();
+            StyleThumb(_innerRadiusThumb, 10, 10, 10, 10, Cursors.SizeWE);
+            _innerRadiusThumb.Visibility = Visibility.Collapsed;
+
             // Eventos
             _moveThumb.DragStarted += OnThumbDragStarted;
             _moveThumb.DragDelta += MoveThumb_DragDelta;
@@ -109,18 +114,36 @@ namespace BrakeDiscInspector_GUI_ROI
             _edges[3].DragDelta += (s, e) => ResizeByEdge(e.HorizontalChange, e.VerticalChange, Edge.W); // W
             _edges[3].DragCompleted += OnThumbDragCompleted;
 
+            _innerRadiusThumb.DragStarted += OnThumbDragStarted;
+            _innerRadiusThumb.DragDelta += InnerRadiusThumb_DragDelta;
+            _innerRadiusThumb.DragCompleted += OnThumbDragCompleted;
+
             AddVisualChild(_moveThumb);
             foreach (var t in _corners) AddVisualChild(t);
             foreach (var t in _edges) AddVisualChild(t);
+            AddVisualChild(_innerRadiusThumb);
         }
 
         // === Layout ===
-        protected override int VisualChildrenCount => 1 + _corners.Length + _edges.Length;
+        protected override int VisualChildrenCount => 1 + _corners.Length + _edges.Length + 1;
         protected override Visual GetVisualChild(int index)
         {
             if (index == 0) return _moveThumb;
-            if (index >= 1 && index <= 4) return _corners[index - 1];
-            return _edges[index - 5];
+
+            int cornerStart = 1;
+            int edgeStart = cornerStart + _corners.Length;
+            int innerIndex = edgeStart + _edges.Length;
+
+            if (index >= cornerStart && index < edgeStart)
+                return _corners[index - cornerStart];
+
+            if (index >= edgeStart && index < innerIndex)
+                return _edges[index - edgeStart];
+
+            if (index == innerIndex)
+                return _innerRadiusThumb;
+
+            throw new ArgumentOutOfRangeException(nameof(index));
         }
 
         protected override Size ArrangeOverride(Size finalSize)
@@ -163,24 +186,20 @@ namespace BrakeDiscInspector_GUI_ROI
             RoiModel? roi = _shape.Tag as RoiModel;
             bool hasRotateTransform = _shape.RenderTransform is RotateTransform;
 
-            Point[] cornerPositions = new Point[4];
-            if (hasRotateTransform)
-            {
-                cornerPositions[0] = GetCornerLocalPoint(Corner.NW, w, h);
-                cornerPositions[1] = GetCornerLocalPoint(Corner.NE, w, h);
-                cornerPositions[2] = GetCornerLocalPoint(Corner.SE, w, h);
-                cornerPositions[3] = GetCornerLocalPoint(Corner.SW, w, h);
-            }
-            else
-            {
-                double angleRad = GetCurrentAngle() * Math.PI / 180.0;
-                Point pivotLocal = GetRotationPivotLocalPoint(roi, w, h);
+            Point pivotLocal = GetRotationPivotLocalPoint(roi, w, h);
+            bool applyManualRotation = !hasRotateTransform;
+            double angleRad = applyManualRotation ? GetCurrentAngle() * Math.PI / 180.0 : 0.0;
 
-                cornerPositions[0] = RotatePointAroundPivot(GetCornerLocalPoint(Corner.NW, w, h), pivotLocal, angleRad);
-                cornerPositions[1] = RotatePointAroundPivot(GetCornerLocalPoint(Corner.NE, w, h), pivotLocal, angleRad);
-                cornerPositions[2] = RotatePointAroundPivot(GetCornerLocalPoint(Corner.SE, w, h), pivotLocal, angleRad);
-                cornerPositions[3] = RotatePointAroundPivot(GetCornerLocalPoint(Corner.SW, w, h), pivotLocal, angleRad);
+            Point TransformPoint(Point local)
+            {
+                return applyManualRotation ? RotatePointAroundPivot(local, pivotLocal, angleRad) : local;
             }
+
+            Point[] cornerPositions = new Point[4];
+            cornerPositions[0] = TransformPoint(GetCornerLocalPoint(Corner.NW, w, h));
+            cornerPositions[1] = TransformPoint(GetCornerLocalPoint(Corner.NE, w, h));
+            cornerPositions[2] = TransformPoint(GetCornerLocalPoint(Corner.SE, w, h));
+            cornerPositions[3] = TransformPoint(GetCornerLocalPoint(Corner.SW, w, h));
 
             for (int i = 0; i < _corners.Length; i++)
             {
@@ -198,6 +217,22 @@ namespace BrakeDiscInspector_GUI_ROI
             {
                 Point edge = edgePositions[i];
                 _edges[i].Arrange(new Rect(edge.X - r, edge.Y - r, 2 * r, 2 * r));
+            }
+
+            if (roi != null && roi.Shape == RoiShape.Annulus)
+            {
+                double handleRadius = ResolveInnerRadiusForLayout(roi, _shape as AnnulusShape, w, h);
+                Point handleLocal = new Point(w / 2.0 + handleRadius, h / 2.0);
+                Point handle = TransformPoint(handleLocal);
+                _innerRadiusThumb.Visibility = Visibility.Visible;
+                _innerRadiusThumb.IsHitTestVisible = true;
+                _innerRadiusThumb.Arrange(new Rect(handle.X - r, handle.Y - r, 2 * r, 2 * r));
+            }
+            else
+            {
+                _innerRadiusThumb.Visibility = Visibility.Collapsed;
+                _innerRadiusThumb.IsHitTestVisible = false;
+                _innerRadiusThumb.Arrange(new Rect(0, 0, 0, 0));
             }
 
             return finalSize;
@@ -342,6 +377,42 @@ namespace BrakeDiscInspector_GUI_ROI
             Point newCenter = new Point((centerA.X + centerB.X) / 2.0, (centerA.Y + centerB.Y) / 2.0);
 
             ApplyResizeResult(newCenter, newWidth, newHeight, angleDeg, roi);
+        }
+
+        private void InnerRadiusThumb_DragDelta(object sender, DragDeltaEventArgs e)
+        {
+            if (_shape.Tag is not RoiModel roi || roi.Shape != RoiShape.Annulus)
+                return;
+
+            var (width, height) = GetShapeSize();
+            double angleRad = GetCurrentAngle() * Math.PI / 180.0;
+            Vector deltaLocal = RotateVector(new Vector(e.HorizontalChange, e.VerticalChange), -angleRad);
+
+            double maxInner = Math.Min(width, height) / 2.0;
+            if (double.IsNaN(maxInner) || maxInner <= 0)
+            {
+                maxInner = roi.R > 0 ? roi.R : 0;
+            }
+
+            double currentInner = roi.RInner;
+            if (currentInner <= 0)
+            {
+                double baseRadius = roi.R > 0 ? roi.R : maxInner;
+                currentInner = baseRadius > 0 ? baseRadius * 0.6 : 0;
+            }
+
+            double newInner = currentInner + deltaLocal.X;
+            newInner = Math.Max(0, Math.Min(newInner, maxInner));
+
+            if (_shape is AnnulusShape annulus)
+            {
+                annulus.InnerRadius = newInner;
+            }
+
+            roi.RInner = newInner;
+            SyncModelFromShape(_shape, roi);
+            InvalidateArrange();
+            _onChanged(RoiAdornerChangeKind.Delta, roi);
         }
 
         // === Rotación ===
@@ -489,6 +560,9 @@ namespace BrakeDiscInspector_GUI_ROI
 
             foreach (var thumb in _edges)
                 thumb.IsHitTestVisible = enabled;
+
+            bool annulusActive = (_shape.Tag as RoiModel)?.Shape == RoiShape.Annulus;
+            _innerRadiusThumb.IsHitTestVisible = enabled && annulusActive;
         }
 
         private void ApplyRotation(double angleDeg, RoiModel roi)
@@ -608,6 +682,29 @@ namespace BrakeDiscInspector_GUI_ROI
             return new Point(center.X + offset.X, center.Y + offset.Y);
         }
 
+        private static double ResolveInnerRadiusForLayout(RoiModel roi, AnnulusShape? annulus, double width, double height)
+        {
+            double available = Math.Min(width, height) / 2.0;
+            if (double.IsNaN(available) || available <= 0)
+                return 0;
+
+            double inner = annulus?.InnerRadius ?? roi.RInner;
+            if (inner <= 0)
+            {
+                double outer = roi.R > 0 ? roi.R : available;
+                inner = outer * 0.6;
+            }
+
+            inner = Math.Max(0, Math.Min(inner, available));
+
+            if (annulus != null)
+            {
+                annulus.InnerRadius = inner;
+            }
+
+            return inner;
+        }
+
         private static (Corner a, Corner b) GetEdgeAnchorCorners(Edge edge)
         {
             return edge switch
@@ -684,6 +781,12 @@ namespace BrakeDiscInspector_GUI_ROI
             _shape.Width = width;
             _shape.Height = height;
 
+            if (_shape is AnnulusShape annulusShape)
+            {
+                double maxInner = Math.Min(width, height) / 2.0;
+                annulusShape.InnerRadius = Math.Max(0, Math.Min(annulusShape.InnerRadius, maxInner));
+            }
+
             ApplyRotation(angleDeg, roi);
             SyncModelFromShape(_shape, roi);
             InvalidateArrange();
@@ -717,8 +820,31 @@ namespace BrakeDiscInspector_GUI_ROI
                 roi.Top = y;
                 roi.CX = roi.X;
                 roi.CY = roi.Y;
-                roi.R = 0.0;
+                roi.R = Math.Max(roi.Width, roi.Height) / 2.0;
                 roi.RInner = 0.0;
+            }
+            else if (shape is AnnulusShape annulus)
+            {
+                double radiusX = w / 2.0;
+                double radiusY = h / 2.0;
+                double centerX = x + radiusX;
+                double centerY = y + radiusY;
+                double radius = Math.Max(radiusX, radiusY);
+
+                roi.Shape = RoiShape.Annulus;
+                roi.Width = w;
+                roi.Height = h;
+                roi.Left = x;
+                roi.Top = y;
+                roi.CX = centerX;
+                roi.CY = centerY;
+                roi.R = radius;
+
+                double inner = annulus.InnerRadius;
+                double maxInner = radius > 0 ? radius : Math.Max(radiusX, radiusY);
+                inner = Math.Max(0, Math.Min(inner, maxInner));
+                roi.RInner = inner;
+                annulus.InnerRadius = inner;
             }
             else if (shape is Ellipse)
             {
@@ -727,7 +853,7 @@ namespace BrakeDiscInspector_GUI_ROI
                 double centerX = x + radiusX;
                 double centerY = y + radiusY;
 
-                roi.Shape = roi.Shape == RoiShape.Annulus ? RoiShape.Annulus : RoiShape.Circle;
+                roi.Shape = RoiShape.Circle;
                 roi.Width = w;
                 roi.Height = h;
                 roi.Left = x;
@@ -735,16 +861,7 @@ namespace BrakeDiscInspector_GUI_ROI
                 roi.CX = centerX;
                 roi.CY = centerY;
                 roi.R = Math.Max(radiusX, radiusY);
-
-                if (roi.Shape == RoiShape.Annulus)
-                {
-                    if (roi.RInner <= 0 || roi.RInner >= roi.R)
-                        roi.RInner = roi.R * 0.6;
-                }
-                else
-                {
-                    roi.RInner = 0.0;
-                }
+                roi.RInner = 0.0;
             }
         }
     }

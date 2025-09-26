@@ -94,7 +94,18 @@ namespace BrakeDiscInspector_GUI_ROI
         private const double LabelOffsetX = 10;   // desplazamiento a la derecha de la cruz
         private const double LabelOffsetY = -20;  // desplazamiento hacia arriba de la cruz
 
-        private ROI CurrentRoi = new ROI { X = 200, Y = 150, Width = 100, Height = 80, AngleDeg = 0, Legend = string.Empty };
+        private ROI CurrentRoi = new ROI
+        {
+            X = 200,
+            Y = 150,
+            Width = 100,
+            Height = 80,
+            AngleDeg = 0,
+            Legend = string.Empty,
+            Shape = RoiShape.Rectangle,
+            R = 50,
+            RInner = 0
+        };
         private Mat? bgrFrame; // tu frame actual
         private bool UseAnnulus = false;
 
@@ -433,10 +444,16 @@ namespace BrakeDiscInspector_GUI_ROI
                     StrokeThickness = 2,
                     Fill = new SolidColorBrush(WColor.FromArgb(40, 0, 255, 255))
                 },
-                RoiShape.Circle or RoiShape.Annulus => new WEllipse
+                RoiShape.Circle => new WEllipse
                 {
                     Stroke = WBrushes.Lime,
-                    StrokeThickness = shape == RoiShape.Annulus ? 6 : 2,
+                    StrokeThickness = 2,
+                    Fill = new SolidColorBrush(WColor.FromArgb(30, 0, 255, 0))
+                },
+                RoiShape.Annulus => new AnnulusShape
+                {
+                    Stroke = WBrushes.Lime,
+                    StrokeThickness = 6,
                     Fill = new SolidColorBrush(WColor.FromArgb(30, 0, 255, 0))
                 },
                 _ => null
@@ -470,6 +487,11 @@ namespace BrakeDiscInspector_GUI_ROI
                 var cx = (p0.X + p1.X) / 2.0; var cy = (p0.Y + p1.Y) / 2.0;
                 Canvas.SetLeft(_previewShape, cx - r); Canvas.SetTop(_previewShape, cy - r);
                 _previewShape.Width = 2 * r; _previewShape.Height = 2 * r;
+
+                if (shape == RoiShape.Annulus && _previewShape is AnnulusShape annulus)
+                {
+                    annulus.InnerRadius = Math.Max(0, r * 0.6);
+                }
             }
         }
 
@@ -622,13 +644,22 @@ namespace BrakeDiscInspector_GUI_ROI
                 var w = _previewShape.Width;
                 var r = w / 2.0;
                 var cx = x + r; var cy = y + r;
+                double innerRadius = 0;
+                if (shape == RoiShape.Annulus)
+                {
+                    if (_previewShape is AnnulusShape annulus)
+                        innerRadius = Math.Max(0, Math.Min(annulus.InnerRadius, r));
+                    if (innerRadius <= 0)
+                        innerRadius = r * 0.6;
+                }
+
                 canvasDraft = new RoiModel
                 {
                     Shape = shape,
                     CX = cx,
                     CY = cy,
                     R = r,
-                    RInner = shape == RoiShape.Annulus ? r * 0.6 : 0,
+                    RInner = innerRadius,
                     Width = w,
                     Height = _previewShape.Height
                 };
@@ -1753,20 +1784,38 @@ namespace BrakeDiscInspector_GUI_ROI
                 roiCanvas.CX = roiCanvas.X;
                 roiCanvas.CY = roiCanvas.Y;
                 roiCanvas.R = Math.Max(roiCanvas.Width, roiCanvas.Height) / 2.0;
+                roiCanvas.RInner = 0;
             }
-            else if (shape is System.Windows.Shapes.Ellipse)
+            else if (shape is AnnulusShape annulusShape)
             {
-                var r = w / 2.0;
-                roiCanvas.Shape = roiCanvas.Shape == RoiShape.Annulus ? RoiShape.Annulus : RoiShape.Circle;
+                double radius = Math.Max(w, h) / 2.0;
+                roiCanvas.Shape = RoiShape.Annulus;
                 roiCanvas.Width = w;
                 roiCanvas.Height = h;
-                roiCanvas.R = r;
+                roiCanvas.R = radius;
                 roiCanvas.Left = x;
                 roiCanvas.Top = y;
                 roiCanvas.CX = roiCanvas.X;
                 roiCanvas.CY = roiCanvas.Y;
-                if (roiCanvas.Shape == RoiShape.Annulus && (roiCanvas.RInner <= 0 || roiCanvas.RInner >= roiCanvas.R))
-                    roiCanvas.RInner = roiCanvas.R * 0.6;
+
+                double inner = annulusShape.InnerRadius;
+                double maxInner = radius > 0 ? radius : Math.Max(w, h) / 2.0;
+                inner = Math.Max(0, Math.Min(inner, maxInner));
+                roiCanvas.RInner = inner;
+                annulusShape.InnerRadius = inner;
+            }
+            else if (shape is System.Windows.Shapes.Ellipse)
+            {
+                double radius = Math.Max(w, h) / 2.0;
+                roiCanvas.Shape = RoiShape.Circle;
+                roiCanvas.Width = w;
+                roiCanvas.Height = h;
+                roiCanvas.R = radius;
+                roiCanvas.Left = x;
+                roiCanvas.Top = y;
+                roiCanvas.CX = roiCanvas.X;
+                roiCanvas.CY = roiCanvas.Y;
+                roiCanvas.RInner = 0;
             }
 
             var roiPixel = CanvasToImage(roiCanvas);
@@ -1827,23 +1876,45 @@ namespace BrakeDiscInspector_GUI_ROI
 
             if (pixelModel.Shape == RoiShape.Rectangle)
             {
+                CurrentRoi.Shape = RoiShape.Rectangle;
                 CurrentRoi.X = pixelModel.X;
                 CurrentRoi.Y = pixelModel.Y;
                 CurrentRoi.Width = pixelModel.Width;
                 CurrentRoi.Height = pixelModel.Height;
+                CurrentRoi.R = 0;
+                CurrentRoi.RInner = 0;
             }
             else
             {
-                double diameter = pixelModel.R > 0 ? pixelModel.R * 2.0 : Math.Max(pixelModel.Width, pixelModel.Height);
-                if (diameter <= 0)
+                var shape = pixelModel.Shape == RoiShape.Annulus ? RoiShape.Annulus : RoiShape.Circle;
+                double radius = pixelModel.R > 0 ? pixelModel.R : Math.Max(pixelModel.Width, pixelModel.Height) / 2.0;
+                if (radius <= 0)
                 {
-                    diameter = Math.Max(CurrentRoi.Width, CurrentRoi.Height);
+                    radius = Math.Max(CurrentRoi.Width, CurrentRoi.Height) / 2.0;
                 }
 
+                double diameter = radius * 2.0;
+                CurrentRoi.Shape = shape;
                 CurrentRoi.X = pixelModel.CX;
                 CurrentRoi.Y = pixelModel.CY;
                 CurrentRoi.Width = diameter;
                 CurrentRoi.Height = diameter;
+                CurrentRoi.R = radius;
+
+                if (shape == RoiShape.Annulus)
+                {
+                    double inner = pixelModel.RInner > 0 ? pixelModel.RInner : CurrentRoi.RInner;
+                    if (inner <= 0)
+                    {
+                        inner = radius * 0.6;
+                    }
+                    inner = Math.Max(0, Math.Min(inner, radius));
+                    CurrentRoi.RInner = inner;
+                }
+                else
+                {
+                    CurrentRoi.RInner = 0;
+                }
             }
 
             CurrentRoi.AngleDeg = pixelModel.AngleDeg;
@@ -2819,7 +2890,12 @@ namespace BrakeDiscInspector_GUI_ROI
             canvasRoi.Role = roi.Role;
             canvasRoi.Label = roi.Label;
             canvasRoi.Id = roi.Id;
-            Shape shape = canvasRoi.Shape == RoiShape.Rectangle ? new WRectShape() : new WEllipse();
+            Shape shape = canvasRoi.Shape switch
+            {
+                RoiShape.Rectangle => new WRectShape(),
+                RoiShape.Annulus => new AnnulusShape(),
+                _ => new WEllipse()
+            };
 
             var (_, _, _, _, zIndex) = GetRoiStyle(canvasRoi.Role);
 
@@ -2838,11 +2914,26 @@ namespace BrakeDiscInspector_GUI_ROI
             }
             else
             {
-                var diameter = canvasRoi.Width > 0 ? canvasRoi.Width : canvasRoi.R * 2.0;
-                Canvas.SetLeft(shape, canvasRoi.CX - canvasRoi.R);
-                Canvas.SetTop(shape, canvasRoi.CY - canvasRoi.R);
+                double radius = canvasRoi.R > 0 ? canvasRoi.R : Math.Max(canvasRoi.Width, canvasRoi.Height) / 2.0;
+                if (radius <= 0)
+                    radius = 1.0;
+
+                double diameter = radius * 2.0;
+                Canvas.SetLeft(shape, canvasRoi.CX - radius);
+                Canvas.SetTop(shape, canvasRoi.CY - radius);
                 shape.Width = diameter;
-                shape.Height = canvasRoi.Height > 0 ? canvasRoi.Height : diameter;
+                shape.Height = diameter;
+
+                canvasRoi.R = radius;
+                canvasRoi.Width = diameter;
+                canvasRoi.Height = diameter;
+
+                if (shape is AnnulusShape annulus)
+                {
+                    double inner = canvasRoi.RInner > 0 ? canvasRoi.RInner : radius * 0.6;
+                    inner = Math.Max(0, Math.Min(inner, radius));
+                    annulus.InnerRadius = inner;
+                }
             }
 
             shape.Tag = canvasRoi;
@@ -3055,9 +3146,12 @@ namespace BrakeDiscInspector_GUI_ROI
         {
             double width = Math.Max(CurrentRoi.Width, 0.0);
             double height = Math.Max(CurrentRoi.Height, 0.0);
+            var shape = CurrentRoi.Shape;
+            double radius = CurrentRoi.R > 0 ? CurrentRoi.R : Math.Max(width, height) / 2.0;
+
             var roiModel = new RoiModel
             {
-                Shape = RoiShape.Rectangle,
+                Shape = shape,
                 X = CurrentRoi.X,
                 Y = CurrentRoi.Y,
                 Width = width,
@@ -3065,8 +3159,34 @@ namespace BrakeDiscInspector_GUI_ROI
                 AngleDeg = CurrentRoi.AngleDeg,
                 CX = CurrentRoi.X,
                 CY = CurrentRoi.Y,
-                R = Math.Max(width, height) / 2.0
+                R = radius
             };
+
+            if (shape == RoiShape.Rectangle)
+            {
+                roiModel.CX = roiModel.X;
+                roiModel.CY = roiModel.Y;
+                roiModel.RInner = 0;
+                roiModel.R = Math.Max(width, height) / 2.0;
+            }
+            else
+            {
+                roiModel.Width = radius * 2.0;
+                roiModel.Height = radius * 2.0;
+                roiModel.CX = CurrentRoi.X;
+                roiModel.CY = CurrentRoi.Y;
+
+                if (shape == RoiShape.Annulus)
+                {
+                    double inner = CurrentRoi.RInner > 0 ? CurrentRoi.RInner : radius * 0.6;
+                    inner = Math.Max(0, Math.Min(inner, radius));
+                    roiModel.RInner = inner;
+                }
+                else
+                {
+                    roiModel.RInner = 0;
+                }
+            }
 
             if (!string.IsNullOrWhiteSpace(CurrentRoi.Legend))
                 roiModel.Label = CurrentRoi.Legend;
