@@ -1,4 +1,5 @@
-﻿using System.Windows;
+using System;
+using System.Windows;
 using System.Windows.Media;
 
 namespace BrakeDiscInspector_GUI_ROI
@@ -40,9 +41,39 @@ namespace BrakeDiscInspector_GUI_ROI
 
             var rect = new System.Windows.Rect(cx - w / 2, cy - h / 2, w, h);
             var rotate = new RotateTransform(Roi.AngleDeg, cx, cy);
+            var pen = new Pen(Brushes.Lime, 2);
 
             dc.PushTransform(rotate);
-            dc.DrawRectangle(null, new Pen(Brushes.Lime, 2), rect);
+
+            switch (Roi.Shape)
+            {
+                case RoiShape.Rectangle:
+                    dc.DrawRectangle(null, pen, rect);
+                    break;
+                case RoiShape.Circle:
+                    dc.DrawEllipse(null, pen, new System.Windows.Point(cx, cy), w / 2.0, h / 2.0);
+                    break;
+                case RoiShape.Annulus:
+                    {
+                        double outerRadiusX = w / 2.0;
+                        double outerRadiusY = h / 2.0;
+                        double innerRadiusX = Roi.RInner > 0 ? Roi.RInner * sx : outerRadiusX * 0.6;
+                        double innerRadiusY = Roi.RInner > 0 ? Roi.RInner * sy : outerRadiusY * 0.6;
+
+                        innerRadiusX = Math.Max(0, Math.Min(innerRadiusX, outerRadiusX));
+                        innerRadiusY = Math.Max(0, Math.Min(innerRadiusY, outerRadiusY));
+
+                        dc.DrawEllipse(null, pen, new System.Windows.Point(cx, cy), outerRadiusX, outerRadiusY);
+                        if (innerRadiusX > 0 && innerRadiusY > 0)
+                        {
+                            dc.DrawEllipse(null, pen, new System.Windows.Point(cx, cy), innerRadiusX, innerRadiusY);
+                        }
+                        break;
+                    }
+                default:
+                    dc.DrawRectangle(null, pen, rect);
+                    break;
+            }
 
             var dpi = VisualTreeHelper.GetDpi(this);
 
