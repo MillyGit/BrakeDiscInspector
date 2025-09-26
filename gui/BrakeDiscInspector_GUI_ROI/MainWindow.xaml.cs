@@ -711,6 +711,8 @@ namespace BrakeDiscInspector_GUI_ROI
                     HandleDragCompleted(canvasModel, pixelModel, contextLabel);
                     break;
             }
+
+            UpdateOverlayFromPixelModel(pixelModel);
         }
 
         private void HandleDragStarted(RoiModel canvasModel, RoiModel pixelModel, string contextLabel)
@@ -1750,28 +1752,66 @@ namespace BrakeDiscInspector_GUI_ROI
             }
         }
 
-        private void SyncCurrentRoiFromInspection(RoiModel inspectionPixel)
+        private void ApplyPixelModelToCurrentRoi(RoiModel pixelModel)
         {
-            if (inspectionPixel == null) return;
+            if (pixelModel == null)
+                return;
 
-            if (inspectionPixel.Shape == RoiShape.Rectangle)
+            if (pixelModel.Shape == RoiShape.Rectangle)
             {
-                CurrentRoi.X = inspectionPixel.X + inspectionPixel.Width / 2.0;
-                CurrentRoi.Y = inspectionPixel.Y + inspectionPixel.Height / 2.0;
-                CurrentRoi.Width = inspectionPixel.Width;
-                CurrentRoi.Height = inspectionPixel.Height;
+                CurrentRoi.X = pixelModel.X + pixelModel.Width / 2.0;
+                CurrentRoi.Y = pixelModel.Y + pixelModel.Height / 2.0;
+                CurrentRoi.Width = pixelModel.Width;
+                CurrentRoi.Height = pixelModel.Height;
             }
             else
             {
-                var diameter = inspectionPixel.R * 2.0;
-                CurrentRoi.X = inspectionPixel.CX;
-                CurrentRoi.Y = inspectionPixel.CY;
+                double diameter = pixelModel.R > 0 ? pixelModel.R * 2.0 : Math.Max(pixelModel.Width, pixelModel.Height);
+                if (diameter <= 0)
+                {
+                    diameter = Math.Max(CurrentRoi.Width, CurrentRoi.Height);
+                }
+
+                CurrentRoi.X = pixelModel.CX;
+                CurrentRoi.Y = pixelModel.CY;
                 CurrentRoi.Width = diameter;
                 CurrentRoi.Height = diameter;
             }
 
-            CurrentRoi.AngleDeg = inspectionPixel.AngleDeg;
+            CurrentRoi.AngleDeg = pixelModel.AngleDeg;
+
+            var legend = ResolveRoiLabelText(pixelModel);
+            if (!string.IsNullOrWhiteSpace(legend))
+            {
+                CurrentRoi.Legend = legend!;
+            }
+        }
+
+        private void UpdateOverlayFromCurrentRoi()
+        {
+            if (RoiOverlay == null)
+                return;
+
+            RoiOverlay.Roi = CurrentRoi;
+            RoiOverlay.InvalidateVisual();
+        }
+
+        private void UpdateOverlayFromPixelModel(RoiModel pixelModel)
+        {
+            if (pixelModel == null)
+                return;
+
+            ApplyPixelModelToCurrentRoi(pixelModel);
+            UpdateOverlayFromCurrentRoi();
+        }
+
+        private void SyncCurrentRoiFromInspection(RoiModel inspectionPixel)
+        {
+            if (inspectionPixel == null) return;
+
+            ApplyPixelModelToCurrentRoi(inspectionPixel);
             UpdateInspectionShapeRotation(CurrentRoi.AngleDeg);
+            UpdateOverlayFromCurrentRoi();
         }
 
         private void InvalidateAdornerFor(Shape shape)
@@ -2635,6 +2675,11 @@ namespace BrakeDiscInspector_GUI_ROI
             if (_analysisViewActive)
             {
                 ClearPersistedRoisFromCanvas();
+                if (RoiOverlay != null)
+                {
+                    RoiOverlay.Roi = null;
+                    RoiOverlay.InvalidateVisual();
+                }
                 return;
             }
 
@@ -2691,7 +2736,14 @@ namespace BrakeDiscInspector_GUI_ROI
             AddPersistentRoi(_layout.Inspection);
 
             if (_layout.Inspection != null)
+            {
                 SyncCurrentRoiFromInspection(_layout.Inspection);
+            }
+            else if (RoiOverlay != null)
+            {
+                RoiOverlay.Roi = null;
+                RoiOverlay.InvalidateVisual();
+            }
         }
 
         private Shape? CreateLayoutShape(RoiModel roi)
@@ -2702,13 +2754,11 @@ namespace BrakeDiscInspector_GUI_ROI
             canvasRoi.Id = roi.Id;
             Shape shape = canvasRoi.Shape == RoiShape.Rectangle ? new WRectShape() : new WEllipse();
 
-            var style = GetRoiStyle(canvasRoi.Role);
+            var (_, _, _, _, zIndex) = GetRoiStyle(canvasRoi.Role);
 
-            shape.Stroke = style.stroke;
-            shape.Fill = style.fill;
-            shape.StrokeThickness = style.thickness;
-            if (style.dash != null)
-                shape.StrokeDashArray = style.dash;
+            shape.Stroke = Brushes.Transparent;
+            shape.Fill = Brushes.Transparent;
+            shape.StrokeThickness = 0.0;
             shape.SnapsToDevicePixels = true;
             shape.IsHitTestVisible = true;
 
@@ -2730,7 +2780,7 @@ namespace BrakeDiscInspector_GUI_ROI
 
             shape.Tag = canvasRoi;
             ApplyRoiRotationToShape(shape, canvasRoi.AngleDeg);
-            Panel.SetZIndex(shape, style.zIndex);
+            Panel.SetZIndex(shape, zIndex);
 
             double left = Canvas.GetLeft(shape); if (double.IsNaN(left)) left = 0;
             double top = Canvas.GetTop(shape); if (double.IsNaN(top)) top = 0;
@@ -2774,33 +2824,7 @@ namespace BrakeDiscInspector_GUI_ROI
 
         private void UpdatePersistentLabel(RoiModel canvasModel)
         {
-            if (CanvasROI == null || canvasModel == null || string.IsNullOrEmpty(canvasModel.Id))
-                return;
-
-            var labelText = ResolveRoiLabelText(canvasModel);
-            if (string.IsNullOrWhiteSpace(labelText))
-            {
-                RemovePersistentLabel(canvasModel.Id);
-                return;
-            }
-
-            if (!_roiShapesById.TryGetValue(canvasModel.Id, out var shape) || shape == null)
-                return;
-
-            if (!_roiLabelsById.TryGetValue(canvasModel.Id, out var element))
-            {
-                element = CreateLabelElement(canvasModel, labelText);
-                _roiLabelsById[canvasModel.Id] = element;
-                CanvasROI.Children.Add(element);
-            }
-            else if (element is Border borderExisting && borderExisting.Child is TextBlock tbExisting)
-            {
-                tbExisting.Text = labelText;
-            }
-
-            element.Visibility = Visibility.Visible;
-            Panel.SetZIndex(element, Panel.GetZIndex(shape) + 1);
-            PositionLabelElement(element, shape, canvasModel);
+            _ = canvasModel; // Etiquetas renderizadas por RoiOverlay.
         }
 
         private FrameworkElement CreateLabelElement(RoiModel roiModel, string text)
@@ -3515,6 +3539,17 @@ namespace BrakeDiscInspector_GUI_ROI
             CanvasROI.Margin = new Thickness(left, top, 0, 0);
             CanvasROI.Width = w;
             CanvasROI.Height = h;
+
+            if (RoiOverlay != null)
+            {
+                RoiOverlay.HorizontalAlignment = HorizontalAlignment.Left;
+                RoiOverlay.VerticalAlignment = VerticalAlignment.Top;
+                RoiOverlay.Margin = new Thickness(left, top, 0, 0);
+                RoiOverlay.Width = w;
+                RoiOverlay.Height = h;
+                RoiOverlay.SnapsToDevicePixels = true;
+                RenderOptions.SetEdgeMode(RoiOverlay, EdgeMode.Aliased);
+            }
 
             // Estabilidad visual
             CanvasROI.SnapsToDevicePixels = true;
