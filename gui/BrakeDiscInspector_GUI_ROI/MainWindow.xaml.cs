@@ -1040,6 +1040,7 @@ namespace BrakeDiscInspector_GUI_ROI
             }
 
             ClearPersistedRoisFromCanvas();
+            RedrawOverlaySafe();
 
             // IMPORTANTE: recalcula habilitaciones (esto ya deja el botón "Analizar Master" activo si M1+M2 están listos)
             UpdateWizardState();
@@ -2612,6 +2613,7 @@ namespace BrakeDiscInspector_GUI_ROI
             _analysisViewActive = true;
             ClearAnalysisMarksOnly();
             ClearPersistedRoisFromCanvas();
+            RedrawOverlaySafe();
 
             if (_previewShape != null)
             {
