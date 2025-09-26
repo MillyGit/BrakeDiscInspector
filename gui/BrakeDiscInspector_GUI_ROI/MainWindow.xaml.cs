@@ -2466,8 +2466,8 @@ namespace BrakeDiscInspector_GUI_ROI
             {
                 silhouetteImage.Width = pattern.Width;
                 silhouetteImage.Height = pattern.Height;
-                silhouetteImage.X = matchImageCenter.X - silhouetteImage.Width / 2.0;
-                silhouetteImage.Y = matchImageCenter.Y - silhouetteImage.Height / 2.0;
+                silhouetteImage.X = matchImageCenter.X;
+                silhouetteImage.Y = matchImageCenter.Y;
             }
             else
             {
