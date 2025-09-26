@@ -609,7 +609,9 @@ namespace BrakeDiscInspector_GUI_ROI
                 var y = Canvas.GetTop(_previewShape);
                 var w = _previewShape.Width;
                 var h = _previewShape.Height;
-                canvasDraft = new RoiModel { Shape = RoiShape.Rectangle, X = x, Y = y, Width = w, Height = h };
+                canvasDraft = new RoiModel { Shape = RoiShape.Rectangle, Width = w, Height = h };
+                canvasDraft.Left = x;
+                canvasDraft.Top = y;
             }
             else
             {
@@ -625,11 +627,11 @@ namespace BrakeDiscInspector_GUI_ROI
                     CY = cy,
                     R = r,
                     RInner = shape == RoiShape.Annulus ? r * 0.6 : 0,
-                    X = x,
-                    Y = y,
                     Width = w,
                     Height = _previewShape.Height
                 };
+                canvasDraft.Left = x;
+                canvasDraft.Top = y;
             }
 
             var pixelDraft = CanvasToImage(canvasDraft);
@@ -1160,7 +1162,7 @@ namespace BrakeDiscInspector_GUI_ROI
 
         private WRect RoiToRect(RoiModel r)
         {
-            if (r.Shape == RoiShape.Rectangle) return new WRect(r.X, r.Y, r.Width, r.Height);
+            if (r.Shape == RoiShape.Rectangle) return new WRect(r.Left, r.Top, r.Width, r.Height);
             var ro = r.R; return new WRect(r.CX - ro, r.CY - ro, 2 * ro, 2 * ro);
         }
 
@@ -1447,7 +1449,8 @@ namespace BrakeDiscInspector_GUI_ROI
         {
             if (insp.Shape == RoiShape.Rectangle)
             {
-                insp.X = cx - insp.Width / 2.0; insp.Y = cy - insp.Height / 2.0;
+                insp.X = cx;
+                insp.Y = cy;
             }
             else
             {
@@ -1464,10 +1467,18 @@ namespace BrakeDiscInspector_GUI_ROI
             {
                 if (insp.Width < 1) insp.Width = 1;
                 if (insp.Height < 1) insp.Height = 1;
-                if (insp.X < 0) insp.X = 0;
-                if (insp.Y < 0) insp.Y = 0;
-                if (insp.X + insp.Width > imgW) insp.X = Math.Max(0, imgW - insp.Width);
-                if (insp.Y + insp.Height > imgH) insp.Y = Math.Max(0, imgH - insp.Height);
+                double left = Math.Max(0, insp.Left);
+                double top = Math.Max(0, insp.Top);
+                double right = Math.Min(imgW, left + insp.Width);
+                double bottom = Math.Min(imgH, top + insp.Height);
+
+                double newWidth = Math.Max(1, right - left);
+                double newHeight = Math.Max(1, bottom - top);
+
+                insp.Width = newWidth;
+                insp.Height = newHeight;
+                insp.Left = Math.Max(0, Math.Min(left, imgW - newWidth));
+                insp.Top = Math.Max(0, Math.Min(top, imgH - newHeight));
             }
             else
             {
@@ -1706,17 +1717,25 @@ namespace BrakeDiscInspector_GUI_ROI
             if (shape is System.Windows.Shapes.Rectangle)
             {
                 roiCanvas.Shape = RoiShape.Rectangle;
-                roiCanvas.X = x; roiCanvas.Y = y; roiCanvas.Width = w; roiCanvas.Height = h;
-                roiCanvas.CX = roiCanvas.X + roiCanvas.Width / 2.0;
-                roiCanvas.CY = roiCanvas.Y + roiCanvas.Height / 2.0;
+                roiCanvas.Width = w;
+                roiCanvas.Height = h;
+                roiCanvas.Left = x;
+                roiCanvas.Top = y;
+                roiCanvas.CX = roiCanvas.X;
+                roiCanvas.CY = roiCanvas.Y;
                 roiCanvas.R = Math.Max(roiCanvas.Width, roiCanvas.Height) / 2.0;
             }
             else if (shape is System.Windows.Shapes.Ellipse)
             {
                 var r = w / 2.0;
                 roiCanvas.Shape = roiCanvas.Shape == RoiShape.Annulus ? RoiShape.Annulus : RoiShape.Circle;
-                roiCanvas.CX = x + r; roiCanvas.CY = y + r; roiCanvas.R = r;
-                roiCanvas.X = x; roiCanvas.Y = y; roiCanvas.Width = w; roiCanvas.Height = h;
+                roiCanvas.Width = w;
+                roiCanvas.Height = h;
+                roiCanvas.R = r;
+                roiCanvas.Left = x;
+                roiCanvas.Top = y;
+                roiCanvas.CX = roiCanvas.X;
+                roiCanvas.CY = roiCanvas.Y;
                 if (roiCanvas.Shape == RoiShape.Annulus && (roiCanvas.RInner <= 0 || roiCanvas.RInner >= roiCanvas.R))
                     roiCanvas.RInner = roiCanvas.R * 0.6;
             }
@@ -2401,10 +2420,12 @@ namespace BrakeDiscInspector_GUI_ROI
 
             // Si el ROI “cabe” dentro del tamaño del canvas/área visible y no excede claramente,
             // asumimos que está en coords CANVAS (no imagen).
+            double left = r.Left;
+            double top = r.Top;
             bool withinCanvas =
-                r.X >= -1 && r.Y >= -1 &&
-                r.Width <= disp.Width + 2 &&
-                r.Height <= disp.Height + 2;
+                left >= -1 && top >= -1 &&
+                left + r.Width <= disp.Width + 2 &&
+                top + r.Height <= disp.Height + 2;
 
             // Si además el tamaño aparente es similar al canvas (no a la imagen en píxeles), reforzamos la sospecha.
             bool notImageScale =
@@ -2482,8 +2503,8 @@ namespace BrakeDiscInspector_GUI_ROI
                     Width = Math.Max(0, canvasRoi.Width),
                     Height = Math.Max(0, canvasRoi.Height)
                 };
-                Canvas.SetLeft(rect, canvasRoi.X);
-                Canvas.SetTop(rect, canvasRoi.Y);
+                Canvas.SetLeft(rect, canvasRoi.Left);
+                Canvas.SetTop(rect, canvasRoi.Top);
                 rect.RenderTransformOrigin = new System.Windows.Point(0.5, 0.5);
                 if (Math.Abs(canvasRoi.AngleDeg) > 0.01)
                 {
@@ -2777,8 +2798,8 @@ namespace BrakeDiscInspector_GUI_ROI
 
             if (canvasRoi.Shape == RoiShape.Rectangle)
             {
-                Canvas.SetLeft(shape, canvasRoi.X);
-                Canvas.SetTop(shape, canvasRoi.Y);
+                Canvas.SetLeft(shape, canvasRoi.Left);
+                Canvas.SetTop(shape, canvasRoi.Top);
                 shape.Width = canvasRoi.Width;
                 shape.Height = canvasRoi.Height;
             }
@@ -3001,14 +3022,11 @@ namespace BrakeDiscInspector_GUI_ROI
         {
             double width = Math.Max(CurrentRoi.Width, 0.0);
             double height = Math.Max(CurrentRoi.Height, 0.0);
-            double halfW = width / 2.0;
-            double halfH = height / 2.0;
-
             var roiModel = new RoiModel
             {
                 Shape = RoiShape.Rectangle,
-                X = CurrentRoi.X - halfW,
-                Y = CurrentRoi.Y - halfH,
+                X = CurrentRoi.X,
+                Y = CurrentRoi.Y,
                 Width = width,
                 Height = height,
                 AngleDeg = CurrentRoi.AngleDeg,
@@ -3341,8 +3359,8 @@ namespace BrakeDiscInspector_GUI_ROI
                 result.Width = roiCanvas.Width / scale;
                 result.Height = roiCanvas.Height / scale;
 
-                result.CX = result.X + result.Width / 2.0;
-                result.CY = result.Y + result.Height / 2.0;
+                result.CX = result.X;
+                result.CY = result.Y;
                 result.R = Math.Max(result.Width, result.Height) / 2.0;
             }
             else
@@ -3354,8 +3372,8 @@ namespace BrakeDiscInspector_GUI_ROI
                 if (result.Shape == RoiShape.Annulus)
                     result.RInner = roiCanvas.RInner / scale;
 
-                result.X = result.CX - result.R;
-                result.Y = result.CY - result.R;
+                result.X = result.CX;
+                result.Y = result.CY;
                 result.Width = result.R * 2.0;
                 result.Height = result.R * 2.0;
             }
@@ -3379,8 +3397,8 @@ namespace BrakeDiscInspector_GUI_ROI
                 result.Width = roiImage.Width * scale;
                 result.Height = roiImage.Height * scale;
 
-                result.CX = result.X + result.Width / 2.0;
-                result.CY = result.Y + result.Height / 2.0;
+                result.CX = result.X;
+                result.CY = result.Y;
                 result.R = Math.Max(result.Width, result.Height) / 2.0;
             }
             else
@@ -3392,8 +3410,8 @@ namespace BrakeDiscInspector_GUI_ROI
                 if (result.Shape == RoiShape.Annulus)
                     result.RInner = roiImage.RInner * scale;
 
-                result.X = result.CX - result.R;
-                result.Y = result.CY - result.R;
+                result.X = result.CX;
+                result.Y = result.CY;
                 result.Width = result.R * 2.0;
                 result.Height = result.R * 2.0;
             }

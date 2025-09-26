@@ -185,10 +185,10 @@ namespace BrakeDiscInspector_GUI_ROI
         {
             if (r.Shape == RoiShape.Rectangle)
             {
-                double left = r.X;
-                double top = r.Y;
-                double right = r.X + r.Width;
-                double bottom = r.Y + r.Height;
+                double left = r.Left;
+                double top = r.Top;
+                double right = left + r.Width;
+                double bottom = top + r.Height;
 
                 int x = (int)Math.Floor(left);
                 int y = (int)Math.Floor(top);

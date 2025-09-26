@@ -38,11 +38,25 @@ namespace BrakeDiscInspector_GUI_ROI
             }
         }
 
-        // Rectángulo
+        // Rectángulo (X/Y representan el centro geométrico)
         public double X { get; set; }
         public double Y { get; set; }
         public double Width { get; set; }
         public double Height { get; set; }
+
+        [JsonIgnore]
+        public double Left
+        {
+            get => X - Width / 2.0;
+            set => X = value + Width / 2.0;
+        }
+
+        [JsonIgnore]
+        public double Top
+        {
+            get => Y - Height / 2.0;
+            set => Y = value + Height / 2.0;
+        }
 
         // Círculo / Annulus
         public double CX { get; set; }
@@ -54,7 +68,7 @@ namespace BrakeDiscInspector_GUI_ROI
         {
             return Shape switch
             {
-                RoiShape.Rectangle => (X + Width / 2.0, Y + Height / 2.0),
+                RoiShape.Rectangle => (X, Y),
                 RoiShape.Circle or RoiShape.Annulus => (CX, CY),
                 _ => (0, 0)
             };
