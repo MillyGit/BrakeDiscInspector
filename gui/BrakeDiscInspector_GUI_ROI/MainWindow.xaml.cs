@@ -1794,8 +1794,8 @@ namespace BrakeDiscInspector_GUI_ROI
 
             if (pixelModel.Shape == RoiShape.Rectangle)
             {
-                CurrentRoi.X = pixelModel.X + pixelModel.Width / 2.0;
-                CurrentRoi.Y = pixelModel.Y + pixelModel.Height / 2.0;
+                CurrentRoi.X = pixelModel.X;
+                CurrentRoi.Y = pixelModel.Y;
                 CurrentRoi.Width = pixelModel.Width;
                 CurrentRoi.Height = pixelModel.Height;
             }
