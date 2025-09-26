@@ -1331,7 +1331,7 @@ namespace BrakeDiscInspector_GUI_ROI
                 return;
             }
 
-            MoveInspectionTo(_layout.Inspection, mid.X, mid.Y);
+            MoveInspectionTo(_layout.Inspection, c1.Value, c2.Value);
             ClipInspectionROI(_layout.Inspection, _imgW, _imgH);
             AppendLog("[FLOW] Inspection movida y recortada");
 
@@ -1445,19 +1445,108 @@ namespace BrakeDiscInspector_GUI_ROI
 
         // --------- AppendLog (para evitar CS0119 en invocaciones) ---------
 
-        private void MoveInspectionTo(RoiModel insp, double cx, double cy)
+        private void MoveInspectionTo(RoiModel insp, WPoint master1, WPoint master2)
         {
-            if (insp.Shape == RoiShape.Rectangle)
+            if (insp == null)
+                return;
+
+            var original = insp.Clone();
+            bool transformed = false;
+
+            if (_layout?.Master1Pattern is RoiModel savedM1 && _layout?.Master2Pattern is RoiModel savedM2)
             {
-                insp.X = cx;
-                insp.Y = cy;
+                var savedM1Center = GetRoiCenter(savedM1);
+                var savedM2Center = GetRoiCenter(savedM2);
+                var originalCenter = GetRoiCenter(original);
+
+                double dxOld = savedM2Center.X - savedM1Center.X;
+                double dyOld = savedM2Center.Y - savedM1Center.Y;
+                double dxNew = master2.X - master1.X;
+                double dyNew = master2.Y - master1.Y;
+
+                double lenOld = Math.Sqrt(dxOld * dxOld + dyOld * dyOld);
+                double lenNew = Math.Sqrt(dxNew * dxNew + dyNew * dyNew);
+
+                if (lenOld > 1e-6 && lenNew > 0)
+                {
+                    double scale = lenNew / lenOld;
+                    double angleOld = Math.Atan2(dyOld, dxOld);
+                    double angleNew = Math.Atan2(dyNew, dxNew);
+                    double angleDelta = angleNew - angleOld;
+                    double cos = Math.Cos(angleDelta);
+                    double sin = Math.Sin(angleDelta);
+
+                    double relX = originalCenter.X - savedM1Center.X;
+                    double relY = originalCenter.Y - savedM1Center.Y;
+
+                    double rotatedX = scale * (cos * relX - sin * relY);
+                    double rotatedY = scale * (sin * relX + cos * relY);
+
+                    double newCx = master1.X + rotatedX;
+                    double newCy = master1.Y + rotatedY;
+
+                    switch (insp.Shape)
+                    {
+                        case RoiShape.Rectangle:
+                            insp.X = newCx;
+                            insp.Y = newCy;
+                            insp.Width = Math.Max(1, original.Width * scale);
+                            insp.Height = Math.Max(1, original.Height * scale);
+                            insp.AngleDeg = original.AngleDeg + angleDelta * 180.0 / Math.PI;
+                            break;
+                        case RoiShape.Circle:
+                            insp.CX = newCx;
+                            insp.CY = newCy;
+                            insp.R = Math.Max(1, original.R * scale);
+                            break;
+                        case RoiShape.Annulus:
+                            insp.CX = newCx;
+                            insp.CY = newCy;
+                            insp.R = Math.Max(1, original.R * scale);
+                            insp.RInner = Math.Max(0, original.RInner * scale);
+                            if (insp.RInner >= insp.R)
+                                insp.RInner = Math.Max(0, insp.R - 1);
+                            break;
+                    }
+
+                    transformed = true;
+                }
             }
-            else
+
+            if (!transformed)
             {
-                insp.CX = cx; insp.CY = cy;
+                var mid = new WPoint((master1.X + master2.X) / 2.0, (master1.Y + master2.Y) / 2.0);
+
+                switch (insp.Shape)
+                {
+                    case RoiShape.Rectangle:
+                        insp.X = mid.X;
+                        insp.Y = mid.Y;
+                        insp.Width = original.Width;
+                        insp.Height = original.Height;
+                        insp.AngleDeg = original.AngleDeg;
+                        break;
+                    case RoiShape.Circle:
+                        insp.CX = mid.X;
+                        insp.CY = mid.Y;
+                        insp.R = original.R;
+                        break;
+                    case RoiShape.Annulus:
+                        insp.CX = mid.X;
+                        insp.CY = mid.Y;
+                        insp.R = original.R;
+                        insp.RInner = original.RInner;
+                        break;
+                }
             }
 
             SyncCurrentRoiFromInspection(insp);
+        }
+
+        private static WPoint GetRoiCenter(RoiModel roi)
+        {
+            var (cx, cy) = roi.GetCenter();
+            return new WPoint(cx, cy);
         }
 
         private void ClipInspectionROI(RoiModel insp, int imgW, int imgH)

@@ -40,7 +40,7 @@ namespace BrakeDiscInspector_GUI_ROI
 
 
             if (_layout.Inspection == null) { Snack("Falta ROI de Inspección"); return; }
-            MoveInspectionTo(_layout.Inspection, mid.X, mid.Y);
+            MoveInspectionTo(_layout.Inspection, c1, c2);
             ClipInspectionROI(_layout.Inspection, _imgW, _imgH);
 
 
