@@ -2124,8 +2124,43 @@ namespace BrakeDiscInspector_GUI_ROI
             throw new InvalidOperationException("No hay imagen en la UI ni ruta válida para leer.");
         }
 
+        private string? GetPersistentPreviewDir()
+        {
+            try
+            {
+                if (_preset == null || string.IsNullOrWhiteSpace(_preset.Home))
+                    return null;
+
+                var layoutPath = MasterLayoutManager.GetDefaultPath(_preset);
+                var layoutName = System.IO.Path.GetFileNameWithoutExtension(layoutPath);
+                if (string.IsNullOrWhiteSpace(layoutName))
+                    layoutName = "layout";
+
+                return System.IO.Path.Combine(_preset.Home, "roi_previews", layoutName);
+            }
+            catch (Exception ex)
+            {
+                AppendLog($"[preview] error resolving persistent dir: {ex.Message}");
+                return null;
+            }
+        }
+
         private string EnsureAndGetPreviewDir()
         {
+            var persistentDir = GetPersistentPreviewDir();
+            if (!string.IsNullOrWhiteSpace(persistentDir))
+            {
+                try
+                {
+                    System.IO.Directory.CreateDirectory(persistentDir);
+                    return persistentDir;
+                }
+                catch (Exception ex)
+                {
+                    AppendLog($"[preview] error creating persistent dir '{persistentDir}': {ex.Message}");
+                }
+            }
+
             var imgDir = System.IO.Path.GetDirectoryName(_currentImagePathWin) ?? "";
             var previewDir = System.IO.Path.Combine(imgDir, "roi_previews");
             System.IO.Directory.CreateDirectory(previewDir);
@@ -3000,29 +3035,44 @@ namespace BrakeDiscInspector_GUI_ROI
             OverlayCanvas.Children.Add(l2);
         }
 
-        // Devuelve el último patrón guardado (PNG) para M1/M2 en la carpeta roi_previews,
-        // junto a la imagen actual. Si no lo encuentra, devuelve null.
+        // Devuelve el último patrón guardado (PNG) para M1/M2 buscando primero en el
+        // almacén persistente (layout específico) y luego en la carpeta roi_previews
+        // junto a la imagen actual para compatibilidad hacia atrás. Si no lo encuentra,
+        // devuelve null.
         private string? TryGetSavedPatternPath(string tag /* "M1" | "M2" */)
         {
             try
             {
-                if (string.IsNullOrWhiteSpace(_currentImagePathWin)) return null;
+                var candidateDirs = new List<string>();
 
-                var imgDir = System.IO.Path.GetDirectoryName(_currentImagePathWin)!;
-                var previewDir = System.IO.Path.Combine(imgDir, "roi_previews");
-                if (!Directory.Exists(previewDir)) return null;
+                var persistentDir = GetPersistentPreviewDir();
+                if (!string.IsNullOrWhiteSpace(persistentDir))
+                    candidateDirs.Add(persistentDir);
 
-                // busca por prefijo "M1_pattern_" o "M2_pattern_"
-                var files = Directory.GetFiles(previewDir, $"{tag}_pattern_*.png")
-                                     .OrderByDescending(f => File.GetCreationTimeUtc(f))
-                                     .ToList();
-                var found = files.FirstOrDefault();
-                if (found != null)
-                    AppendLog($"[PATTERN] {tag} usando patrón guardado: {found}");
-                else
-                    AppendLog($"[PATTERN] {tag} no tiene patrón PNG guardado en {previewDir}");
+                if (!string.IsNullOrWhiteSpace(_currentImagePathWin))
+                {
+                    var imgDir = System.IO.Path.GetDirectoryName(_currentImagePathWin)!;
+                    candidateDirs.Add(System.IO.Path.Combine(imgDir, "roi_previews"));
+                }
 
-                return found;
+                foreach (var dir in candidateDirs)
+                {
+                    if (string.IsNullOrWhiteSpace(dir) || !Directory.Exists(dir))
+                        continue;
+
+                    var files = Directory.GetFiles(dir, $"{tag}_pattern_*.png")
+                                         .OrderByDescending(f => File.GetCreationTimeUtc(f))
+                                         .ToList();
+                    var found = files.FirstOrDefault();
+                    if (found != null)
+                    {
+                        AppendLog($"[PATTERN] {tag} usando patrón guardado: {found}");
+                        return found;
+                    }
+                }
+
+                AppendLog($"[PATTERN] {tag} no tiene patrón PNG guardado en rutas conocidas.");
+                return null;
             }
             catch (Exception ex)
             {
