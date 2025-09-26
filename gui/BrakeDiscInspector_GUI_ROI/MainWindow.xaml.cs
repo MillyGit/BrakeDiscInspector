@@ -1313,8 +1313,11 @@ namespace BrakeDiscInspector_GUI_ROI
 
             EnterAnalysisView();
 
-            DrawMasterMatch(_layout.Master1Pattern!, c1.Value, "M1", WBrushes.LimeGreen, withLabel: false);
-            DrawMasterMatch(_layout.Master2Pattern!, c2.Value, "M2", WBrushes.Red, withLabel: false);
+            string master1Caption = ResolveRoiLabelText(_layout.Master1Pattern!) ?? "Master 1";
+            string master2Caption = ResolveRoiLabelText(_layout.Master2Pattern!) ?? "Master 2";
+
+            DrawMasterMatch(_layout.Master1Pattern!, c1.Value, $"{master1Caption} match", WBrushes.LimeGreen, withLabel: true);
+            DrawMasterMatch(_layout.Master2Pattern!, c2.Value, $"{master2Caption} match", WBrushes.Red, withLabel: true);
 
             // 5) Reubicar inspección si existe
             if (_layout.Inspection == null)
