@@ -95,9 +95,9 @@ namespace BrakeDiscInspector_GUI_ROI
             // 1) Girar la imagen alrededor del pivote del ROI.
             // WPF: +angle = horario; OpenCV: +angle = antihorario.
             // Para "deshacer" la rotación visible del ROI (que es horario en WPF),
-            // rotamos la IMAGEN en sentido antihorario por +angleDeg (OpenCV).
+            // rotamos la IMAGEN en sentido horario por -angleDeg (OpenCV).
             var pivot = new Point2f((float)info.PivotX, (float)info.PivotY);
-            using var rotMat = Cv2.GetRotationMatrix2D(pivot, +angleDeg, 1.0);
+            using var rotMat = Cv2.GetRotationMatrix2D(pivot, -angleDeg, 1.0);
             using var rotated = new Mat();
             Scalar border = source.Channels() == 4 ? new Scalar(0, 0, 0, 0) : Scalar.All(0);
             Cv2.WarpAffine(source, rotated, rotMat, new Size(source.Width, source.Height),
