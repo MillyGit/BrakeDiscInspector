@@ -90,10 +90,6 @@ namespace BrakeDiscInspector_GUI_ROI
         private Canvas OverlayCanvas => CanvasROI;
 
         private const string ANALYSIS_TAG = "analysis-mark";
-        private const string ROI_LABEL_TAG = "roi-label";
-
-        private const double RoiLabelPadding = 6.0;
-
         // === Helpers de overlay ===
         private const double LabelOffsetX = 10;   // desplazamiento a la derecha de la cruz
         private const double LabelOffsetY = -20;  // desplazamiento hacia arriba de la cruz
@@ -103,7 +99,6 @@ namespace BrakeDiscInspector_GUI_ROI
         private bool UseAnnulus = false;
 
         private readonly Dictionary<string, Shape> _roiShapesById = new();
-        private readonly Dictionary<string, FrameworkElement> _roiLabelsById = new();
 
         private bool _syncScheduled;
         private int _syncRetryCount;
@@ -715,8 +710,6 @@ namespace BrakeDiscInspector_GUI_ROI
 
         private void HandleAdornerChange(RoiAdornerChangeKind changeKind, RoiModel canvasModel, RoiModel pixelModel, string contextLabel)
         {
-            UpdatePersistentLabel(canvasModel);
-
             switch (changeKind)
             {
                 case RoiAdornerChangeKind.DragStarted:
@@ -1739,8 +1732,6 @@ namespace BrakeDiscInspector_GUI_ROI
             UpdateOverlayFromPixelModel(roiPixel);
 
             AppendLog($"[model] sync {roiPixel.Role} => {DescribeRoi(roiPixel)}");
-
-            UpdatePersistentLabelForShape(shape);
         }
 
         private void UpdateLayoutFromPixel(RoiModel roiPixel)
@@ -2660,13 +2651,11 @@ namespace BrakeDiscInspector_GUI_ROI
                 if (shape.Tag is RoiModel roi && !string.IsNullOrEmpty(roi.Id))
                 {
                     _roiShapesById.Remove(roi.Id);
-                    RemovePersistentLabel(roi.Id);
                 }
                 RemoveRoiAdorners(shape);
                 CanvasROI.Children.Remove(shape);
             }
 
-            ClearPersistentLabels();
             _roiShapesById.Clear();
         }
 
@@ -2712,12 +2701,9 @@ namespace BrakeDiscInspector_GUI_ROI
                 if (shape.Tag is RoiModel roiInfo && !string.IsNullOrEmpty(roiInfo.Id))
                 {
                     _roiShapesById.Remove(roiInfo.Id);
-                    RemovePersistentLabel(roiInfo.Id);
                 }
                 CanvasROI.Children.Remove(shape);
             }
-
-            ClearPersistentLabels();
 
             if (_imgW <= 0 || _imgH <= 0)
             {
@@ -2742,7 +2728,6 @@ namespace BrakeDiscInspector_GUI_ROI
                 if (shape.Tag is RoiModel canvasInfo && !string.IsNullOrEmpty(canvasInfo.Id))
                 {
                     _roiShapesById[canvasInfo.Id] = shape;
-                    UpdatePersistentLabel(canvasInfo);
                 }
 
                 bool enableEditing = ShouldEnableRoiEditing(roi.Role);
@@ -2812,226 +2797,6 @@ namespace BrakeDiscInspector_GUI_ROI
             AppendLog($"[overlay] build role={roi.Role} shape={canvasRoi.Shape} bounds=({left:0.##},{top:0.##},{shape.Width:0.##},{shape.Height:0.##}) angle={canvasRoi.AngleDeg:0.##}");
 
             return shape;
-        }
-
-        private void ClearPersistentLabels()
-        {
-            if (CanvasROI == null) return;
-
-            foreach (var label in _roiLabelsById.Values)
-            {
-                CanvasROI.Children.Remove(label);
-            }
-
-            _roiLabelsById.Clear();
-        }
-
-        private void RemovePersistentLabel(string id)
-        {
-            if (string.IsNullOrEmpty(id))
-                return;
-
-            if (_roiLabelsById.TryGetValue(id, out var label))
-            {
-                if (CanvasROI != null)
-                    CanvasROI.Children.Remove(label);
-                _roiLabelsById.Remove(id);
-            }
-        }
-
-        private void UpdatePersistentLabelForShape(Shape shape)
-        {
-            if (shape.Tag is RoiModel roiModel)
-            {
-                UpdatePersistentLabel(roiModel, shape);
-            }
-        }
-
-        private void UpdatePersistentLabel(RoiModel canvasModel, Shape? shapeOverride = null)
-        {
-            if (CanvasROI == null)
-                return;
-
-            if (canvasModel == null || string.IsNullOrEmpty(canvasModel.Id))
-                return;
-
-            string? text = ResolveRoiLabelText(canvasModel);
-            if (string.IsNullOrWhiteSpace(text))
-            {
-                RemovePersistentLabel(canvasModel.Id);
-                return;
-            }
-
-            if (!_roiLabelsById.TryGetValue(canvasModel.Id, out var element) || element == null)
-            {
-                element = CreateLabelElement(canvasModel, text);
-                _roiLabelsById[canvasModel.Id] = element;
-            }
-            else
-            {
-                if (element is Border border && border.Child is TextBlock tb)
-                {
-                    tb.Text = text;
-                }
-                else if (element is TextBlock tbDirect)
-                {
-                    tbDirect.Text = text;
-                }
-
-                if (element.Parent is Panel parent && !ReferenceEquals(parent, CanvasROI))
-                {
-                    parent.Children.Remove(element);
-                }
-            }
-
-            if (element.Parent == null)
-            {
-                CanvasROI.Children.Add(element);
-            }
-
-            Shape? targetShape = shapeOverride;
-            if (targetShape == null)
-            {
-                if (_roiShapesById.TryGetValue(canvasModel.Id, out var storedShape))
-                {
-                    targetShape = storedShape;
-                }
-                else if (_previewShape != null && _previewShape.Tag is RoiModel previewModel && previewModel.Id == canvasModel.Id)
-                {
-                    targetShape = _previewShape;
-                }
-                else
-                {
-                    targetShape = CanvasROI.Children
-                        .OfType<Shape>()
-                        .FirstOrDefault(s => s.Tag is RoiModel roi && roi.Id == canvasModel.Id);
-                }
-            }
-
-            PositionLabelElement(element, targetShape, canvasModel);
-        }
-
-        private FrameworkElement CreateLabelElement(RoiModel roiModel, string text)
-        {
-            var textBlock = new TextBlock
-            {
-                Text = text,
-                Foreground = Brushes.White,
-                FontWeight = FontWeights.SemiBold,
-                FontSize = 12,
-                Margin = new Thickness(0),
-                Padding = new Thickness(6, 2, 6, 2),
-                IsHitTestVisible = false
-            };
-
-            TextOptions.SetTextFormattingMode(textBlock, TextFormattingMode.Display);
-
-            var (stroke, _, _, _, _) = GetRoiStyle(roiModel.Role);
-            var backgroundColor = WColor.FromArgb(200, 24, 24, 24);
-            var border = new Border
-            {
-                Background = new SolidColorBrush(backgroundColor),
-                CornerRadius = new CornerRadius(6),
-                BorderBrush = stroke,
-                BorderThickness = new Thickness(0.8),
-                Child = textBlock,
-                Opacity = 0.95,
-                Tag = ROI_LABEL_TAG,
-                IsHitTestVisible = false
-            };
-
-            return border;
-        }
-
-        private void PositionLabelElement(FrameworkElement element, Shape? shape, RoiModel roiModel)
-        {
-            if (CanvasROI == null)
-                return;
-
-            element.Measure(new WSize(double.PositiveInfinity, double.PositiveInfinity));
-            var desired = element.DesiredSize;
-
-            double left;
-            double top;
-            double width;
-            double height;
-
-            if (shape != null)
-            {
-                left = Canvas.GetLeft(shape);
-                if (double.IsNaN(left)) left = 0;
-                top = Canvas.GetTop(shape);
-                if (double.IsNaN(top)) top = 0;
-
-                width = !double.IsNaN(shape.Width) && shape.Width > 0 ? shape.Width : roiModel.Width;
-                height = !double.IsNaN(shape.Height) && shape.Height > 0 ? shape.Height : roiModel.Height;
-            }
-            else if (roiModel.Shape == RoiShape.Rectangle)
-            {
-                left = roiModel.X;
-                top = roiModel.Y;
-                width = roiModel.Width;
-                height = roiModel.Height;
-            }
-            else
-            {
-                double radius = roiModel.R;
-                if (radius <= 0)
-                    radius = Math.Max(roiModel.Width, roiModel.Height) / 2.0;
-
-                width = radius * 2.0;
-                height = width;
-                left = roiModel.CX - width / 2.0;
-                top = roiModel.CY - height / 2.0;
-            }
-
-            if (roiModel.Shape == RoiShape.Circle || roiModel.Shape == RoiShape.Annulus)
-            {
-                double diameter = roiModel.R > 0 ? roiModel.R * 2.0 : width;
-                width = diameter;
-                height = diameter;
-
-                if (shape != null)
-                {
-                    left = Canvas.GetLeft(shape);
-                    if (double.IsNaN(left)) left = roiModel.CX - width / 2.0;
-                    top = Canvas.GetTop(shape);
-                    if (double.IsNaN(top)) top = roiModel.CY - height / 2.0;
-                }
-                else
-                {
-                    left = roiModel.CX - width / 2.0;
-                    top = roiModel.CY - height / 2.0;
-                }
-            }
-
-            double labelLeft = left;
-            double labelTop = top - desired.Height - RoiLabelPadding;
-
-            if (labelTop < 0)
-            {
-                labelTop = top + height + RoiLabelPadding;
-            }
-
-            double canvasWidth = CanvasROI.ActualWidth;
-            double canvasHeight = CanvasROI.ActualHeight;
-
-            if (!double.IsNaN(canvasWidth) && canvasWidth > 0 && labelLeft + desired.Width > canvasWidth)
-            {
-                labelLeft = Math.Max(RoiLabelPadding, canvasWidth - desired.Width - RoiLabelPadding);
-            }
-
-            if (!double.IsNaN(canvasHeight) && canvasHeight > 0 && labelTop + desired.Height > canvasHeight)
-            {
-                double fallback = top - desired.Height - RoiLabelPadding;
-                labelTop = fallback >= 0 ? fallback : Math.Max(RoiLabelPadding, canvasHeight - desired.Height - RoiLabelPadding);
-            }
-
-            if (labelLeft < RoiLabelPadding)
-                labelLeft = RoiLabelPadding;
-
-            Canvas.SetLeft(element, labelLeft);
-            Canvas.SetTop(element, labelTop);
         }
 
         private string? ResolveRoiLabelText(RoiModel roiModel)
@@ -3476,8 +3241,6 @@ namespace BrakeDiscInspector_GUI_ROI
             }
 
             AppendLog($"[rotate] apply role={roiModel.Role} shape={roiModel.Shape} pivotLocal=({pivotLocalX:0.##},{pivotLocalY:0.##}) pivotCanvas=({pivotCanvasX:0.##},{pivotCanvasY:0.##}) angle={angle:0.##}");
-
-            UpdatePersistentLabelForShape(shape);
         }
 
         private void UpdateInspectionShapeRotation(double angle)
