@@ -3754,15 +3754,32 @@ namespace BrakeDiscInspector_GUI_ROI
             if (pw <= 0 || ph <= 0)
                 return (1.0, 0.0, 0.0);
 
-            var displayRect = GetImageDisplayRect();
-            if (displayRect.Width <= 0 || displayRect.Height <= 0)
+            double canvasWidth = CanvasROI?.ActualWidth ?? CanvasROI?.Width ?? 0.0;
+            double canvasHeight = CanvasROI?.ActualHeight ?? CanvasROI?.Height ?? 0.0;
+
+            if (canvasWidth <= 0 || canvasHeight <= 0)
+            {
+                var displayRect = GetImageDisplayRect();
+                canvasWidth = displayRect.Width;
+                canvasHeight = displayRect.Height;
+            }
+
+            if (canvasWidth <= 0 || canvasHeight <= 0)
                 return (1.0, 0.0, 0.0);
 
-            double scale = displayRect.Width / pw;
+            double scaleX = canvasWidth / pw;
+            double scaleY = canvasHeight / ph;
 
-            // CanvasROI está alineado con el área visible de la imagen, por lo que las
-            // coordenadas locales (0,0) ya representan la esquina superior izquierda.
-            // Mantener offset en cero evita que las conversiones añadan desplazamientos.
+            if (Math.Abs(scaleX - scaleY) > 0.001)
+            {
+                AppendLog($"[sync] escala no uniforme detectada canvas=({canvasWidth:0.###}x{canvasHeight:0.###}) px=({pw}x{ph}) scaleX={scaleX:0.#####} scaleY={scaleY:0.#####}");
+            }
+
+            // Por construcción (Stretch=Uniform) ambos factores deberían coincidir.
+            // Si hay pequeñas discrepancias por redondeo usamos el promedio para
+            // mantener la coherencia bidireccional de las conversiones.
+            double scale = (scaleX + scaleY) * 0.5;
+
             const double offsetX = 0.0;
             const double offsetY = 0.0;
 
