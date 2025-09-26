@@ -415,11 +415,7 @@ namespace BrakeDiscInspector_GUI_ROI
         private void BeginDraw(RoiShape shape, WPoint p0)
         {
             // Si había un preview anterior, elimínalo para evitar capas huérfanas
-            if (_previewShape != null)
-            {
-                CanvasROI.Children.Remove(_previewShape);
-                _previewShape = null;
-            }
+            ClearPreview();
 
             _previewShape = shape switch
             {
@@ -2664,11 +2660,7 @@ namespace BrakeDiscInspector_GUI_ROI
             ClearPersistedRoisFromCanvas();
             RedrawOverlaySafe();
 
-            if (_previewShape != null)
-            {
-                CanvasROI.Children.Remove(_previewShape);
-                _previewShape = null;
-            }
+            ClearPreview();
         }
 
         private void ExitAnalysisView()
