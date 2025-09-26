@@ -15,11 +15,23 @@ namespace BrakeDiscInspector_GUI_ROI
 
             // Mapear píxeles de imagen → coords del CanvasROI (mismo que usa el adorner)
             var mw = Window.GetWindow(this) as MainWindow;
-            if (mw == null || this.ActualWidth <= 0 || this.ActualHeight <= 0) return;
+            if (mw == null) return;
 
             if (mw.ImgMain.Source is not System.Windows.Media.Imaging.BitmapSource bmp) return;
-            double sx = this.ActualWidth / bmp.PixelWidth;
-            double sy = this.ActualHeight / bmp.PixelHeight;
+
+            double canvasWidth = mw.CanvasROI?.ActualWidth ?? 0;
+            double canvasHeight = mw.CanvasROI?.ActualHeight ?? 0;
+
+            if (canvasWidth <= 0 || canvasHeight <= 0)
+            {
+                canvasWidth = this.ActualWidth;
+                canvasHeight = this.ActualHeight;
+            }
+
+            if (canvasWidth <= 0 || canvasHeight <= 0) return;
+
+            double sx = canvasWidth / bmp.PixelWidth;
+            double sy = canvasHeight / bmp.PixelHeight;
 
             double cx = Roi.X * sx;
             double cy = Roi.Y * sy;
@@ -32,6 +44,8 @@ namespace BrakeDiscInspector_GUI_ROI
             dc.PushTransform(rotate);
             dc.DrawRectangle(null, new Pen(Brushes.Lime, 2), rect);
 
+            var dpi = VisualTreeHelper.GetDpi(this);
+
             var ft = new FormattedText(
                 Roi.Legend,
                 System.Globalization.CultureInfo.CurrentCulture,
@@ -39,7 +53,7 @@ namespace BrakeDiscInspector_GUI_ROI
                 new Typeface("Segoe UI"),
                 12,
                 Brushes.Lime,
-                1.25);
+                dpi.PixelsPerDip);
 
             dc.DrawText(ft, new System.Windows.Point(rect.X, rect.Y - 16));
             dc.Pop();
