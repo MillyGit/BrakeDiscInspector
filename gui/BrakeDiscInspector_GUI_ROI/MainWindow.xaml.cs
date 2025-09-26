@@ -98,7 +98,7 @@ namespace BrakeDiscInspector_GUI_ROI
         private const double LabelOffsetX = 10;   // desplazamiento a la derecha de la cruz
         private const double LabelOffsetY = -20;  // desplazamiento hacia arriba de la cruz
 
-        private ROI CurrentRoi = new ROI { X = 200, Y = 150, Width = 100, Height = 80, AngleDeg = 0, Legend = "M1" };
+        private ROI CurrentRoi = new ROI { X = 200, Y = 150, Width = 100, Height = 80, AngleDeg = 0, Legend = string.Empty };
         private Mat? bgrFrame; // tu frame actual
         private bool UseAnnulus = false;
 
@@ -632,6 +632,8 @@ namespace BrakeDiscInspector_GUI_ROI
             if (activeRole.HasValue)
             {
                 canvasDraft.Role = activeRole.Value;
+                if (pixelDraft != null)
+                    pixelDraft.Role = activeRole.Value;
                 if (_tmpBuffer != null)
                     _tmpBuffer.Role = activeRole.Value;
             }
@@ -2920,11 +2922,11 @@ namespace BrakeDiscInspector_GUI_ROI
 
             return roiModel.Role switch
             {
-                RoiRole.Master1Pattern => "M1 Patrón",
-                RoiRole.Master1Search => "M1 Búsqueda",
-                RoiRole.Master2Pattern => "M2 Patrón",
-                RoiRole.Master2Search => "M2 Búsqueda",
-                RoiRole.Inspection => "Inspección",
+                RoiRole.Master1Pattern => "ROI Master 1",
+                RoiRole.Master1Search => "ROI Master 1 Inspección",
+                RoiRole.Master2Pattern => "ROI Master 2",
+                RoiRole.Master2Search => "ROI Master 2 Inspección",
+                RoiRole.Inspection => "ROI Inspección",
                 _ => null
             };
         }

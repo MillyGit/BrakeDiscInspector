@@ -7,7 +7,7 @@
         public double Width { get; set; }
         public double Height { get; set; }
         public double AngleDeg { get; set; } = 0.0;
-        public string Legend { get; set; } = "M1";
+        public string Legend { get; set; } = string.Empty;
 
         public void EnforceMinSize(double minW = 10, double minH = 10)
         {
