@@ -274,6 +274,7 @@ namespace BrakeDiscInspector_GUI_ROI
                     if (_layout.Inspection != null)
                     {
                         _layout.Inspection = null;
+                        SetInspectionBaseline(null);
                         return true;
                     }
                     break;
@@ -282,6 +283,7 @@ namespace BrakeDiscInspector_GUI_ROI
                     if (_layout.Inspection != null)
                     {
                         _layout.Inspection = null;
+                        SetInspectionBaseline(null);
                         _state = MasterState.DrawInspection;
                         return true;
                     }
@@ -1028,6 +1030,7 @@ namespace BrakeDiscInspector_GUI_ROI
                     _tmpBuffer.Role = savedRole.Value;
 
                     _layout.Inspection = _tmpBuffer.Clone();
+                    SetInspectionBaseline(_layout.Inspection);
                     savedRoi = _layout.Inspection;
                     SyncCurrentRoiFromInspection(_layout.Inspection);
 
@@ -1450,103 +1453,38 @@ namespace BrakeDiscInspector_GUI_ROI
             if (insp == null)
                 return;
 
-            var original = insp.Clone();
-            bool transformed = false;
+            var baseline = GetInspectionBaselineClone() ?? insp.Clone();
 
-            if (_layout?.Master1Pattern is RoiModel savedM1 && _layout?.Master2Pattern is RoiModel savedM2)
-            {
-                var savedM1Center = GetRoiCenter(savedM1);
-                var savedM2Center = GetRoiCenter(savedM2);
-                var originalCenter = GetRoiCenter(original);
-
-                double dxOld = savedM2Center.X - savedM1Center.X;
-                double dyOld = savedM2Center.Y - savedM1Center.Y;
-                double dxNew = master2.X - master1.X;
-                double dyNew = master2.Y - master1.Y;
-
-                double lenOld = Math.Sqrt(dxOld * dxOld + dyOld * dyOld);
-                double lenNew = Math.Sqrt(dxNew * dxNew + dyNew * dyNew);
-
-                if (lenOld > 1e-6 && lenNew > 0)
-                {
-                    double scale = lenNew / lenOld;
-                    double angleOld = Math.Atan2(dyOld, dxOld);
-                    double angleNew = Math.Atan2(dyNew, dxNew);
-                    double angleDelta = angleNew - angleOld;
-                    double cos = Math.Cos(angleDelta);
-                    double sin = Math.Sin(angleDelta);
-
-                    double relX = originalCenter.X - savedM1Center.X;
-                    double relY = originalCenter.Y - savedM1Center.Y;
-
-                    double rotatedX = scale * (cos * relX - sin * relY);
-                    double rotatedY = scale * (sin * relX + cos * relY);
-
-                    double newCx = master1.X + rotatedX;
-                    double newCy = master1.Y + rotatedY;
-
-                    switch (insp.Shape)
-                    {
-                        case RoiShape.Rectangle:
-                            insp.X = newCx;
-                            insp.Y = newCy;
-                            insp.Width = Math.Max(1, original.Width * scale);
-                            insp.Height = Math.Max(1, original.Height * scale);
-                            insp.AngleDeg = original.AngleDeg + angleDelta * 180.0 / Math.PI;
-                            break;
-                        case RoiShape.Circle:
-                            insp.CX = newCx;
-                            insp.CY = newCy;
-                            insp.R = Math.Max(1, original.R * scale);
-                            break;
-                        case RoiShape.Annulus:
-                            insp.CX = newCx;
-                            insp.CY = newCy;
-                            insp.R = Math.Max(1, original.R * scale);
-                            insp.RInner = Math.Max(0, original.RInner * scale);
-                            if (insp.RInner >= insp.R)
-                                insp.RInner = Math.Max(0, insp.R - 1);
-                            break;
-                    }
-
-                    transformed = true;
-                }
-            }
-
-            if (!transformed)
-            {
-                var mid = new WPoint((master1.X + master2.X) / 2.0, (master1.Y + master2.Y) / 2.0);
-
-                switch (insp.Shape)
-                {
-                    case RoiShape.Rectangle:
-                        insp.X = mid.X;
-                        insp.Y = mid.Y;
-                        insp.Width = original.Width;
-                        insp.Height = original.Height;
-                        insp.AngleDeg = original.AngleDeg;
-                        break;
-                    case RoiShape.Circle:
-                        insp.CX = mid.X;
-                        insp.CY = mid.Y;
-                        insp.R = original.R;
-                        break;
-                    case RoiShape.Annulus:
-                        insp.CX = mid.X;
-                        insp.CY = mid.Y;
-                        insp.R = original.R;
-                        insp.RInner = original.RInner;
-                        break;
-                }
-            }
+            InspectionAlignmentHelper.MoveInspectionTo(
+                insp,
+                baseline,
+                _layout?.Master1Pattern,
+                _layout?.Master2Pattern,
+                master1,
+                master2);
 
             SyncCurrentRoiFromInspection(insp);
         }
 
-        private static WPoint GetRoiCenter(RoiModel roi)
+        private RoiModel? GetInspectionBaselineClone()
         {
-            var (cx, cy) = roi.GetCenter();
-            return new WPoint(cx, cy);
+            return _layout?.InspectionBaseline?.Clone();
+        }
+
+        private void SetInspectionBaseline(RoiModel? source)
+        {
+            if (_layout == null)
+                return;
+
+            _layout.InspectionBaseline = source?.Clone();
+        }
+
+        private void EnsureInspectionBaselineInitialized()
+        {
+            if (_layout?.InspectionBaseline == null && _layout?.Inspection != null)
+            {
+                SetInspectionBaseline(_layout.Inspection);
+            }
         }
 
         private void ClipInspectionROI(RoiModel insp, int imgW, int imgH)
@@ -1730,6 +1668,7 @@ namespace BrakeDiscInspector_GUI_ROI
             _preset = PresetManager.Load(o.FileName);
             ApplyPresetToUI(_preset);
             _layout = MasterLayoutManager.LoadOrNew(_preset);
+            EnsureInspectionBaselineInitialized();
             ResetAnalysisMarks();
             UpdateWizardState();
             Snack("Preset cargado.");
@@ -1744,6 +1683,7 @@ namespace BrakeDiscInspector_GUI_ROI
         private void BtnLoadLayout_Click(object sender, RoutedEventArgs e)
         {
             _layout = MasterLayoutManager.LoadOrNew(_preset);
+            EnsureInspectionBaselineInitialized();
             ResetAnalysisMarks();
             Snack("Layout cargado.");
             UpdateWizardState();
@@ -1865,6 +1805,10 @@ namespace BrakeDiscInspector_GUI_ROI
                     break;
                 case RoiRole.Inspection:
                     _layout.Inspection = clone;
+                    if (!_analysisViewActive)
+                    {
+                        SetInspectionBaseline(clone);
+                    }
                     SyncCurrentRoiFromInspection(clone);
                     break;
             }
