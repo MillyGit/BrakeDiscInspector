@@ -483,14 +483,17 @@ namespace BrakeDiscInspector_GUI_ROI
             else
             {
                 var dx = p1.X - p0.X; var dy = p1.Y - p0.Y;
-                var r = Math.Sqrt(dx * dx + dy * dy) / 2.0;
-                var cx = (p0.X + p1.X) / 2.0; var cy = (p0.Y + p1.Y) / 2.0;
-                Canvas.SetLeft(_previewShape, cx - r); Canvas.SetTop(_previewShape, cy - r);
-                _previewShape.Width = 2 * r; _previewShape.Height = 2 * r;
+                var diameter = Math.Max(Math.Abs(dx), Math.Abs(dy));
+                var left = dx >= 0 ? p0.X : p0.X - diameter;
+                var top = dy >= 0 ? p0.Y : p0.Y - diameter;
+                var radius = diameter / 2.0;
+
+                Canvas.SetLeft(_previewShape, left); Canvas.SetTop(_previewShape, top);
+                _previewShape.Width = diameter; _previewShape.Height = diameter;
 
                 if (shape == RoiShape.Annulus && _previewShape is AnnulusShape annulus)
                 {
-                    annulus.InnerRadius = Math.Max(0, r * 0.6);
+                    annulus.InnerRadius = Math.Max(0, radius * 0.6);
                 }
             }
         }
