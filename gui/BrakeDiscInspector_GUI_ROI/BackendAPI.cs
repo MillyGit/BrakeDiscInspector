@@ -283,8 +283,8 @@ namespace BrakeDiscInspector_GUI_ROI
                     break;
                 case RoiShape.Rectangle:
                 default:
-                    sx = roi.X;
-                    sy = roi.Y;
+                    sx = roi.Left;
+                    sy = roi.Top;
                     sw = roi.Width;
                     sh = roi.Height;
                     break;

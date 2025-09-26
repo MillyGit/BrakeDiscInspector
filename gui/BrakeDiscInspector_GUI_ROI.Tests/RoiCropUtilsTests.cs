@@ -29,11 +29,11 @@ public class RoiCropUtilsTests
         var roi = new RoiModel
         {
             Shape = RoiShape.Rectangle,
-            X = left,
-            Y = top,
             Width = width,
             Height = height
         };
+        roi.Left = left;
+        roi.Top = top;
 
         Assert.True(RoiCropUtils.TryBuildRoiCropInfo(roi, out var info));
         Assert.Equal(left, info.Left);
@@ -66,11 +66,11 @@ public class RoiCropUtilsTests
         var roi = new RoiModel
         {
             Shape = RoiShape.Rectangle,
-            X = left,
-            Y = top,
             Width = width,
             Height = height
         };
+        roi.Left = left;
+        roi.Top = top;
 
         Assert.True(RoiCropUtils.TryBuildRoiCropInfo(roi, out var info));
         Assert.True(RoiCropUtils.TryGetRotatedCrop(source, info, angleDeg, out var crop, out var cropRect));
