@@ -2761,6 +2761,7 @@ namespace BrakeDiscInspector_GUI_ROI
                 tbExisting.Text = labelText;
             }
 
+            element.Visibility = Visibility.Visible;
             Panel.SetZIndex(element, Panel.GetZIndex(shape) + 1);
             PositionLabelElement(element, shape, canvasModel);
         }
@@ -2861,6 +2862,7 @@ namespace BrakeDiscInspector_GUI_ROI
                 RoiRole.Master1Search => "M1 Búsqueda",
                 RoiRole.Master2Pattern => "M2 Patrón",
                 RoiRole.Master2Search => "M2 Búsqueda",
+                RoiRole.Inspection => "Inspección",
                 _ => null
             };
         }
