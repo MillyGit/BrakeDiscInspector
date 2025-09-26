@@ -56,6 +56,48 @@ public class RoiCropUtilsTests
         Assert.Equal(0, Cv2.CountNonZero(diff));
     }
 
+    [Theory]
+    [InlineData(20, 30, 40, 30, 27.5)]
+    [InlineData(15.2, 18.8, 55.5, 32.1, -42)]
+    public void TryGetRotatedCrop_RecentersAroundTransformedRoi(double left, double top, double width, double height, double angleDeg)
+    {
+        using var source = new Mat(new Size(200, 180), MatType.CV_8UC1, Scalar.All(0));
+
+        var roi = new RoiModel
+        {
+            Shape = RoiShape.Rectangle,
+            X = left,
+            Y = top,
+            Width = width,
+            Height = height
+        };
+
+        Assert.True(RoiCropUtils.TryBuildRoiCropInfo(roi, out var info));
+        Assert.True(RoiCropUtils.TryGetRotatedCrop(source, info, angleDeg, out var crop, out var cropRect));
+        using var _ = crop;
+
+        var pivot = new Point2f((float)info.PivotX, (float)info.PivotY);
+        using var rotation = Cv2.GetRotationMatrix2D(pivot, -angleDeg, 1.0);
+
+        static Point2f Apply(Mat matrix, Point2f p)
+        {
+            float x = (float)(matrix.Get<double>(0, 0) * p.X + matrix.Get<double>(0, 1) * p.Y + matrix.Get<double>(0, 2));
+            float y = (float)(matrix.Get<double>(1, 0) * p.X + matrix.Get<double>(1, 1) * p.Y + matrix.Get<double>(1, 2));
+            return new Point2f(x, y);
+        }
+
+        var roiCenter = new Point2f((float)(info.Left + info.Width * 0.5), (float)(info.Top + info.Height * 0.5));
+        var transformedCenter = Apply(rotation, roiCenter);
+
+        var cropCenter = new Point2d(cropRect.X + cropRect.Width / 2.0, cropRect.Y + cropRect.Height / 2.0);
+
+        double deltaX = Math.Abs(cropCenter.X - transformedCenter.X);
+        double deltaY = Math.Abs(cropCenter.Y - transformedCenter.Y);
+
+        Assert.InRange(deltaX, 0, 0.51);
+        Assert.InRange(deltaY, 0, 0.51);
+    }
+
     private static Rect BuildCropRect(RoiCropInfo info, Size sourceSize)
     {
         int x = (int)Math.Floor(info.Left);
