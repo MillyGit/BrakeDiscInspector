@@ -631,19 +631,28 @@ namespace BrakeDiscInspector_GUI_ROI
             }
 
             var pixelDraft = CanvasToImage(canvasDraft);
+            var activeRole = GetCurrentStateRole();
             _tmpBuffer = pixelDraft;
+            if (activeRole.HasValue)
+            {
+                canvasDraft.Role = activeRole.Value;
+                if (_tmpBuffer != null)
+                    _tmpBuffer.Role = activeRole.Value;
+            }
             AppendLog($"[draw] ROI draft = {DescribeRoi(_tmpBuffer)}");
 
             _previewShape.Tag = canvasDraft;
             ApplyRoiRotationToShape(_previewShape, canvasDraft.AngleDeg);
             if (_state == MasterState.DrawInspection)
             {
-                canvasDraft.Role = RoiRole.Inspection;
                 if (_tmpBuffer != null)
                 {
-                    _tmpBuffer.Role = RoiRole.Inspection;
                     SyncCurrentRoiFromInspection(_tmpBuffer);
                 }
+            }
+            else if (pixelDraft != null)
+            {
+                UpdateOverlayFromPixelModel(pixelDraft);
             }
             _previewShape.IsHitTestVisible = true; // el adorner coge los clics
             _previewShape.StrokeDashArray = new DoubleCollection { 4, 4 };
