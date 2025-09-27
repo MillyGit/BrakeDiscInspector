@@ -511,64 +511,78 @@ namespace BrakeDiscInspector_GUI_ROI
             return shouldLog;
         }
 
-        private void UpdateDraw(RoiShape shape, WPoint p0, WPoint p1)
+        private void UpdateDraw(RoiShape shape, System.Windows.Point p0, System.Windows.Point p1)
         {
             if (_previewShape == null) return;
+
             if (shape == RoiShape.Rectangle)
             {
-                var x = Math.Min(p0.X, p1.X); var y = Math.Min(p0.Y, p1.Y);
-                var w = Math.Abs(p1.X - p0.X); var h = Math.Abs(p1.Y - p0.Y);
-                Canvas.SetLeft(_previewShape, x); Canvas.SetTop(_previewShape, y);
-                _previewShape.Width = w; _previewShape.Height = h;
+                var x = Math.Min(p0.X, p1.X);
+                var y = Math.Min(p0.Y, p1.Y);
+                var w = Math.Abs(p1.X - p0.X);
+                var h = Math.Abs(p1.Y - p0.Y);
+
+                Canvas.SetLeft(_previewShape, x);
+                Canvas.SetTop(_previewShape, y);
+                _previewShape.Width = w;
+                _previewShape.Height = h;
+                return;
             }
-            else
+
+            // === Círculo / Annulus ===
+            // Mantén el mismo sistema de coordenadas que el modelo/adorners:
+            // usa radio = max(|dx|, |dy|) (norma L∞), no la distancia euclídea.
+            var dx = p1.X - p0.X;
+            var dy = p1.Y - p0.Y;
+
+            double radius = Math.Max(Math.Abs(dx), Math.Abs(dy));
+
+            // Evita que el preview se "vaya" fuera del canvas mientras dibujas
+            radius = ClampRadiusToCanvasBounds(p0, radius);
+
+            var diameter = radius * 2.0;
+            var left = p0.X - radius;
+            var top = p0.Y - radius;
+
+            Canvas.SetLeft(_previewShape, left);
+            Canvas.SetTop(_previewShape, top);
+            _previewShape.Width = diameter;
+            _previewShape.Height = diameter;
+
+            if (shape == RoiShape.Annulus && _previewShape is AnnulusShape annulus)
             {
-                var dx = p1.X - p0.X; var dy = p1.Y - p0.Y;
-                var radius = Math.Sqrt(dx * dx + dy * dy);
-                var left = p0.X - radius;
-                var top = p0.Y - radius;
-                var diameter = radius * 2.0;
+                // Outer radius = radius (canvas)
+                var outer = radius;
+                if (ShouldLogAnnulusValue(ref _lastLoggedAnnulusOuterRadius, outer))
+                    AppendLog($"[annulus] outer radius preview={outer:0.##} px");
 
-                Canvas.SetLeft(_previewShape, left); Canvas.SetTop(_previewShape, top);
-                _previewShape.Width = diameter; _previewShape.Height = diameter;
+                // Conserva proporción si el usuario ya la ha cambiado; si no, usa el default & clamp.
+                double proposedInner = annulus.InnerRadius;
+                double resolvedInner = AnnulusDefaults.ResolveInnerRadius(proposedInner, outer);
+                double finalInner = AnnulusDefaults.ClampInnerRadius(resolvedInner, outer);
 
-                if (shape == RoiShape.Annulus && _previewShape is AnnulusShape annulus)
-                {
-                    var outerRadius = Math.Max(0.0, diameter / 2.0);
-                    if (ShouldLogAnnulusValue(ref _lastLoggedAnnulusOuterRadius, outerRadius))
-                    {
-                        AppendLog($"[annulus] outer radius preview={outerRadius:0.##} px");
-                    }
+                if (ShouldLogAnnulusInner(proposedInner, finalInner))
+                    AppendLog($"[annulus] outer={outer:0.##} px, proposed inner={proposedInner:0.##} px -> final inner={finalInner:0.##} px");
 
-                    double proposedInner;
-                    double resolvedInner;
-
-                    if (outerRadius == 0.0)
-                    {
-                        if (!_annulusResetLogged)
-                        {
-                            AppendLog("[annulus] outer radius reached 0 → resetting inner radius");
-                            _annulusResetLogged = true;
-                        }
-
-                        proposedInner = 0.0;
-                        resolvedInner = 0.0;
-                        annulus.InnerRadius = resolvedInner;
-                    }
-                    else
-                    {
-                        _annulusResetLogged = false;
-                        proposedInner = outerRadius * AnnulusDefaults.DefaultInnerRadiusRatio;
-                        resolvedInner = AnnulusDefaults.ResolveInnerRadius(proposedInner, outerRadius);
-                        annulus.InnerRadius = resolvedInner;
-                    }
-
-                    if (ShouldLogAnnulusInner(proposedInner, resolvedInner))
-                    {
-                        AppendLog($"[annulus] outer={outerRadius:0.##} px, proposed inner={proposedInner:0.##} px -> final inner={resolvedInner:0.##} px");
-                    }
-                }
+                annulus.InnerRadius = finalInner;
             }
+        }
+
+        private double ClampRadiusToCanvasBounds(System.Windows.Point center, double desiredRadius)
+        {
+            if (CanvasROI == null) return desiredRadius;
+
+            double cw = CanvasROI.ActualWidth;
+            double ch = CanvasROI.ActualHeight;
+            if (cw <= 0 || ch <= 0) return desiredRadius;
+
+            double maxLeft = center.X;
+            double maxRight = cw - center.X;
+            double maxUp = center.Y;
+            double maxDown = ch - center.Y;
+
+            double maxRadius = Math.Max(0.0, Math.Min(Math.Min(maxLeft, maxRight), Math.Min(maxUp, maxDown)));
+            return Math.Min(desiredRadius, maxRadius);
         }
 
         private void HookCanvasInput()
