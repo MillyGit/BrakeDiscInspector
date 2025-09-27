@@ -195,6 +195,8 @@ namespace BrakeDiscInspector_GUI_ROI
                 return applyManualRotation ? RotatePointAroundPivot(local, pivotLocal, angleRad) : local;
             }
 
+            bool isAnnulus = roi?.Shape == RoiShape.Annulus;
+
             Point[] cornerPositions = new Point[4];
             cornerPositions[0] = TransformPoint(GetCornerLocalPoint(Corner.NW, w, h));
             cornerPositions[1] = TransformPoint(GetCornerLocalPoint(Corner.NE, w, h));
@@ -207,19 +209,33 @@ namespace BrakeDiscInspector_GUI_ROI
                 _corners[i].Arrange(new Rect(corner.X - r, corner.Y - r, 2 * r, 2 * r));
             }
 
-            Point[] edgePositions = new Point[4];
-            edgePositions[0] = MidPoint(cornerPositions[0], cornerPositions[1]);
-            edgePositions[1] = MidPoint(cornerPositions[1], cornerPositions[2]);
-            edgePositions[2] = MidPoint(cornerPositions[2], cornerPositions[3]);
-            edgePositions[3] = MidPoint(cornerPositions[3], cornerPositions[0]);
-
-            for (int i = 0; i < _edges.Length; i++)
+            if (isAnnulus)
             {
-                Point edge = edgePositions[i];
-                _edges[i].Arrange(new Rect(edge.X - r, edge.Y - r, 2 * r, 2 * r));
+                for (int i = 0; i < _edges.Length; i++)
+                {
+                    _edges[i].Visibility = Visibility.Collapsed;
+                    _edges[i].IsHitTestVisible = false;
+                    _edges[i].Arrange(new Rect(0, 0, 0, 0));
+                }
+            }
+            else
+            {
+                Point[] edgePositions = new Point[4];
+                edgePositions[0] = MidPoint(cornerPositions[0], cornerPositions[1]);
+                edgePositions[1] = MidPoint(cornerPositions[1], cornerPositions[2]);
+                edgePositions[2] = MidPoint(cornerPositions[2], cornerPositions[3]);
+                edgePositions[3] = MidPoint(cornerPositions[3], cornerPositions[0]);
+
+                for (int i = 0; i < _edges.Length; i++)
+                {
+                    Point edge = edgePositions[i];
+                    _edges[i].Visibility = Visibility.Visible;
+                    _edges[i].IsHitTestVisible = true;
+                    _edges[i].Arrange(new Rect(edge.X - r, edge.Y - r, 2 * r, 2 * r));
+                }
             }
 
-            if (roi != null && roi.Shape == RoiShape.Annulus)
+            if (isAnnulus && roi != null)
             {
                 double handleRadius = ResolveInnerRadiusForLayout(roi, _shape as AnnulusShape, w, h);
                 Point handleLocal = new Point(w / 2.0 + handleRadius, h / 2.0);
@@ -333,7 +349,7 @@ namespace BrakeDiscInspector_GUI_ROI
         private void ResizeByEdge(double dragDx, double dragDy, Edge edge)
         {
             var roi = _shape.Tag as RoiModel;
-            if (roi == null) return;
+            if (roi == null || roi.Shape == RoiShape.Annulus) return;
 
             double x = Canvas.GetLeft(_shape); if (double.IsNaN(x)) x = 0;
             double y = Canvas.GetTop(_shape); if (double.IsNaN(y)) y = 0;
