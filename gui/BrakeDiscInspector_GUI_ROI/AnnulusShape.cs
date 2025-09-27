@@ -23,8 +23,27 @@ namespace BrakeDiscInspector_GUI_ROI
         {
             get
             {
-                double width = RenderSize.Width;
-                double height = RenderSize.Height;
+                double width = Width;
+                if (double.IsNaN(width) || width <= 0)
+                {
+                    width = ActualWidth;
+                }
+
+                if (double.IsNaN(width) || width <= 0)
+                {
+                    width = RenderSize.Width;
+                }
+
+                double height = Height;
+                if (double.IsNaN(height) || height <= 0)
+                {
+                    height = ActualHeight;
+                }
+
+                if (double.IsNaN(height) || height <= 0)
+                {
+                    height = RenderSize.Height;
+                }
 
                 if (double.IsNaN(width) || double.IsNaN(height) || width <= 0 || height <= 0)
                 {
