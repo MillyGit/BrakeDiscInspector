@@ -388,21 +388,24 @@ namespace BrakeDiscInspector_GUI_ROI
             double angleRad = GetCurrentAngle() * Math.PI / 180.0;
             Vector deltaLocal = RotateVector(new Vector(e.HorizontalChange, e.VerticalChange), -angleRad);
 
-            double maxInner = Math.Min(width, height) / 2.0;
-            if (double.IsNaN(maxInner) || maxInner <= 0)
+            double available = Math.Min(width, height) / 2.0;
+            if (double.IsNaN(available) || available <= 0)
             {
-                maxInner = roi.R > 0 ? roi.R : 0;
+                available = 0;
             }
 
-            double currentInner = roi.RInner;
-            if (currentInner <= 0)
-            {
-                double baseRadius = roi.R > 0 ? roi.R : maxInner;
-                currentInner = baseRadius > 0 ? baseRadius * 0.6 : 0;
-            }
+            double outerRadius = roi.R > 0 ? roi.R : available;
+            if (outerRadius <= 0)
+                outerRadius = available;
+
+            double currentInner = roi.RInner > 0
+                ? AnnulusDefaults.ClampInnerRadius(roi.RInner, outerRadius)
+                : AnnulusDefaults.ResolveInnerRadius(roi.RInner, outerRadius);
 
             double newInner = currentInner + deltaLocal.X;
-            newInner = Math.Max(0, Math.Min(newInner, maxInner));
+            newInner = AnnulusDefaults.ClampInnerRadius(newInner, outerRadius);
+            if (available > 0)
+                newInner = Math.Min(newInner, available);
 
             if (_shape is AnnulusShape annulus)
             {
@@ -688,21 +691,26 @@ namespace BrakeDiscInspector_GUI_ROI
             if (double.IsNaN(available) || available <= 0)
                 return 0;
 
-            double inner = annulus?.InnerRadius ?? roi.RInner;
-            if (inner <= 0)
-            {
-                double outer = roi.R > 0 ? roi.R : available;
-                inner = outer * 0.6;
-            }
+            double outer = roi.R > 0 ? roi.R : available;
+            if (outer <= 0)
+                outer = available;
 
-            inner = Math.Max(0, Math.Min(inner, available));
+            double currentInner = annulus?.InnerRadius ?? roi.RInner;
+            double resolved = currentInner > 0
+                ? AnnulusDefaults.ClampInnerRadius(currentInner, outer)
+                : AnnulusDefaults.ResolveInnerRadius(currentInner, outer);
+
+            if (available > 0)
+                resolved = Math.Min(resolved, available);
+
+            roi.RInner = resolved;
 
             if (annulus != null)
             {
-                annulus.InnerRadius = inner;
+                annulus.InnerRadius = resolved;
             }
 
-            return inner;
+            return resolved;
         }
 
         private static (Corner a, Corner b) GetEdgeAnchorCorners(Edge edge)

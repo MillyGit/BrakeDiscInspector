@@ -34,10 +34,24 @@ namespace BrakeDiscInspector_GUI_ROI
             double sx = canvasWidth / bmp.PixelWidth;
             double sy = canvasHeight / bmp.PixelHeight;
 
-            double cx = Roi.X * sx;
-            double cy = Roi.Y * sy;
-            double w = Roi.Width * sx;
-            double h = Roi.Height * sy;
+            double centerImageX = Roi.Shape == RoiShape.Rectangle ? Roi.X : Roi.CX;
+            double centerImageY = Roi.Shape == RoiShape.Rectangle ? Roi.Y : Roi.CY;
+
+            double widthPx = Roi.Width;
+            double heightPx = Roi.Height;
+
+            if (Roi.Shape == RoiShape.Circle || Roi.Shape == RoiShape.Annulus)
+            {
+                double radius = Roi.R > 0 ? Roi.R : Math.Max(Roi.Width, Roi.Height) / 2.0;
+                double diameter = radius * 2.0;
+                widthPx = diameter;
+                heightPx = diameter;
+            }
+
+            double cx = centerImageX * sx;
+            double cy = centerImageY * sy;
+            double w = widthPx * sx;
+            double h = heightPx * sy;
 
             var rect = new System.Windows.Rect(cx - w / 2, cy - h / 2, w, h);
             var rotate = new RotateTransform(Roi.AngleDeg, cx, cy);
@@ -55,19 +69,43 @@ namespace BrakeDiscInspector_GUI_ROI
                     break;
                 case RoiShape.Annulus:
                     {
-                        double outerRadiusX = w / 2.0;
-                        double outerRadiusY = h / 2.0;
-                        double innerRadiusX = Roi.RInner > 0 ? Roi.RInner * sx : outerRadiusX * 0.6;
-                        double innerRadiusY = Roi.RInner > 0 ? Roi.RInner * sy : outerRadiusY * 0.6;
+                        double outerRadius = Roi.R > 0 ? Roi.R : Math.Max(Roi.Width, Roi.Height) / 2.0;
+                        if (outerRadius <= 0)
+                            outerRadius = Math.Max(Roi.Width, Roi.Height) / 2.0;
 
-                        innerRadiusX = Math.Max(0, Math.Min(innerRadiusX, outerRadiusX));
-                        innerRadiusY = Math.Max(0, Math.Min(innerRadiusY, outerRadiusY));
+                        double outerRadiusX = outerRadius * sx;
+                        double outerRadiusY = outerRadius * sy;
 
-                        dc.DrawEllipse(null, pen, new System.Windows.Point(cx, cy), outerRadiusX, outerRadiusY);
-                        if (innerRadiusX > 0 && innerRadiusY > 0)
+                        double innerCandidate = Roi.RInner;
+                        double innerRadius = innerCandidate > 0
+                            ? AnnulusDefaults.ClampInnerRadius(innerCandidate, outerRadius)
+                            : AnnulusDefaults.ResolveInnerRadius(innerCandidate, outerRadius);
+
+                        double innerRadiusX = innerRadius * sx;
+                        double innerRadiusY = innerRadius * sy;
+
+                        var center = new System.Windows.Point(cx, cy);
+                        var geometry = new StreamGeometry { FillRule = FillRule.EvenOdd };
+                        using (var ctx = geometry.Open())
                         {
-                            dc.DrawEllipse(null, pen, new System.Windows.Point(cx, cy), innerRadiusX, innerRadiusY);
+                            ctx.BeginFigure(new System.Windows.Point(center.X + outerRadiusX, center.Y), false, false);
+                            ctx.ArcTo(new System.Windows.Point(center.X - outerRadiusX, center.Y), new Size(outerRadiusX, outerRadiusY), 0,
+                                false, SweepDirection.Clockwise, true, false);
+                            ctx.ArcTo(new System.Windows.Point(center.X + outerRadiusX, center.Y), new Size(outerRadiusX, outerRadiusY), 0,
+                                false, SweepDirection.Clockwise, true, false);
+
+                            if (innerRadius > 0)
+                            {
+                                ctx.BeginFigure(new System.Windows.Point(center.X + innerRadiusX, center.Y), false, false);
+                                ctx.ArcTo(new System.Windows.Point(center.X - innerRadiusX, center.Y), new Size(innerRadiusX, innerRadiusY), 0,
+                                    false, SweepDirection.Counterclockwise, true, false);
+                                ctx.ArcTo(new System.Windows.Point(center.X + innerRadiusX, center.Y), new Size(innerRadiusX, innerRadiusY), 0,
+                                    false, SweepDirection.Counterclockwise, true, false);
+                            }
                         }
+
+                        geometry.Freeze();
+                        dc.DrawGeometry(null, pen, geometry);
                         break;
                     }
                 default:

@@ -12,8 +12,18 @@ namespace BrakeDiscInspector_GUI_ROI
         public string Legend { get; set; } = string.Empty;
 
         public RoiShape Shape { get; set; } = RoiShape.Rectangle;
+        public double CX { get; set; }
+        public double CY { get; set; }
         public double R { get; set; }
         public double RInner { get; set; }
+
+        public void SetCenter(double cx, double cy)
+        {
+            X = cx;
+            Y = cy;
+            CX = cx;
+            CY = cy;
+        }
 
         public void EnforceMinSize(double minW = 10, double minH = 10)
         {
@@ -35,6 +45,8 @@ namespace BrakeDiscInspector_GUI_ROI
                 R = diameter / 2.0;
                 Width = diameter;
                 Height = diameter;
+                CX = X;
+                CY = Y;
 
                 if (Shape == RoiShape.Annulus)
                 {
@@ -51,6 +63,9 @@ namespace BrakeDiscInspector_GUI_ROI
                 R = 0;
                 RInner = 0;
             }
+
+            CX = X;
+            CY = Y;
         }
     }
 }
