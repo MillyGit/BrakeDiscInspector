@@ -484,10 +484,10 @@ namespace BrakeDiscInspector_GUI_ROI
             else
             {
                 var dx = p1.X - p0.X; var dy = p1.Y - p0.Y;
-                var diameter = Math.Max(Math.Abs(dx), Math.Abs(dy));
-                var left = dx >= 0 ? p0.X : p0.X - diameter;
-                var top = dy >= 0 ? p0.Y : p0.Y - diameter;
-                var radius = diameter / 2.0;
+                var radius = Math.Sqrt(dx * dx + dy * dy);
+                var left = p0.X - radius;
+                var top = p0.Y - radius;
+                var diameter = radius * 2.0;
 
                 Canvas.SetLeft(_previewShape, left); Canvas.SetTop(_previewShape, top);
                 _previewShape.Width = diameter; _previewShape.Height = diameter;
