@@ -50,30 +50,45 @@ namespace BrakeDiscInspector_GUI_ROI
                     return Geometry.Empty;
                 }
 
-                double outerRadius = Math.Min(width, height) / 2.0;
+                double strokeThickness = StrokeThickness;
+                double strokeOffset = strokeThickness / 2.0;
+                double minDimension = Math.Min(width, height);
+                double outerRadius = Math.Max(0.0, minDimension - strokeThickness) / 2.0;
                 if (outerRadius <= 0)
+                {
                     return Geometry.Empty;
+                }
 
-                double inner = Math.Max(0.0, Math.Min(InnerRadius, outerRadius));
-                var center = new Point(width / 2.0, height / 2.0);
+                double horizontalOffset = (width - minDimension) / 2.0 + strokeOffset;
+                double verticalOffset = (height - minDimension) / 2.0 + strokeOffset;
+                var center = new Point(horizontalOffset + outerRadius, verticalOffset + outerRadius);
+
+                double maxInnerRadius = Math.Max(0.0, outerRadius - strokeOffset);
+                double inner = Math.Max(0.0, Math.Min(InnerRadius, maxInnerRadius));
 
                 var geometry = new StreamGeometry { FillRule = FillRule.EvenOdd };
                 using (var ctx = geometry.Open())
                 {
                     // Outer circumference (clockwise)
-                    ctx.BeginFigure(new Point(center.X + outerRadius, center.Y), true, true);
-                    ctx.ArcTo(new Point(center.X - outerRadius, center.Y), new Size(outerRadius, outerRadius), 0, false,
+                    Point rightOuter = new Point(center.X + outerRadius, center.Y);
+                    Point leftOuter = new Point(center.X - outerRadius, center.Y);
+
+                    ctx.BeginFigure(rightOuter, true, true);
+                    ctx.ArcTo(leftOuter, new Size(outerRadius, outerRadius), 0, false,
                         SweepDirection.Clockwise, true, false);
-                    ctx.ArcTo(new Point(center.X + outerRadius, center.Y), new Size(outerRadius, outerRadius), 0, false,
+                    ctx.ArcTo(rightOuter, new Size(outerRadius, outerRadius), 0, false,
                         SweepDirection.Clockwise, true, false);
 
                     if (inner > 0)
                     {
                         // Inner circumference (counterclockwise to carve the hole)
-                        ctx.BeginFigure(new Point(center.X + inner, center.Y), true, true);
-                        ctx.ArcTo(new Point(center.X - inner, center.Y), new Size(inner, inner), 0, false,
+                        Point rightInner = new Point(center.X + inner, center.Y);
+                        Point leftInner = new Point(center.X - inner, center.Y);
+
+                        ctx.BeginFigure(rightInner, true, true);
+                        ctx.ArcTo(leftInner, new Size(inner, inner), 0, false,
                             SweepDirection.Counterclockwise, true, false);
-                        ctx.ArcTo(new Point(center.X + inner, center.Y), new Size(inner, inner), 0, false,
+                        ctx.ArcTo(rightInner, new Size(inner, inner), 0, false,
                             SweepDirection.Counterclockwise, true, false);
                     }
                 }
