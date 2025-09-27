@@ -150,7 +150,6 @@ namespace BrakeDiscInspector_GUI_ROI
             ComboMasterRoiShape.Items.Clear();
             ComboMasterRoiShape.Items.Add("Rectángulo");
             ComboMasterRoiShape.Items.Add("Círculo");
-            ComboMasterRoiShape.Items.Add("Annulus");
             ComboMasterRoiShape.SelectedIndex = 0;
 
 

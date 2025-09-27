@@ -54,7 +54,6 @@
                         <ComboBox x:Name="ComboMasterRoiShape" Margin="0,4,0,8">
                             <ComboBoxItem Content="Rectángulo"/>
                             <ComboBoxItem Content="Círculo"/>
-                            <ComboBoxItem Content="Annulus"/>
                         </ComboBox>
                         <WrapPanel>
                             <Button x:Name="BtnSaveMaster" Content="Save Master 1" Click="BtnSaveMaster_Click" Margin="0,0,8,0"/>
