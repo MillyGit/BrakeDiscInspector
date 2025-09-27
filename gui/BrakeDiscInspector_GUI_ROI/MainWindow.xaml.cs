@@ -73,6 +73,12 @@ namespace BrakeDiscInspector_GUI_ROI
 
         private Action<string>? _uiLog;
 
+        private const double AnnulusLogThreshold = 0.5;
+        private double _lastLoggedAnnulusOuterRadius = double.NaN;
+        private double _lastLoggedAnnulusInnerProposed = double.NaN;
+        private double _lastLoggedAnnulusInnerFinal = double.NaN;
+        private bool _annulusResetLogged;
+
         // Cache de la última sincronización del overlay
         private double _canvasLeftPx = 0;
         private double _canvasTopPx = 0;
@@ -471,6 +477,40 @@ namespace BrakeDiscInspector_GUI_ROI
             }
         }
 
+        private bool ShouldLogAnnulusValue(ref double lastValue, double newValue)
+        {
+            if (double.IsNaN(lastValue) || Math.Abs(lastValue - newValue) >= AnnulusLogThreshold)
+            {
+                lastValue = newValue;
+                return true;
+            }
+
+            return false;
+        }
+
+        private bool ShouldLogAnnulusInner(double proposedInner, double finalInner)
+        {
+            bool shouldLog = false;
+
+            if (double.IsNaN(_lastLoggedAnnulusInnerProposed) || Math.Abs(proposedInner - _lastLoggedAnnulusInnerProposed) >= AnnulusLogThreshold)
+            {
+                shouldLog = true;
+            }
+
+            if (double.IsNaN(_lastLoggedAnnulusInnerFinal) || Math.Abs(finalInner - _lastLoggedAnnulusInnerFinal) >= AnnulusLogThreshold)
+            {
+                shouldLog = true;
+            }
+
+            if (shouldLog)
+            {
+                _lastLoggedAnnulusInnerProposed = proposedInner;
+                _lastLoggedAnnulusInnerFinal = finalInner;
+            }
+
+            return shouldLog;
+        }
+
         private void UpdateDraw(RoiShape shape, WPoint p0, WPoint p1)
         {
             if (_previewShape == null) return;
@@ -495,14 +535,37 @@ namespace BrakeDiscInspector_GUI_ROI
                 if (shape == RoiShape.Annulus && _previewShape is AnnulusShape annulus)
                 {
                     var outerRadius = Math.Max(0.0, diameter / 2.0);
+                    if (ShouldLogAnnulusValue(ref _lastLoggedAnnulusOuterRadius, outerRadius))
+                    {
+                        AppendLog($"[annulus] outer radius preview={outerRadius:0.##} px");
+                    }
+
+                    double proposedInner;
+                    double resolvedInner;
+
                     if (outerRadius == 0.0)
                     {
-                        annulus.InnerRadius = 0.0;
+                        if (!_annulusResetLogged)
+                        {
+                            AppendLog("[annulus] outer radius reached 0 → resetting inner radius");
+                            _annulusResetLogged = true;
+                        }
+
+                        proposedInner = 0.0;
+                        resolvedInner = 0.0;
+                        annulus.InnerRadius = resolvedInner;
                     }
                     else
                     {
-                        var defaultInner = outerRadius * AnnulusDefaults.DefaultInnerRadiusRatio;
-                        annulus.InnerRadius = AnnulusDefaults.ResolveInnerRadius(defaultInner, outerRadius);
+                        _annulusResetLogged = false;
+                        proposedInner = outerRadius * AnnulusDefaults.DefaultInnerRadiusRatio;
+                        resolvedInner = AnnulusDefaults.ResolveInnerRadius(proposedInner, outerRadius);
+                        annulus.InnerRadius = resolvedInner;
+                    }
+
+                    if (ShouldLogAnnulusInner(proposedInner, resolvedInner))
+                    {
+                        AppendLog($"[annulus] outer={outerRadius:0.##} px, proposed inner={proposedInner:0.##} px -> final inner={resolvedInner:0.##} px");
                     }
                 }
             }
