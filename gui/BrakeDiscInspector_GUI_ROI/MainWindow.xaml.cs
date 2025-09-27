@@ -460,7 +460,7 @@ namespace BrakeDiscInspector_GUI_ROI
                 RoiShape.Annulus => new AnnulusShape
                 {
                     Stroke = WBrushes.Lime,
-                    StrokeThickness = 6,
+                    StrokeThickness = 2,
                     Fill = new SolidColorBrush(WColor.FromArgb(30, 0, 255, 0))
                 },
                 _ => null
