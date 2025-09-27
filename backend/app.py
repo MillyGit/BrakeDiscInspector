@@ -7,6 +7,7 @@ from PIL import Image
 from flask import Flask, request, jsonify
 import cv2
 import tensorflow as tf
+from werkzeug.utils import secure_filename
 
 # ========= Paths =========
 ROOT      = Path(__file__).resolve().parent
@@ -262,9 +263,16 @@ def upload_roi():
 
     sub = DATA_DIR / label
     sub.mkdir(parents=True, exist_ok=True)
-    name = f.filename or f"roi_{int(time.time())}.png"
-    (sub / name).write_bytes(f.read())
-    return jsonify({"ok": True, "saved": str(sub / name)})
+    raw_name = f.filename or ""
+    safe_name = secure_filename(raw_name)
+    if safe_name:
+        stem = Path(safe_name).stem or f"roi_{int(time.time())}"
+    else:
+        stem = f"roi_{int(time.time())}"
+    name = f"{stem}.png"
+    dest = sub / name
+    dest.write_bytes(f.read())
+    return jsonify({"ok": True, "saved": str(dest)})
 
 @app.post("/match_one")
 @app.route("/match_master", methods=["POST"])
