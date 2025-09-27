@@ -32,6 +32,29 @@ public class BackendPayloadBuilderTests
     }
 
     [Fact]
+    public void SerializeRoiToJson_AnnulusIncludesInnerRadius()
+    {
+        var roi = new RoiModel
+        {
+            Shape = RoiShape.Annulus,
+            CX = 180,
+            CY = 120,
+            R = 48,
+            RInner = 20,
+            AngleDeg = 15
+        };
+
+        string json = InvokeSerializeRoiToJson(roi);
+
+        using var doc = JsonDocument.Parse(json);
+        var root = doc.RootElement;
+
+        Assert.Equal("annulus", root.GetProperty("shape").GetString());
+        Assert.Equal(roi.R, root.GetProperty("r").GetDouble());
+        Assert.Equal(roi.RInner, root.GetProperty("ri").GetDouble());
+    }
+
+    [Fact]
     public void TryGetSearchRect_UsesLeftTopForRectangle()
     {
         var roi = new RoiModel
