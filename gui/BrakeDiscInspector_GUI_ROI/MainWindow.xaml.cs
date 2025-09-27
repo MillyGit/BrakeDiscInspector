@@ -494,7 +494,16 @@ namespace BrakeDiscInspector_GUI_ROI
 
                 if (shape == RoiShape.Annulus && _previewShape is AnnulusShape annulus)
                 {
-                    annulus.InnerRadius = Math.Max(0, radius * AnnulusDefaults.DefaultInnerRadiusRatio);
+                    var outerRadius = Math.Max(0.0, diameter / 2.0);
+                    if (outerRadius == 0.0)
+                    {
+                        annulus.InnerRadius = 0.0;
+                    }
+                    else
+                    {
+                        var defaultInner = outerRadius * AnnulusDefaults.DefaultInnerRadiusRatio;
+                        annulus.InnerRadius = AnnulusDefaults.ResolveInnerRadius(defaultInner, outerRadius);
+                    }
                 }
             }
         }
