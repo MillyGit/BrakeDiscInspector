@@ -335,6 +335,21 @@ namespace BrakeDiscInspector_GUI_ROI
                     break;
             }
 
+            if (roi.Shape == RoiShape.Annulus)
+            {
+                double widthCandidate = newWidth;
+                double heightCandidate = newHeight;
+                double widthDelta = widthCandidate - w;
+                double heightDelta = heightCandidate - h;
+
+                double uniform = Math.Abs(widthDelta) >= Math.Abs(heightDelta)
+                    ? widthCandidate
+                    : heightCandidate;
+
+                newWidth = uniform;
+                newHeight = uniform;
+            }
+
             const double minSize = 10.0;
             newWidth = Math.Max(minSize, newWidth);
             newHeight = Math.Max(minSize, newHeight);
@@ -797,6 +812,13 @@ namespace BrakeDiscInspector_GUI_ROI
 
         private void ApplyResizeResult(Point center, double width, double height, double angleDeg, RoiModel roi)
         {
+            if (roi.Shape == RoiShape.Annulus)
+            {
+                double uniform = (width + height) / 2.0;
+                width = uniform;
+                height = uniform;
+            }
+
             double left = center.X - width / 2.0;
             double top = center.Y - height / 2.0;
 
