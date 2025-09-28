@@ -7,7 +7,12 @@
              d:DesignHeight="600"
              d:DesignWidth="600">
     <ScrollViewer VerticalScrollBarVisibility="Auto">
-        <StackPanel Margin="10" Orientation="Vertical" Spacing="12">
+        <StackPanel Margin="10" Orientation="Vertical">
+            <StackPanel.Resources>
+                <Style TargetType="GroupBox">
+                    <Setter Property="Margin" Value="0,0,0,12"/>
+                </Style>
+            </StackPanel.Resources>
             <GroupBox Header="Backend &amp; ROI">
                 <Grid Margin="8">
                     <Grid.RowDefinitions>
@@ -35,8 +40,9 @@
                              Text="{Binding MmPerPx, UpdateSourceTrigger=PropertyChanged, StringFormat={}{0:F4}}"/>
 
                     <TextBlock Grid.Row="3" Text="Backend" VerticalAlignment="Center"/>
-                    <StackPanel Grid.Row="3" Grid.Column="1" Orientation="Horizontal" Margin="8,4,8,0" Spacing="8">
-                        <TextBox Width="260" Text="{Binding BackendBaseUrl, UpdateSourceTrigger=PropertyChanged}"/>
+                    <StackPanel Grid.Row="3" Grid.Column="1" Orientation="Horizontal" Margin="8,4,8,0">
+                        <TextBox Width="260" Margin="0,0,8,0"
+                                 Text="{Binding BackendBaseUrl, UpdateSourceTrigger=PropertyChanged}"/>
                         <Button Content="Health" Padding="12,4"
                                 Command="{Binding RefreshHealthCommand}"/>
                     </StackPanel>
@@ -57,14 +63,14 @@
                         <ColumnDefinition Width="*"/>
                     </Grid.ColumnDefinitions>
 
-                    <StackPanel Orientation="Horizontal" Grid.Row="0" Grid.ColumnSpan="2" Spacing="8">
-                        <Button Content="Add OK from current ROI" Padding="12,4"
+                    <StackPanel Orientation="Horizontal" Grid.Row="0" Grid.ColumnSpan="2">
+                        <Button Content="Add OK from current ROI" Padding="12,4" Margin="0,0,8,0"
                                 Command="{Binding AddOkFromCurrentRoiCommand}"/>
-                        <Button Content="Add NG from current ROI" Padding="12,4"
+                        <Button Content="Add NG from current ROI" Padding="12,4" Margin="0,0,8,0"
                                 Command="{Binding AddNgFromCurrentRoiCommand}"/>
-                        <Button Content="Remove selected" Padding="12,4"
+                        <Button Content="Remove selected" Padding="12,4" Margin="0,0,8,0"
                                 Command="{Binding RemoveSelectedCommand}"/>
-                        <Button Content="Open folder" Padding="12,4"
+                        <Button Content="Open folder" Padding="12,4" Margin="0,0,8,0"
                                 Command="{Binding OpenDatasetFolderCommand}"/>
                         <Button Content="Refresh" Padding="12,4"
                                 Command="{Binding RefreshDatasetCommand}"/>
@@ -76,8 +82,8 @@
                                  ScrollViewer.HorizontalScrollBarVisibility="Disabled">
                             <ListBox.ItemTemplate>
                                 <DataTemplate>
-                                    <StackPanel Orientation="Horizontal" Spacing="8">
-                                        <Image Source="{Binding Thumbnail}" Width="120" Height="80" Stretch="UniformToFill"/>
+                                    <StackPanel Orientation="Horizontal">
+                                        <Image Source="{Binding Thumbnail}" Width="120" Height="80" Stretch="UniformToFill" Margin="0,0,8,0"/>
                                         <StackPanel>
                                             <TextBlock Text="{Binding ImagePath}" TextWrapping="Wrap" Width="220"/>
                                             <TextBlock Text="{Binding Metadata.timestamp}"/>
@@ -94,8 +100,8 @@
                                  ScrollViewer.HorizontalScrollBarVisibility="Disabled">
                             <ListBox.ItemTemplate>
                                 <DataTemplate>
-                                    <StackPanel Orientation="Horizontal" Spacing="8">
-                                        <Image Source="{Binding Thumbnail}" Width="120" Height="80" Stretch="UniformToFill"/>
+                                    <StackPanel Orientation="Horizontal">
+                                        <Image Source="{Binding Thumbnail}" Width="120" Height="80" Stretch="UniformToFill" Margin="0,0,8,0"/>
                                         <StackPanel>
                                             <TextBlock Text="{Binding ImagePath}" TextWrapping="Wrap" Width="220"/>
                                             <TextBlock Text="{Binding Metadata.timestamp}"/>
@@ -109,30 +115,30 @@
             </GroupBox>
 
             <GroupBox Header="Train / Calibrate">
-                <StackPanel Margin="8" Spacing="8">
-                    <Button Content="Train memory (fit_ok)"
+                <StackPanel Margin="8">
+                    <Button Content="Train memory (fit_ok)" Margin="0,0,0,8"
                             Command="{Binding TrainFitCommand}" Padding="12,4" Width="220"/>
-                    <TextBlock Text="{Binding FitSummary}" TextWrapping="Wrap"/>
-                    <Button Content="Calibrate threshold"
+                    <TextBlock Text="{Binding FitSummary}" TextWrapping="Wrap" Margin="0,0,0,8"/>
+                    <Button Content="Calibrate threshold" Margin="0,0,0,8"
                             Command="{Binding CalibrateCommand}" Padding="12,4" Width="220"/>
                     <TextBlock Text="{Binding CalibrationSummary}" TextWrapping="Wrap"/>
                 </StackPanel>
             </GroupBox>
 
             <GroupBox Header="Inference">
-                <StackPanel Margin="8" Spacing="8">
-                    <Button Content="Evaluate current ROI"
+                <StackPanel Margin="8">
+                    <Button Content="Evaluate current ROI" Margin="0,0,0,8"
                             Command="{Binding InferFromCurrentRoiCommand}" Padding="12,4" Width="220"/>
-                    <TextBlock Text="{Binding InferenceSummary}" TextWrapping="Wrap"/>
-                    <StackPanel Orientation="Horizontal" Spacing="8">
-                        <TextBlock Text="Heatmap opacity" VerticalAlignment="Center"/>
-                        <Slider Minimum="0" Maximum="1" Width="200"
+                    <TextBlock Text="{Binding InferenceSummary}" TextWrapping="Wrap" Margin="0,0,0,8"/>
+                    <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                        <TextBlock Text="Heatmap opacity" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                        <Slider Minimum="0" Maximum="1" Width="200" Margin="0,0,8,0"
                                 Value="{Binding HeatmapOpacity, Mode=TwoWay}"/>
                         <TextBlock Text="{Binding HeatmapOpacity, StringFormat={}{0:F2}}" VerticalAlignment="Center"/>
                     </StackPanel>
-                    <StackPanel Orientation="Horizontal" Spacing="8">
-                        <TextBlock Text="Local threshold" VerticalAlignment="Center"/>
-                        <Slider Minimum="0" Maximum="5" Width="200"
+                    <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                        <TextBlock Text="Local threshold" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                        <Slider Minimum="0" Maximum="5" Width="200" Margin="0,0,8,0"
                                 Value="{Binding LocalThreshold, Mode=TwoWay}"/>
                         <TextBox Width="80" Text="{Binding LocalThreshold, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged, StringFormat={}{0:F3}}"/>
                     </StackPanel>
