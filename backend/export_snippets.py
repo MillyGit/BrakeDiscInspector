@@ -1,10 +1,22 @@
+"""Utility script for exporting code snippets into a single file.
+
+The snippets directory can be provided in three ways (highest priority first):
+
+1. ``--snippets-dir`` command-line argument
+2. ``SNIPPETS_DIR`` environment variable
+3. Default: ``<repo>/backend/snippets`` (sibling directory of this script)
+
+Run ``python backend/export_snippets.py --help`` for usage details.
+"""
+
+import argparse
 import os
 import sys
+from pathlib import Path
+from typing import Optional
+
 
 # ── Configuration ──────────────────────────────────────────────
-# Point this at the folder that actually contains your snippets.
-SNIPPETS_DIR    = "/home/millylinux/BrakeDiscDefect_BACKEND"  
-
 # Where to write the merged snippets file
 OUTPUT_FILE     = "all_snippets.txt"
 
@@ -14,6 +26,26 @@ HEADER_TEMPLATE = "\n\n===== Snippet: {rel_path} =====\n\n"
 # Extensions to include—feel free to add/remove.
 EXTENSIONS      = {".py"}
 # ────────────────────────────────────────────────────────────────
+
+
+def default_snippets_dir():
+    """Return the repository-relative default snippets directory."""
+
+    return Path(__file__).resolve().parent / "snippets"
+
+
+def resolve_snippets_dir(cli_value: Optional[str]) -> Path:
+    """Resolve the snippets directory from CLI, env var, or default."""
+
+    if cli_value:
+        return Path(cli_value)
+
+    env_value = os.getenv("SNIPPETS_DIR")
+    if env_value:
+        return Path(env_value)
+
+    return default_snippets_dir()
+
 
 def collect_and_write(snippet_root, output_file):
     # 1. Check that snippet_root exists
@@ -56,5 +88,25 @@ def collect_and_write(snippet_root, output_file):
         print("   • Verify you ran this from the folder you think you did.")
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(
+        description=(
+            "Merge all supported snippet files under a directory into a single output file. "
+            "You can override the default snippets directory using the --snippets-dir "
+            "argument or the SNIPPETS_DIR environment variable."
+        )
+    )
+    parser.add_argument(
+        "--snippets-dir",
+        dest="snippets_dir",
+        metavar="PATH",
+        help=(
+            "Directory containing snippet files. Overrides the SNIPPETS_DIR environment "
+            "variable and the default path (backend/snippets next to this script)."
+        ),
+    )
+
+    args = parser.parse_args()
+    snippets_dir = resolve_snippets_dir(args.snippets_dir)
+
     print(f"Starting snippet export…\nWorking dir: {os.getcwd()}\n")
-    collect_and_write(SNIPPETS_DIR, OUTPUT_FILE)
+    collect_and_write(snippets_dir, OUTPUT_FILE)
