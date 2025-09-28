@@ -274,7 +274,6 @@ def upload_roi():
     dest.write_bytes(f.read())
     return jsonify({"ok": True, "saved": str(dest)})
 
-@app.post("/match_one")
 @app.route("/match_master", methods=["POST"])
 def match_master():
     """
@@ -634,10 +633,7 @@ def match_master():
     return jsonify(resp)
 
 
-@app.post("/match_one")
-def match_one():
-    """Alias de compatibilidad que reutiliza la lógica de ``match_master``."""
-    return match_master()
+app.add_url_rule("/match_one", view_func=match_master, methods=["POST"])
 
 
 @app.post("/analyze")
