@@ -8,8 +8,9 @@ from pathlib import Path
 from backend.train_model import PRE_CFG, prepare_data
 from backend.utils import load_model_with_logging
 
-BASE_DIR = Path(__file__).resolve().parent.parent
-MODEL_DIR = BASE_DIR / 'model'
+BASE_DIR = Path(__file__).resolve().parent
+MODEL_DIR = BASE_DIR / "model"
+TEST_DATA_DIR = BASE_DIR / "data" / "test"
 
 def validate_model():
     """Validate model performance on validation set"""
@@ -58,9 +59,9 @@ def analyze_failures():
         MODEL_DIR/'current_model.h5',
         custom_objects=custom_objects
     )
-    _, test_gen = prepare_data(data_dir='data/test', pre_cfg=PRE_CFG)
-    
-    with open('model/threshold.txt', 'r') as f:
+    _, test_gen = prepare_data(data_dir=TEST_DATA_DIR, pre_cfg=PRE_CFG)
+
+    with open(MODEL_DIR / 'threshold.txt', 'r') as f:
         optimal_threshold = float(f.read().strip())
     
     for batch in test_gen:
