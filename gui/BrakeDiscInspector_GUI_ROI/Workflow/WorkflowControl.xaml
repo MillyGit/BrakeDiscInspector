@@ -1,0 +1,157 @@
+<UserControl x:Class="BrakeDiscInspector_GUI_ROI.Workflow.WorkflowControl"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             mc:Ignorable="d"
+             d:DesignHeight="600"
+             d:DesignWidth="600">
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
+        <StackPanel Margin="10" Orientation="Vertical" Spacing="12">
+            <GroupBox Header="Backend &amp; ROI">
+                <Grid Margin="8">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+
+                    <TextBlock Text="Role" VerticalAlignment="Center"/>
+                    <TextBox Grid.Column="1" Margin="8,0" Width="160"
+                             Text="{Binding RoleId, UpdateSourceTrigger=PropertyChanged}"/>
+
+                    <TextBlock Grid.Row="1" Text="ROI" VerticalAlignment="Center"/>
+                    <TextBox Grid.Row="1" Grid.Column="1" Margin="8,4,8,0" Width="160"
+                             Text="{Binding RoiId, UpdateSourceTrigger=PropertyChanged}"/>
+
+                    <TextBlock Grid.Row="2" Text="mm/px" VerticalAlignment="Center"/>
+                    <TextBox Grid.Row="2" Grid.Column="1" Margin="8,4,8,0" Width="120"
+                             Text="{Binding MmPerPx, UpdateSourceTrigger=PropertyChanged, StringFormat={}{0:F4}}"/>
+
+                    <TextBlock Grid.Row="3" Text="Backend" VerticalAlignment="Center"/>
+                    <StackPanel Grid.Row="3" Grid.Column="1" Orientation="Horizontal" Margin="8,4,8,0" Spacing="8">
+                        <TextBox Width="260" Text="{Binding BackendBaseUrl, UpdateSourceTrigger=PropertyChanged}"/>
+                        <Button Content="Health" Padding="12,4"
+                                Command="{Binding RefreshHealthCommand}"/>
+                    </StackPanel>
+
+                    <TextBlock Grid.Row="3" Grid.Column="2" Margin="8,4,0,0"
+                               Text="{Binding HealthSummary}" TextWrapping="Wrap" Width="200"/>
+                </Grid>
+            </GroupBox>
+
+            <GroupBox Header="Dataset">
+                <Grid Margin="8">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+
+                    <StackPanel Orientation="Horizontal" Grid.Row="0" Grid.ColumnSpan="2" Spacing="8">
+                        <Button Content="Add OK from current ROI" Padding="12,4"
+                                Command="{Binding AddOkFromCurrentRoiCommand}"/>
+                        <Button Content="Add NG from current ROI" Padding="12,4"
+                                Command="{Binding AddNgFromCurrentRoiCommand}"/>
+                        <Button Content="Remove selected" Padding="12,4"
+                                Command="{Binding RemoveSelectedCommand}"/>
+                        <Button Content="Open folder" Padding="12,4"
+                                Command="{Binding OpenDatasetFolderCommand}"/>
+                        <Button Content="Refresh" Padding="12,4"
+                                Command="{Binding RefreshDatasetCommand}"/>
+                    </StackPanel>
+
+                    <GroupBox Header="OK" Margin="0,8,4,0" Grid.Row="1" Grid.Column="0">
+                        <ListBox ItemsSource="{Binding OkSamples}"
+                                 SelectedItem="{Binding SelectedOkSample}" Height="220"
+                                 ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate>
+                                    <StackPanel Orientation="Horizontal" Spacing="8">
+                                        <Image Source="{Binding Thumbnail}" Width="120" Height="80" Stretch="UniformToFill"/>
+                                        <StackPanel>
+                                            <TextBlock Text="{Binding ImagePath}" TextWrapping="Wrap" Width="220"/>
+                                            <TextBlock Text="{Binding Metadata.timestamp}"/>
+                                        </StackPanel>
+                                    </StackPanel>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+                    </GroupBox>
+
+                    <GroupBox Header="NG" Margin="4,8,0,0" Grid.Row="1" Grid.Column="1">
+                        <ListBox ItemsSource="{Binding NgSamples}"
+                                 SelectedItem="{Binding SelectedNgSample}" Height="220"
+                                 ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate>
+                                    <StackPanel Orientation="Horizontal" Spacing="8">
+                                        <Image Source="{Binding Thumbnail}" Width="120" Height="80" Stretch="UniformToFill"/>
+                                        <StackPanel>
+                                            <TextBlock Text="{Binding ImagePath}" TextWrapping="Wrap" Width="220"/>
+                                            <TextBlock Text="{Binding Metadata.timestamp}"/>
+                                        </StackPanel>
+                                    </StackPanel>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+                    </GroupBox>
+                </Grid>
+            </GroupBox>
+
+            <GroupBox Header="Train / Calibrate">
+                <StackPanel Margin="8" Spacing="8">
+                    <Button Content="Train memory (fit_ok)"
+                            Command="{Binding TrainFitCommand}" Padding="12,4" Width="220"/>
+                    <TextBlock Text="{Binding FitSummary}" TextWrapping="Wrap"/>
+                    <Button Content="Calibrate threshold"
+                            Command="{Binding CalibrateCommand}" Padding="12,4" Width="220"/>
+                    <TextBlock Text="{Binding CalibrationSummary}" TextWrapping="Wrap"/>
+                </StackPanel>
+            </GroupBox>
+
+            <GroupBox Header="Inference">
+                <StackPanel Margin="8" Spacing="8">
+                    <Button Content="Evaluate current ROI"
+                            Command="{Binding InferFromCurrentRoiCommand}" Padding="12,4" Width="220"/>
+                    <TextBlock Text="{Binding InferenceSummary}" TextWrapping="Wrap"/>
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <TextBlock Text="Heatmap opacity" VerticalAlignment="Center"/>
+                        <Slider Minimum="0" Maximum="1" Width="200"
+                                Value="{Binding HeatmapOpacity, Mode=TwoWay}"/>
+                        <TextBlock Text="{Binding HeatmapOpacity, StringFormat={}{0:F2}}" VerticalAlignment="Center"/>
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <TextBlock Text="Local threshold" VerticalAlignment="Center"/>
+                        <Slider Minimum="0" Maximum="5" Width="200"
+                                Value="{Binding LocalThreshold, Mode=TwoWay}"/>
+                        <TextBox Width="80" Text="{Binding LocalThreshold, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged, StringFormat={}{0:F3}}"/>
+                    </StackPanel>
+                    <GroupBox Header="Regions" Margin="0,8,0,0">
+                        <ListView ItemsSource="{Binding Regions}" Height="160">
+                            <ListView.View>
+                                <GridView>
+                                    <GridViewColumn Header="x" DisplayMemberBinding="{Binding x, StringFormat={}{0:F1}}" Width="60"/>
+                                    <GridViewColumn Header="y" DisplayMemberBinding="{Binding y, StringFormat={}{0:F1}}" Width="60"/>
+                                    <GridViewColumn Header="w" DisplayMemberBinding="{Binding w, StringFormat={}{0:F1}}" Width="60"/>
+                                    <GridViewColumn Header="h" DisplayMemberBinding="{Binding h, StringFormat={}{0:F1}}" Width="60"/>
+                                    <GridViewColumn Header="area px" DisplayMemberBinding="{Binding area_px, StringFormat={}{0:F1}}" Width="80"/>
+                                    <GridViewColumn Header="area mm²" DisplayMemberBinding="{Binding area_mm2, StringFormat={}{0:F2}}" Width="100"/>
+                                </GridView>
+                            </ListView.View>
+                        </ListView>
+                    </GroupBox>
+                </StackPanel>
+            </GroupBox>
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>
