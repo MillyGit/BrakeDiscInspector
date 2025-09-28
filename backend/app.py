@@ -728,7 +728,7 @@ def analyze():
         thr = _finite(threshold, lo=0.0, hi=1.0)
         if thr is None:
             thr = 0.5
-        label = "NG" if score >= thr else "OK"
+        label = "OK" if score >= thr else "NG"
         heatmap_b64 = _generate_heatmap_b64(rgb_for_model, mask_bool)
         if heatmap_b64 is None:
             blank = np.zeros((rgb_for_model.shape[0], rgb_for_model.shape[1], 3), dtype=np.uint8)
