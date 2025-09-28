@@ -2,12 +2,11 @@ import tensorflow as tf
 import numpy as np
 from sklearn.metrics import f1_score as sk_f1, roc_auc_score
 import matplotlib.pyplot as plt
-from brake_disc_model.metrics import F1Score
-from BrakeDiscDefectDetection.BrakeDiscDefectDetection.brake_disc_model.train_model import prepare_data
-from brake_disc_model.utils import dump_model_config
-from brake_disc_model.utils import load_model_with_logging
 import logging
 from pathlib import Path
+
+from backend.train_model import PRE_CFG, prepare_data
+from backend.utils import load_model_with_logging
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 MODEL_DIR = BASE_DIR / 'model'
@@ -16,15 +15,15 @@ def validate_model():
     """Validate model performance on validation set"""
     # Load model and threshold
     custom_objects = {
-        'F1Score': F1Score,
-        'Lambda': tf.keras.layers.Lambda,
+        'Precision': tf.keras.metrics.Precision,
+        'Recall': tf.keras.metrics.Recall,
     }
 
     model = load_model_with_logging(
         MODEL_DIR/'current_model.h5',
         custom_objects=custom_objects
     )
-    _, val_gen = prepare_data()
+    _, val_gen = prepare_data(pre_cfg=PRE_CFG)
     
     with open(MODEL_DIR / 'threshold.txt', 'r') as f:
         optimal_threshold = float(f.read().strip())
@@ -51,15 +50,15 @@ def validate_model():
 
 def analyze_failures():
     custom_objects = {
-        'F1Score': F1Score,
-        'Lambda': tf.keras.layers.Lambda,
+        'Precision': tf.keras.metrics.Precision,
+        'Recall': tf.keras.metrics.Recall,
     }
     
     model = load_model_with_logging(
         MODEL_DIR/'current_model.h5',
         custom_objects=custom_objects
     )
-    _, test_gen = prepare_data(data_dir='data/test')
+    _, test_gen = prepare_data(data_dir='data/test', pre_cfg=PRE_CFG)
     
     with open('model/threshold.txt', 'r') as f:
         optimal_threshold = float(f.read().strip())
@@ -86,8 +85,8 @@ def analyze_failures():
 def load_model():
     """Load model helper with diagnostics"""
     custom_objects = {
-        'F1Score': F1Score,
-        'Lambda': tf.keras.layers.Lambda,
+        'Precision': tf.keras.metrics.Precision,
+        'Recall': tf.keras.metrics.Recall,
     }
     
     logging.info("Loading model with custom objects: %s", list(custom_objects.keys()))
