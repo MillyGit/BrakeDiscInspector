@@ -22,7 +22,9 @@ source .venv/bin/activate
 pip install -r backend/requirements.txt
 ```
 
-> Si `faiss-cpu` falla en tu plataforma, el servicio seguirá funcionando con `sklearn` (`NearestNeighbors`).  
+> **PyTorch** se descarga desde el índice oficial de PyTorch gracias a la opción `--extra-index-url` incluida en `requirements.txt`.
+> Si tu red bloquea dominios externos, instala manualmente la rueda adecuada (`torch==2.1.2` CPU) y vuelve a ejecutar `pip install -r backend/requirements.txt`.
+> Si `faiss-cpu` falla en tu plataforma, el servicio seguirá funcionando con `sklearn` (`NearestNeighbors`).
 > Asegúrate de tener **Python 3.10+** y **pip** actualizado (`python -m pip install -U pip`).
 
 ---
