@@ -2,6 +2,7 @@
 using Microsoft.Win32;
 using OpenCvSharp;
 using OpenCvSharp.WpfExtensions;
+using BrakeDiscInspector_GUI_ROI.Workflow;
 using System;
 using System.Collections.Generic;
 using System.Globalization;
@@ -10,6 +11,7 @@ using System.Linq;
 using System.Net.Http;
 using System.Reflection.Emit;
 using System.Text;
+using System.Text.Json;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
@@ -54,6 +56,12 @@ namespace BrakeDiscInspector_GUI_ROI
         private string _currentImagePathBackend = "";
         private BitmapImage? _imgSourceBI;
         private int _imgW, _imgH;
+
+        private WorkflowViewModel? _workflowViewModel;
+        private System.Windows.Controls.Image? _heatmapOverlayImage;
+        private BitmapSource? _heatmapBitmap;
+        private RoiModel? _heatmapRoiImage;
+        private double _heatmapOverlayOpacity = 0.6;
 
         private Shape? _previewShape;
         private bool _isDrawing;
@@ -140,10 +148,51 @@ namespace BrakeDiscInspector_GUI_ROI
             InitUI();
             InitTrainPollingTimer();
             HookCanvasInput();
+            InitWorkflow();
 
             ImgMain.SizeChanged += ImgMain_SizeChanged;
             this.SizeChanged += MainWindow_SizeChanged;
             this.Loaded += MainWindow_Loaded;
+        }
+
+        private void InitWorkflow()
+        {
+            try
+            {
+                var datasetRoot = Path.Combine(AppContext.BaseDirectory, "datasets");
+                Directory.CreateDirectory(datasetRoot);
+
+                var backendClient = new Workflow.BackendClient();
+                if (!string.IsNullOrWhiteSpace(BackendAPI.BaseUrl))
+                {
+                    backendClient.BaseUrl = BackendAPI.BaseUrl;
+                }
+
+                var datasetManager = new DatasetManager(datasetRoot);
+                _workflowViewModel = new WorkflowViewModel(
+                    backendClient,
+                    datasetManager,
+                    ExportCurrentRoiCanonicalAsync,
+                    () => _currentImagePathWin,
+                    AppendLog,
+                    ShowHeatmapOverlayAsync,
+                    ClearHeatmapOverlay);
+
+                if (WorkflowHost != null)
+                {
+                    WorkflowHost.DataContext = _workflowViewModel;
+                }
+
+                Dispatcher.BeginInvoke(new Action(() =>
+                {
+                    _workflowViewModel?.RefreshDatasetCommand.Execute(null);
+                    _workflowViewModel?.RefreshHealthCommand.Execute(null);
+                }), DispatcherPriority.Background);
+            }
+            catch (Exception ex)
+            {
+                AppendLog("[workflow] init error: " + ex.Message);
+            }
         }
 
         private void InitUI()
@@ -367,6 +416,7 @@ namespace BrakeDiscInspector_GUI_ROI
 
             AppendLog($"Imagen cargada: {_imgW}x{_imgH}  (Canvas: {CanvasROI.ActualWidth:0}x{CanvasROI.ActualHeight:0})");
             RedrawOverlaySafe();
+            ClearHeatmapOverlay();
         }
 
         private bool IsOverlayAligned()
@@ -399,16 +449,19 @@ namespace BrakeDiscInspector_GUI_ROI
         private void MainWindow_Loaded(object sender, RoutedEventArgs e)
         {
             ScheduleSyncOverlay(force: true);
+            RefreshHeatmapOverlay();
         }
 
         private void MainWindow_SizeChanged(object sender, SizeChangedEventArgs e)
         {
             ScheduleSyncOverlay(force: true);
+            RefreshHeatmapOverlay();
         }
 
         private void ImgMain_SizeChanged(object sender, SizeChangedEventArgs e)
         {
             ScheduleSyncOverlay(force: true);
+            RefreshHeatmapOverlay();
         }
 
 
@@ -2042,6 +2095,7 @@ namespace BrakeDiscInspector_GUI_ROI
             ApplyPixelModelToCurrentRoi(inspectionPixel);
             UpdateInspectionShapeRotation(CurrentRoi.AngleDeg);
             UpdateOverlayFromCurrentRoi();
+            RefreshHeatmapOverlay();
         }
 
         private void InvalidateAdornerFor(Shape shape)
@@ -2502,6 +2556,195 @@ namespace BrakeDiscInspector_GUI_ROI
             {
                 AppendLog("[preview] error: " + ex.Message);
             }
+        }
+
+
+        private RoiModel? GetActiveRoiClone()
+        {
+            if (_tmpBuffer != null)
+            {
+                return _tmpBuffer.Clone();
+            }
+
+            var persisted = GetCurrentStatePersistedRoi();
+            return persisted?.Clone();
+        }
+
+        private async Task<RoiExportResult?> ExportCurrentRoiCanonicalAsync()
+        {
+            return await Dispatcher.InvokeAsync(() =>
+            {
+                var roi = GetActiveRoiClone();
+                if (roi == null)
+                {
+                    Snack("Dibuja o selecciona un ROI válido antes de exportar.");
+                    return null;
+                }
+
+                RoiModel roiImage = LooksLikeCanvasCoords(roi) ? CanvasToImage(roi) : roi.Clone();
+
+                if (!RoiCropUtils.TryBuildRoiCropInfo(roiImage, out var cropInfo))
+                {
+                    Snack("No se pudo preparar el recorte del ROI actual.");
+                    return null;
+                }
+
+                using var src = GetUiMatOrReadFromDisk();
+                if (!RoiCropUtils.TryGetRotatedCrop(src, cropInfo, roiImage.AngleDeg, out var cropMat, out var cropRect))
+                {
+                    cropMat?.Dispose();
+                    Snack("No se pudo extraer el ROI canonicalizado.");
+                    return null;
+                }
+
+                try
+                {
+                    using var mask = RoiCropUtils.BuildRoiMask(cropInfo, cropRect);
+                    using var cropWithAlpha = RoiCropUtils.ConvertCropToBgra(cropMat, mask);
+                    Cv2.ImEncode(".png", cropWithAlpha, out var pngBytes);
+
+                    var shapeJson = BuildShapeJson(roiImage, cropInfo, cropRect);
+                    AppendLog($"[export] ROI canonicalizado {cropRect.Width}x{cropRect.Height} angle={roiImage.AngleDeg:0.##}");
+                    return new RoiExportResult(pngBytes, shapeJson, roiImage);
+                }
+                finally
+                {
+                    cropMat.Dispose();
+                }
+            }).Task;
+        }
+
+        private static string BuildShapeJson(RoiModel roiImage, RoiCropInfo cropInfo, OpenCvSharp.Rect cropRect)
+        {
+            double w = cropRect.Width;
+            double h = cropRect.Height;
+
+            object shape = roiImage.Shape switch
+            {
+                RoiShape.Rectangle => new { kind = "rect", x = 0, y = 0, w, h },
+                RoiShape.Circle => new
+                {
+                    kind = "circle",
+                    cx = w / 2.0,
+                    cy = h / 2.0,
+                    r = Math.Min(w, h) / 2.0
+                },
+                RoiShape.Annulus => new
+                {
+                    kind = "annulus",
+                    cx = w / 2.0,
+                    cy = h / 2.0,
+                    r = ResolveOuterRadiusPx(cropInfo, cropRect),
+                    r_inner = ResolveInnerRadiusPx(cropInfo, cropRect)
+                },
+                _ => new { kind = "rect", x = 0, y = 0, w, h }
+            };
+
+            return JsonSerializer.Serialize(shape, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        }
+
+        private static double ResolveOuterRadiusPx(RoiCropInfo cropInfo, OpenCvSharp.Rect cropRect)
+        {
+            double outer = cropInfo.Radius > 0 ? cropInfo.Radius : Math.Max(cropInfo.Width, cropInfo.Height) / 2.0;
+            double scale = Math.Min(cropRect.Width / Math.Max(cropInfo.Width, 1.0), cropRect.Height / Math.Max(cropInfo.Height, 1.0));
+            double result = outer * scale;
+            if (result <= 0)
+            {
+                result = Math.Min(cropRect.Width, cropRect.Height) / 2.0;
+            }
+            return result;
+        }
+
+        private static double ResolveInnerRadiusPx(RoiCropInfo cropInfo, OpenCvSharp.Rect cropRect)
+        {
+            if (cropInfo.Shape != RoiShape.Annulus)
+                return 0;
+
+            double outer = ResolveOuterRadiusPx(cropInfo, cropRect);
+            double scale = Math.Min(cropRect.Width / Math.Max(cropInfo.Width, 1.0), cropRect.Height / Math.Max(cropInfo.Height, 1.0));
+            double inner = Math.Clamp(cropInfo.InnerRadius * scale, 0, outer);
+            return inner;
+        }
+
+        private async Task ShowHeatmapOverlayAsync(RoiExportResult export, byte[] pngBytes, double opacity)
+        {
+            await Dispatcher.InvokeAsync(() =>
+            {
+                _heatmapOverlayOpacity = opacity;
+                _heatmapRoiImage = export.RoiImage.Clone();
+                _heatmapBitmap = LoadBitmap(pngBytes);
+                HeatmapImage.Source = _heatmapBitmap;
+                RefreshHeatmapOverlay();
+            }, DispatcherPriority.Render);
+        }
+
+        private void ClearHeatmapOverlay()
+        {
+            Dispatcher.Invoke(() =>
+            {
+                _heatmapBitmap = null;
+                _heatmapRoiImage = null;
+                HeatmapImage.Source = null;
+                if (_heatmapOverlayImage != null)
+                {
+                    CanvasROI.Children.Remove(_heatmapOverlayImage);
+                    _heatmapOverlayImage = null;
+                }
+            });
+        }
+
+        private void RefreshHeatmapOverlay()
+        {
+            if (CanvasROI == null)
+                return;
+
+            if (_heatmapBitmap == null || _heatmapRoiImage == null)
+            {
+                if (_heatmapOverlayImage != null)
+                {
+                    CanvasROI.Children.Remove(_heatmapOverlayImage);
+                    _heatmapOverlayImage = null;
+                }
+                return;
+            }
+
+            var canvasRoi = ImageToCanvas(_heatmapRoiImage);
+            double left = canvasRoi.Left;
+            double top = canvasRoi.Top;
+            double width = Math.Max(canvasRoi.Width, 1.0);
+            double height = Math.Max(canvasRoi.Height, 1.0);
+
+            if (_heatmapOverlayImage == null)
+            {
+                _heatmapOverlayImage = new System.Windows.Controls.Image
+                {
+                    IsHitTestVisible = false
+                };
+                CanvasROI.Children.Add(_heatmapOverlayImage);
+                Panel.SetZIndex(_heatmapOverlayImage, 1);
+            }
+
+            _heatmapOverlayImage.Source = _heatmapBitmap;
+            _heatmapOverlayImage.Width = width;
+            _heatmapOverlayImage.Height = height;
+            Canvas.SetLeft(_heatmapOverlayImage, left);
+            Canvas.SetTop(_heatmapOverlayImage, top);
+            _heatmapOverlayImage.Opacity = _heatmapOverlayOpacity;
+            _heatmapOverlayImage.RenderTransform = new RotateTransform(_heatmapRoiImage.AngleDeg, width / 2.0, height / 2.0);
+        }
+
+        private static BitmapSource LoadBitmap(byte[] pngBytes)
+        {
+            var bitmap = new BitmapImage();
+            using (var ms = new MemoryStream(pngBytes))
+            {
+                bitmap.BeginInit();
+                bitmap.CacheOption = BitmapCacheOption.OnLoad;
+                bitmap.StreamSource = ms;
+                bitmap.EndInit();
+            }
+            bitmap.Freeze();
+            return bitmap;
         }
 
 
@@ -3783,6 +4026,8 @@ namespace BrakeDiscInspector_GUI_ROI
                 RedrawOverlay();
                 _overlayNeedsRedraw = false;
             }
+
+            RefreshHeatmapOverlay();
         }
 
 
