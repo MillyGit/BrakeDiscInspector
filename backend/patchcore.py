@@ -30,10 +30,11 @@ def kcenter_greedy(E: np.ndarray, m: int, seed: int = 0) -> np.ndarray:
     return np.array(centers, dtype=np.int64)
 
 class PatchCoreMemory:
-    def __init__(self, embeddings: np.ndarray, index=None):
+    def __init__(self, embeddings: np.ndarray, index=None, coreset_rate: float | None = None):
         self.emb = embeddings.astype(np.float32, copy=False)
         self.index = index
         self.nn = None
+        self.coreset_rate = coreset_rate
         if index is None:
             self.nn = NearestNeighbors(n_neighbors=1, algorithm="auto", metric="euclidean")
             self.nn.fit(self.emb)
@@ -49,16 +50,16 @@ class PatchCoreMemory:
             import faiss  # type: ignore
             index = faiss.IndexFlatL2(C.shape[1])
             index.add(C)
-            return PatchCoreMemory(C, index=index)
+            return PatchCoreMemory(C, index=index, coreset_rate=coreset_rate)
         else:
-            return PatchCoreMemory(C, index=None)
+            return PatchCoreMemory(C, index=None, coreset_rate=coreset_rate)
 
     def knn_min_dist(self, query: np.ndarray) -> np.ndarray:
         Q = l2_normalize(query.astype(np.float32, copy=False))
         if self.index is not None:
             import faiss  # type: ignore
             D, I = self.index.search(Q, 1)
-            return D[:, 0]
+            return np.sqrt(np.maximum(D[:, 0], 0.0))
         else:
             d, i = self.nn.kneighbors(Q, n_neighbors=1, return_distance=True)
             return d[:, 0]

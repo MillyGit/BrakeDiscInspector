@@ -74,10 +74,21 @@ def fit_ok(
             return JSONResponse(status_code=400, content={"error": "No se recibieron imágenes válidas"})
 
         E = np.concatenate(all_emb, axis=0)  # (N, D)
-        mem = PatchCoreMemory.build(E, coreset_rate=0.02, seed=0)
+        coreset_rate = 0.02
+        mem = PatchCoreMemory.build(E, coreset_rate=coreset_rate, seed=0)
 
         # Persistir memoria + token grid
-        store.save_memory(role_id, roi_id, mem.emb, token_hw)
+        applied_rate = float(mem.emb.shape[0]) / float(E.shape[0]) if E.shape[0] > 0 else 0.0
+        store.save_memory(
+            role_id,
+            roi_id,
+            mem.emb,
+            token_hw,
+            metadata={
+                "coreset_rate": float(coreset_rate),
+                "applied_rate": float(applied_rate),
+            },
+        )
 
         # Persistir índice FAISS si está disponible
         try:
@@ -92,6 +103,8 @@ def fit_ok(
             "n_embeddings": int(E.shape[0]),
             "coreset_size": int(mem.emb.shape[0]),
             "token_shape": [int(token_hw[0]), int(token_hw[1])],
+            "coreset_rate_requested": float(coreset_rate),
+            "coreset_rate_applied": float(applied_rate),
         }
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e), "trace": traceback.format_exc()})
@@ -148,10 +161,10 @@ def infer(
         loaded = store.load_memory(role_id, roi_id)
         if loaded is None:
             return JSONResponse(status_code=400, content={"error": "Memoria no encontrada. Ejecuta /fit_ok primero."})
-        emb, token_hw = loaded
+        emb, token_hw, metadata = loaded
 
         # Reconstruir memoria + índice
-        mem = PatchCoreMemory(embeddings=emb, index=None)
+        mem = PatchCoreMemory(embeddings=emb, index=None, coreset_rate=metadata.get("coreset_rate"))
         try:
             import faiss  # type: ignore
             blob = store.load_index_blob(role_id, roi_id)
@@ -169,7 +182,15 @@ def infer(
 
         shape_obj = json.loads(shape) if shape else None
 
-        engine = InferenceEngine(_extractor, mem, token_hw, mm_per_px, k=1, score_percentile=p_score)
+        engine = InferenceEngine(
+            _extractor,
+            mem,
+            token_hw,
+            mm_per_px,
+            k=1,
+            score_percentile=p_score,
+            memory_metadata=metadata,
+        )
         out = engine.run(img, shape=shape_obj, blur_sigma=1.0, area_mm2_thr=area_mm2_thr, threshold=thr)
 
         # Empaquetar heatmap como PNG base64 para la GUI

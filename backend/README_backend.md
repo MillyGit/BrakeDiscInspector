@@ -3,7 +3,7 @@
 Microservicio FastAPI para **detección de anomalías “good-only”**:
 - **Extractor**: DINOv2 ViT-S/14 (congelado, vía `timm`)
 - **Memoria**: PatchCore (coreset k-center greedy + kNN con FAISS/sklearn)
-- **Salidas**: `score` global, `heatmap` (PNG base64), `regions` (bboxes y áreas en px/mm²)
+- **Salidas**: `score` global, `heatmap` (PNG base64), `regions` (bboxes, contornos y áreas en px/mm²)
 - **Persistencia** por `(role_id, roi_id)` en `models/`
 
 > **Importante**: La **GUI WPF** debe enviar **ROI canónico** (recortado + rotado). El backend **no** recorta ni rota.
@@ -73,7 +73,9 @@ curl -X POST http://127.0.0.1:8000/fit_ok   -F role_id=Master1   -F roi_id=Patte
 {
   "n_embeddings": 34992,
   "coreset_size": 700,
-  "token_shape": [32, 32]
+  "token_shape": [32, 32],
+  "coreset_rate_requested": 0.02,
+  "coreset_rate_applied": 0.018
 }
 ```
 
@@ -134,9 +136,20 @@ curl -X POST http://127.0.0.1:8000/infer   -F role_id=Master1   -F roi_id=Patter
   "threshold": 20.0,
   "heatmap_png_base64": "iVBORw0K...",
   "regions": [
-    {"bbox":[x,y,w,h], "area_px": 250.0, "area_mm2": 10.0}
+    {"bbox":[x,y,w,h], "area_px": 250.0, "area_mm2": 10.0, "contour": [[x1,y1], ...]}
   ],
-  "token_shape": [32, 32]
+  "token_shape": [32, 32],
+  "params": {
+    "extractor": "vit_small_patch14_dinov2.lvd142m",
+    "input_size": 448,
+    "patch_size": 14,
+    "coreset_rate": 0.02,
+    "coreset_rate_applied": 0.018,
+    "k": 1,
+    "score_percentile": 99,
+    "blur_sigma": 1.0,
+    "mm_per_px": 0.2
+  }
 }
 ```
 
@@ -144,7 +157,7 @@ curl -X POST http://127.0.0.1:8000/infer   -F role_id=Master1   -F roi_id=Patter
 
 ## 4) Notas de diseño
 
-- **Extractor**: `vit_small_patch14_dinov2.lvd142m` (congelado).  
+- **Extractor**: `vit_small_patch14_dinov2.lvd142m` (congelado, multi-capa con bloques 9 y 11).
   Entrada por defecto `448×448` (múltiplo de **14**); si envías `384×384`, se reescala internamente a múltiplo cercano.
 - **Memoria**:
   - Embeddings por parche → **L2 normalize**
@@ -152,13 +165,15 @@ curl -X POST http://127.0.0.1:8000/infer   -F role_id=Master1   -F roi_id=Patter
   - Índice **FAISS** si disponible; si no, `sklearn.NearestNeighbors`.
 - **Score**: percentil **p99** (configurable) del heatmap enmascarado.  
 - **Umbral**:
-  - Sin NG: **p99(OK)** (más un pequeño margen si lo deseas).  
-  - Con NG (0–3): entre **p99(OK)** y **p5(NG)**.  
-- **Postproceso**: blur ligero, **máscara ROI**, eliminación de **islas < área_mm²** (convertido a px² con `mm_per_px`).
-- **Persistencia**:  
-  - `models/<role>/<roi>/memory.npz` (embeddings coreset + `token_shape`)  
-  - `models/<role>/<roi>/index.faiss` (si FAISS)  
+  - Sin NG: **p99(OK)** (más un pequeño margen si lo deseas).
+  - Con NG (0–3): entre **p99(OK)** y **p5(NG)**.
+  - Si aún no se ha calibrado, el endpoint `/infer` devuelve `"threshold": null`.
+- **Postproceso**: blur ligero, **máscara ROI**, eliminación de **islas < área_mm²** (convertido a px² con `mm_per_px`) y exporte de contornos/bboxes ordenados.
+- **Persistencia**:
+  - `models/<role>/<roi>/memory.npz` (embeddings coreset + `token_shape`)
+  - `models/<role>/<roi>/index.faiss` (si FAISS)
   - `models/<role>/<roi>/calib.json` (umbral, p99_ok, p5_ng, mm_per_px, etc.)
+- **Respuesta de `/infer`**: añade `params` con metadatos de extractor, coreset y configuración usada.
 
 ---
 

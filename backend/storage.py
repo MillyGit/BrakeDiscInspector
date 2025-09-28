@@ -1,7 +1,8 @@
 from __future__ import annotations
 import numpy as np
 from pathlib import Path
-from typing import Tuple, Optional
+from typing import Tuple, Optional, Dict, Any
+import json
 from .utils import ensure_dir, save_json, load_json
 
 class ModelStore:
@@ -11,18 +12,27 @@ class ModelStore:
     def _dir(self, role_id: str, roi_id: str) -> Path:
         return self.root / role_id / roi_id
 
-    def save_memory(self, role_id: str, roi_id: str, embeddings: np.ndarray, token_hw: Tuple[int,int]):
+    def save_memory(
+        self,
+        role_id: str,
+        roi_id: str,
+        embeddings: np.ndarray,
+        token_hw: Tuple[int, int],
+        metadata: Optional[Dict[str, Any]] = None,
+    ):
         """
         Guarda la memoria (embeddings coreset L2-normalizados) y la forma del grid de tokens.
         """
         d = self._dir(role_id, roi_id)
         ensure_dir(d)
-        np.savez_compressed(
-            d / "memory.npz",
-            emb=embeddings.astype(np.float32),
-            token_h=int(token_hw[0]),
-            token_w=int(token_hw[1]),
-        )
+        payload = {
+            "emb": embeddings.astype(np.float32),
+            "token_h": int(token_hw[0]),
+            "token_w": int(token_hw[1]),
+        }
+        if metadata:
+            payload["metadata"] = json.dumps(metadata)
+        np.savez_compressed(d / "memory.npz", **payload)
 
     def load_memory(self, role_id: str, roi_id: str):
         """
@@ -31,11 +41,22 @@ class ModelStore:
         p = self._dir(role_id, roi_id) / "memory.npz"
         if not p.exists():
             return None
-        z = np.load(p, allow_pickle=False)
-        emb = z["emb"].astype(np.float32)
-        H = int(z["token_h"])
-        W = int(z["token_w"])
-        return emb, (H, W)
+        with np.load(p, allow_pickle=False) as z:
+            emb = z["emb"].astype(np.float32)
+            H = int(z["token_h"])
+            W = int(z["token_w"])
+            metadata = {}
+            if "metadata" in z.files:
+                meta_raw = z["metadata"]
+                if np.ndim(meta_raw) == 0:
+                    meta_str = str(meta_raw.item())
+                else:
+                    meta_str = str(meta_raw)
+                try:
+                    metadata = json.loads(meta_str)
+                except Exception:
+                    metadata = {}
+        return emb, (H, W), metadata
 
     def save_index_blob(self, role_id: str, roi_id: str, blob: bytes):
         d = self._dir(role_id, roi_id)
