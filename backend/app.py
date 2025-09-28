@@ -7,8 +7,15 @@ from pathlib import Path
 import numpy as np
 import cv2
 
-from fastapi import FastAPI, UploadFile, File, Form
-from fastapi.responses import JSONResponse
+try:
+    from fastapi import FastAPI, UploadFile, File, Form
+    from fastapi.responses import JSONResponse
+except ModuleNotFoundError as exc:  # pragma: no cover - import guard
+    missing = exc.name or "fastapi"
+    raise ModuleNotFoundError(
+        f"Missing optional dependency '{missing}'. "
+        "Install backend requirements with 'python -m pip install -r backend/requirements.txt'."
+    ) from exc
 
 from .features import DinoV2Features
 from .patchcore import PatchCoreMemory
