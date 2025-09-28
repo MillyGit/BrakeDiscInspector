@@ -1,5 +1,6 @@
-torch>=2.1
-timm>=0.9.12
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.1.2
+timm==0.9.12
 faiss-cpu; platform_machine != "arm64"
 faiss-cpu==1.7.4.post2; platform_machine == "arm64" and sys_platform == "darwin"
 fastapi>=0.110
