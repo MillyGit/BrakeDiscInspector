@@ -197,12 +197,12 @@ Keep **defaults** aligned with the checked-in code to avoid drift with GUI docs.
 
 ### Uvicorn (dev)
 ```
-uvicorn backend.app:app --host 0.0.0.0 --port 8000
+uvicorn backend.app:app --host 127.0.0.1 --port 8000
 ```
 
 ### Gunicorn (prod, workers>1)
 ```
-gunicorn -k uvicorn.workers.UvicornWorker backend.app:app -w 2 -b 0.0.0.0:8000
+gunicorn -k uvicorn.workers.UvicornWorker backend.app:app -w 2 -b 127.0.0.1:8000
 ```
 
 ### Minimal Dockerfile (example)
@@ -212,7 +212,7 @@ WORKDIR /app
 COPY backend/ /app/backend/
 RUN pip install --no-cache-dir -r backend/requirements.txt
 EXPOSE 8000
-CMD ["uvicorn", "backend.app:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "backend.app:app", "--host", "127.0.0.1", "--port", "8000"]
 ```
 
 Mount or bake `models/` volume for persistence.
