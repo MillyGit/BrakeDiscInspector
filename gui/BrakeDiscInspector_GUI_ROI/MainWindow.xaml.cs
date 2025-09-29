@@ -631,14 +631,14 @@ namespace BrakeDiscInspector_GUI_ROI
             if (shape.Tag is not RoiModel roiInfo)
                 return;
 
-            var adorner = new RoiAdorner(shape, (changeKind, updatedModel) =>
+            var newAdorner = new RoiAdorner(shape, (changeKind, updatedModel) =>
             {
                 var pixelModel = CanvasToImage(updatedModel);
                 UpdateLayoutFromPixel(pixelModel);
                 HandleAdornerChange(changeKind, updatedModel, pixelModel, "[adorner]");
             }, AppendLog);
 
-            layer.Add(adorner);
+            layer.Add(newAdorner);
         }
 
         private void RemoveRoiAdorners(Shape shape)
@@ -3028,7 +3028,7 @@ namespace BrakeDiscInspector_GUI_ROI
                 // }
                 // 5) Llamada al backend /infer con el ROI canónico
                 string? shapeJson = annulus != null ? System.Text.Json.JsonSerializer.Serialize(annulus) : null;
-                var request = new BackendAPI.InferRequest("DemoRole", "DemoROI", BackendAPI.DefaultMmPerPx, cropPng)
+                var request = new InferRequest("DemoRole", "DemoROI", BackendAPI.DefaultMmPerPx, cropPng)
                 {
                     ShapeJson = shapeJson
                 };
