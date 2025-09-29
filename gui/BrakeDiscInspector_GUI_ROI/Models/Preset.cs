@@ -107,6 +107,7 @@ namespace BrakeDiscInspector_GUI_ROI
         public double ScaleMax { get; set; } = 1.05;
         public string Feature { get; set; } = "auto"; // auto|sift|orb|tm_rot (sin "geom")
         public int ModelInputSize { get; set; } = 600; // bloqueado a 600
+        public double MmPerPx { get; set; } = 0.20;
 
         // Rutas fijas
         public string Home { get; set; } = @"\\wsl$\Ubuntu\home\millylinux\BrakeDiscDefect_BACKEND";
