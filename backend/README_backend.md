@@ -10,6 +10,17 @@ Microservicio FastAPI para **detección de anomalías “good-only”**:
 
 ---
 
+## Índice rápido
+
+- [Instalación](#1-instalación)
+- [Ejecución](#2-ejecución)
+- [Endpoints](#3-endpoints)
+- [Notas de diseño](#4-notas-de-diseño)
+- [Integración con la GUI](#5-integración-con-la-gui-wpf-esquema)
+- [Consejos de rendimiento](#6-consejos-de-rendimiento)
+
+---
+
 ## 1) Instalación
 
 ```bash
@@ -179,6 +190,7 @@ curl -X POST http://127.0.0.1:8000/infer   -F role_id=Master1   -F roi_id=Patter
   - `models/<role>/<roi>/index.faiss` (si FAISS)
   - `models/<role>/<roi>/calib.json` (umbral, p99_ok, p5_ng, mm_per_px, etc.)
 - **Respuesta de `/infer`**: añade `params` con metadatos de extractor, coreset y configuración usada.
+- **Configuración**: variables como `DEVICE`, `INPUT_SIZE`, `CORESET_RATE`, `MODELS_DIR` pueden definirse en un `.env` o como variables del sistema; revisa `DEV_GUIDE.md` para detalles.
 
 ---
 

@@ -5,6 +5,21 @@
 
 La documentación está organizada para que cualquier colaborador (humano o agente) pueda localizar rápidamente los contratos, las guías de desarrollo y los flujos operativos.
 
+> **Ruta de lectura sugerida**
+> 1. Empezar con la [Arquitectura](#-estructura-del-proyecto) para entender los componentes.
+> 2. Revisar la [guía de desarrollo](DEV_GUIDE.md) y el [flujo GUI](instructions_codex_gui_workflow.md) según tu perfil.
+> 3. Consultar las fichas de API y formatos cuando integres el backend.
+
+## 🧭 Índice rápido
+
+- [Características principales](#-características-principales)
+- [Estructura del proyecto](#-estructura-del-proyecto)
+- [Puesta en marcha rápida](#-puesta-en-marcha-rápida)
+- [API principal](#-api-principal)
+- [ROI y shapes](#-roi-y-shapes)
+- [Documentación relacionada](#-documentación-relacionada)
+- [Checklist para Codex](#-checklist-para-codex)
+
 ---
 
 ## ✨ Características principales
@@ -105,6 +120,16 @@ Los artefactos se guardarán automáticamente en `backend/models/Master1/Pattern
    4. (Opcional) Ejecutar **Calibrate threshold** aportando scores OK/NG.
    5. Lanzar **Infer current ROI** para obtener `score`, `threshold` y heatmap superpuesto.
 
+### Variables y rutas clave
+
+| Componente | Variable/Ruta | Descripción |
+|------------|---------------|-------------|
+| Backend | `MODELS_DIR` | Cambia la carpeta donde se guardan `memory.npz`, `index.faiss` y `calib.json`. |
+| Backend | `CORESET_RATE`, `INPUT_SIZE`, `DEVICE` | Ajustan hiperparámetros de PatchCore y del extractor DINOv2. |
+| GUI | `appsettings.json:Backend.BaseUrl` | URL del servicio FastAPI (se puede sobrescribir con `BRAKEDISC_BACKEND_BASEURL`). |
+| GUI | `appsettings.json:Backend.DatasetRoot` | Carpeta donde la GUI guarda `datasets/<role>/<roi>/<ok|ng>/`. |
+| Compartido | `datasets/<role>/<roi>/manifest.json` | (Opcional) Estado del dataset y del entrenamiento por ROI. |
+
 ---
 
 ## 🔗 API principal
@@ -130,11 +155,21 @@ Más detalles prácticos en [ROI_AND_MATCHING_SPEC.md](ROI_AND_MATCHING_SPEC.md)
 
 ## 📚 Documentación relacionada
 
-- [ARCHITECTURE.md](ARCHITECTURE.md) — vista detallada de componentes, flujo de datos y sincronización ROI.
-- [DEV_GUIDE.md](DEV_GUIDE.md) — preparación de entorno, tooling y debugging.
-- [DEPLOYMENT.md](DEPLOYMENT.md) — despliegue en local, laboratorio y producción (Gunicorn/Uvicorn).
-- [LOGGING.md](LOGGING.md) — eventos mínimos, correlación GUI↔backend, rotación de logs.
-- [docs/mcp/](docs/mcp/overview.md) — Maintenance & Communication Plan actualizado.
+- **Arquitectura y contratos**
+  - [ARCHITECTURE.md](ARCHITECTURE.md) — componentes, diagrama de flujo y reglas de coordinación GUI↔backend.
+  - [ROI_AND_MATCHING_SPEC.md](ROI_AND_MATCHING_SPEC.md) — geometría detallada, shapes y conversiones.
+  - [API_REFERENCE.md](API_REFERENCE.md) — endpoints HTTP con ejemplos `curl`.
+  - [DATA_FORMATS.md](DATA_FORMATS.md) — esquemas JSON, PNG y artefactos persistidos.
+- **Operación y desarrollo**
+  - [DEV_GUIDE.md](DEV_GUIDE.md) — setup, scripts y estándares de código.
+  - [DEPLOYMENT.md](DEPLOYMENT.md) — despliegue local/LAN/producción y smoke tests.
+  - [LOGGING.md](LOGGING.md) — política de logging y correlación de eventos.
+  - [backend/README_backend.md](backend/README_backend.md) — referencia operativa del servicio FastAPI.
+- **Coordinación y agentes**
+  - [instructions_codex_gui_workflow.md](instructions_codex_gui_workflow.md) — checklist completo para desarrollar la GUI.
+  - [backend/agents_for_backend.md](backend/agents_for_backend.md) — playbook de mantenimiento del backend.
+  - [docs/mcp/overview.md](docs/mcp/overview.md) — Maintenance & Communication Plan y responsables.
+  - [docs/mcp/latest_updates.md](docs/mcp/latest_updates.md) — bitácora de cambios coordinados.
 
 ---
 

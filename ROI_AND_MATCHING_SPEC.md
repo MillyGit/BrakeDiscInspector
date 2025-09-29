@@ -4,6 +4,18 @@ Especificación de las Regiones de Interés (ROI) y de la información geométri
 
 ---
 
+## Índice rápido
+
+- [Modelo de ROI en la GUI](#1-modelo-de-roi-en-la-gui)
+- [Canonicalización del ROI](#2-canonicalización-del-roi)
+- [Shapes soportados](#3-shapes-soportados-por-el-backend)
+- [Conversión de coordenadas](#4-conversión-de-coordenadas-gui--imagen)
+- [Integración con el backend](#5-integración-con-el-backend)
+- [Persistencia de datasets](#6-persistencia-de-datasets)
+- [Áreas y unidades](#7-áreas-y-unidades)
+
+---
+
 ## 1) Modelo de ROI en la GUI
 
 | Campo | Tipo | Descripción |

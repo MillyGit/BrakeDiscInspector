@@ -4,6 +4,16 @@ Este documento describe los endpoints expuestos por el backend **FastAPI** de Br
 
 ---
 
+## Índice rápido
+
+- [Endpoints principales](#1-endpoints-principales)
+- [Máscaras soportadas](#2-máscaras-shape-soportadas)
+- [Persistencia de artefactos](#3-persistencia-de-artefactos)
+- [Ejemplos adicionales](#4-ejemplos-adicionales)
+- [Convenciones generales](#5-convenciones-generales)
+
+---
+
 ## 1) Endpoints principales
 
 ### 1.1 `GET /health`
@@ -128,6 +138,11 @@ curl -X POST http://127.0.0.1:8000/infer \
 - `400 Bad Request`: memoria inexistente para `(role_id, roi_id)` o datos inválidos.
 - `422 Unprocessable Entity`: payload JSON malformado.
 - `500 Internal Server Error`: excepciones no controladas (se devuelve `{ "error", "trace" }`).
+
+**Cabeceras recomendadas**
+
+- `X-Correlation-Id`: identifica cada operación extremo a extremo (la GUI genera uno por llamada y el backend lo refleja en logs).
+- `Accept: application/json`: asegura que FastAPI negocie respuestas JSON incluso si algún proxy intermedio altera la petición.
 
 ---
 

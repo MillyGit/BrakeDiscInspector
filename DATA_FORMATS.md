@@ -4,6 +4,16 @@ Este documento resume los formatos de datos utilizados entre la GUI y el backend
 
 ---
 
+## Índice rápido
+
+- [Requests al backend](#1-requests-al-backend)
+- [Responses del backend](#2-responses-del-backend)
+- [Archivos generados en disco](#3-archivos-generados-en-disco)
+- [Modelos de datos en la GUI](#4-modelos-de-datos-en-la-gui-c)
+- [Convenciones generales](#5-convenciones-generales)
+
+---
+
 ## 1) Requests al backend
 
 ### 1.1 `POST /fit_ok`
@@ -130,7 +140,8 @@ Este documento resume los formatos de datos utilizados entre la GUI y el backend
 | Archivo | Contenido |
 |---------|-----------|
 | `*.png` | ROI canónico exportado por la GUI (PNG 8/24 bits). |
-| `*.json` | Metadata asociada: `role_id`, `roi_id`, `mm_per_px`, `shape`, `source_path`, `angle`, `timestamp`. |
+| `*.json` | Metadata asociada: `role_id`, `roi_id`, `mm_per_px`, `shape`, `source_path`, `angle`, `timestamp`, `app_version?`. |
+| `manifest.json` *(opcional)* | Resumen del dataset: nº OK/NG, fecha último `fit_ok`, `threshold` vigente, `mm_per_px`. |
 
 ### 3.3 Heatmaps temporales
 

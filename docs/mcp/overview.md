@@ -2,6 +2,17 @@
 
 The Maintenance & Communication Plan (MCP) keeps all contributors aligned on how BrakeDiscInspector evolves. It complements the architectural, data-format and API guides by clarifying responsibilities, coordination workflows and artefact ownership.
 
+## Quick index
+
+- [Scope](#scope)
+- [Roles & Responsibilities](#roles--responsibilities)
+- [Change Management Workflow](#change-management-workflow)
+- [Artefact Registry](#artefact-registry)
+- [Model & Dataset Update Playbook](#model--dataset-update-playbook)
+- [Logging & Observability Coordination](#logging--observability-coordination)
+- [Release Cadence](#release-cadence)
+- [Maintaining this Folder](#maintaining-this-folder)
+
 ## Scope
 
 The MCP covers every change that can affect:

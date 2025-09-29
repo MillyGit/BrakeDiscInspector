@@ -4,6 +4,19 @@ Guía de desarrollo para configurar, extender y probar el proyecto en entornos l
 
 ---
 
+## Índice rápido
+
+- [Preparación del repositorio](#1-preparación-del-repositorio)
+- [Backend (Python)](#2-backend-python)
+- [GUI (WPF)](#3-gui-wpf)
+- [Scripts auxiliares](#4-scripts-auxiliares-scripts)
+- [Estándares de código](#5-estándares-de-código)
+- [Testing](#6-testing)
+- [Roadmap sugerido](#7-roadmap-sugerido)
+- [Referencias cruzadas](#8-referencias-cruzadas)
+
+---
+
 ## 1) Preparación del repositorio
 
 ```bash
@@ -67,6 +80,16 @@ curl -X POST http://127.0.0.1:8000/infer -F role_id=Demo -F roi_id=ROI1 -F mm_pe
 - Revisar `logging` dentro de `app.py` y `infer.py` para tiempos parciales.
 - Ejecutar scripts/unit tests en `backend/tests/` para validar componentes aislados.
 
+### 2.7 Variables de entorno útiles
+
+| Variable | Uso | Comentario |
+|----------|-----|------------|
+| `DEVICE` | Forzar `cpu`/`cuda`. | Por defecto se autodetecta; útil cuando la GPU está ocupada. |
+| `CORESET_RATE` | Ajustar tamaño del coreset. | Acepta valores 0.01–0.05; comprueba memoria disponible antes de subirlo. |
+| `INPUT_SIZE` | Cambiar tamaño de entrada (múltiplo de 14). | Impacta en `token_shape` y en los heatmaps devueltos. |
+| `MODELS_DIR` | Definir carpeta de modelos. | Permite montar almacenamiento persistente fuera del repositorio. |
+| `UVICORN_PORT` | Sobre-escribir puerto en scripts. | Respaldado por `uvicorn` si se usa `python backend/app.py`. |
+
 ---
 
 ## 3) GUI (WPF)
@@ -94,6 +117,14 @@ curl -X POST http://127.0.0.1:8000/infer -F role_id=Demo -F roi_id=ROI1 -F mm_pe
   }
 }
 ```
+
+Puedes sobrescribir `BaseUrl` desde variables de entorno:
+
+```powershell
+$env:BRAKEDISC_BACKEND_BASEURL="http://192.168.1.20:8000"
+```
+
+o definir `BRAKEDISC_BACKEND_HOST` + `BRAKEDISC_BACKEND_PORT` para construir la URL automáticamente.
 
 ### 3.4 Flujo recomendado
 1. Cargar imagen y dibujar ROI (respetando mínimo 10×10 px).
@@ -139,6 +170,10 @@ curl -X POST http://127.0.0.1:8000/infer -F role_id=Demo -F roi_id=ROI1 -F mm_pe
 - [ ] Persistir manifiestos por ROI con estado de entrenamiento/calibración.
 - [ ] Integrar exportación de reportes (CSV/JSON) desde la GUI.
 - [ ] Instrumentar métricas Prometheus desde FastAPI.
+- [ ] Soportar múltiples ROIs simultáneos en la GUI sin romper adorners.
+- [ ] Añadir modo *batch analyze* y exportación a CSV/DB.
+- [ ] Investigar entrenamiento incremental / *online* para PatchCore.
+- [ ] Documentar integración con Prometheus/Grafana.
 ## 8) Referencias cruzadas
 - [ARCHITECTURE.md](ARCHITECTURE.md) — Visión de alto nivel y flujo de datos.
 - [API_REFERENCE.md](API_REFERENCE.md) — Contratos HTTP detallados.
@@ -146,19 +181,3 @@ curl -X POST http://127.0.0.1:8000/infer -F role_id=Demo -F roi_id=ROI1 -F mm_pe
 - [DEPLOYMENT.md](DEPLOYMENT.md) — Guía de despliegue local/prod.
 - [LOGGING.md](LOGGING.md) — Política de logging y correlación GUI↔backend.
 - [docs/mcp/overview.md](docs/mcp/overview.md) — Maintenance & Communication Plan.
-- [ ] Multiples ROIs simultáneos
-- [ ] Batch analyze
-- [ ] Entrenamiento incremental
-- [ ] Exportación resultados a CSV/DB
-- [ ] Integración Prometheus/Grafana
-
----
-
-## 9) Recursos cruzados
-
-- **ARCHITECTURE.md**: diagrama flujo
-- **API_REFERENCE.md**: contratos endpoints
-- **ROI_AND_MATCHING_SPEC.md**: geometría ROI
-- **DATA_FORMATS.md**: formatos request/response
-- **DEPLOYMENT.md**: despliegue en LAN/prod
-- **LOGGING.md**: política de logs

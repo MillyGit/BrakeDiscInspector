@@ -5,6 +5,21 @@ Este documento describe la arquitectura actual (GUI + backend), el flujo de dato
 
 ---
 
+## Índice rápido
+
+- [Visión general](#1-visión-general)
+- [Componentes](#2-componentes)
+- [Flujo de datos end-to-end](#3-flujo-de-datos-end-to-end)
+- [Sincronización de coordenadas](#4-sincronización-de-coordenadas-gui--imagen)
+- [Backend — inferencia y persistencia](#5-backend--inferencia-y-persistencia)
+- [Extensibilidad segura](#6-extensibilidad-segura)
+- [Recursos cruzados](#7-recursos-cruzados)
+- [Seguridad y despliegue](#9-seguridad-y-despliegue)
+- [Referencias cruzadas](#10-referencias-cruzadas)
+- [Glosario rápido](#glosario-rápido)
+
+---
+
 ## 1) Visión general
 
 El sistema consta de dos procesos cooperando en tiempo real:
@@ -162,3 +177,12 @@ Para cualquier modificación sustancial, coordina con los responsables listados 
 - **DEV_GUIDE.md** (setup detallado)
 - **DEPLOYMENT.md** (smoke tests)
 - **LOGGING.md** (política de logs)
+
+---
+
+## Glosario rápido
+
+- **ROI canónica**: imagen resultante de rotar y recortar la ROI dibujada en la GUI; es la única que llega al backend.
+- **Coreset**: subconjunto representativo de embeddings OK utilizado por PatchCore para acelerar el kNN.
+- **Token shape**: altura y anchura del grid de tokens DINOv2 antes de reescalar al tamaño del ROI.
+- **Shape mask**: JSON que describe la región válida (rect/círculo/annulus) dentro de la ROI canónica.

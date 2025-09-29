@@ -6,6 +6,18 @@ Aplicación WPF (.NET 8) que permite preparar ROIs, gestionar datasets y comunic
 
 ---
 
+## Índice rápido
+
+- [Objetivo](#1-objetivo)
+- [Flujo principal](#2-flujo-principal)
+- [Estructura del proyecto](#3-estructura-del-proyecto)
+- [Configuración](#4-configuración)
+- [Problemas comunes](#5-problemas-comunes)
+- [Registro](#6-registro)
+- [Referencias](#7-referencias)
+
+---
+
 ## 2. Flujo principal
 
 1. Cargar imagen (BMP/PNG/JPG) en la vista principal.
