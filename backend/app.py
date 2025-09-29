@@ -237,8 +237,17 @@ if __name__ == "__main__":
     if not logging.getLogger().handlers:
         logging.basicConfig(level=logging.INFO)
 
-    host = "127.0.0.1"
-    port = 8000
+    import os
+
+    host = os.environ.get("BRAKEDISC_BACKEND_HOST") or os.environ.get("HOST") or "127.0.0.1"
+
+    raw_port = os.environ.get("BRAKEDISC_BACKEND_PORT") or os.environ.get("PORT") or "8000"
+    try:
+        port = int(raw_port)
+    except (TypeError, ValueError):
+        log.warning("Invalid port '%s' provided via environment, falling back to 8000", raw_port)
+        port = 8000
+
     log.info("Starting backend service on %s:%s", host, port)
 
     import uvicorn
