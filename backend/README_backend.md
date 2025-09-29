@@ -35,6 +35,9 @@ pip install -r backend/requirements.txt
 uvicorn backend.app:app --reload
 # por defecto: http://127.0.0.1:8000
 # docs interactivos: http://127.0.0.1:8000/docs
+
+# o con el script directo (respeta BRAKEDISC_BACKEND_HOST/BRAKEDISC_BACKEND_PORT o HOST/PORT)
+python backend/app.py
 ```
 
 ---

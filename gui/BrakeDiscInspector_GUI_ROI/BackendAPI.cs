@@ -33,6 +33,30 @@ namespace BrakeDiscInspector_GUI_ROI
         {
             try
             {
+                string? envBaseUrl =
+                    Environment.GetEnvironmentVariable("BRAKEDISC_BACKEND_BASEURL") ??
+                    Environment.GetEnvironmentVariable("BRAKEDISC_BACKEND_BASE_URL") ??
+                    Environment.GetEnvironmentVariable("BRAKEDISC_BACKEND_URL");
+
+                if (!string.IsNullOrWhiteSpace(envBaseUrl))
+                {
+                    BaseUrl = NormalizeBaseUrl(envBaseUrl);
+                }
+                else
+                {
+                    var host = Environment.GetEnvironmentVariable("BRAKEDISC_BACKEND_HOST") ??
+                               Environment.GetEnvironmentVariable("HOST");
+                    var port = Environment.GetEnvironmentVariable("BRAKEDISC_BACKEND_PORT") ??
+                               Environment.GetEnvironmentVariable("PORT");
+
+                    if (!string.IsNullOrWhiteSpace(host) || !string.IsNullOrWhiteSpace(port))
+                    {
+                        host = string.IsNullOrWhiteSpace(host) ? "127.0.0.1" : host.Trim();
+                        port = string.IsNullOrWhiteSpace(port) ? "8000" : port.Trim();
+                        BaseUrl = NormalizeBaseUrl($"{host}:{port}");
+                    }
+                }
+
                 var settingsPath = Path.Combine(AppContext.BaseDirectory, "appsettings.json");
                 if (File.Exists(settingsPath))
                 {
@@ -41,12 +65,31 @@ namespace BrakeDiscInspector_GUI_ROI
                     if (doc.RootElement.TryGetProperty("Backend", out var be) &&
                         be.TryGetProperty("BaseUrl", out var baseUrlEl))
                     {
-                        BaseUrl = baseUrlEl.GetString() ?? BaseUrl;
+                        var fileUrl = baseUrlEl.GetString();
+                        if (!string.IsNullOrWhiteSpace(fileUrl))
+                        {
+                            BaseUrl = NormalizeBaseUrl(fileUrl);
+                        }
                     }
                 }
             }
-            catch { /* fallback */ }
-            http.BaseAddress = new Uri(BaseUrl);
+            catch
+            {
+                /* fallback */
+            }
+
+            http.BaseAddress = new Uri(BaseUrl.EndsWith("/") ? BaseUrl : BaseUrl + "/");
+        }
+
+        private static string NormalizeBaseUrl(string value)
+        {
+            var trimmed = value.Trim();
+            if (!trimmed.StartsWith("http", StringComparison.OrdinalIgnoreCase))
+            {
+                trimmed = "http://" + trimmed.TrimStart('/');
+            }
+
+            return trimmed.TrimEnd('/');
         }
 
         // ========= /analyze (bytes ya rotados)

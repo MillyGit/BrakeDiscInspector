@@ -17,7 +17,7 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
         {
             _httpClient = httpClient ?? new HttpClient();
             _httpClient.Timeout = TimeSpan.FromSeconds(120);
-            BaseUrl = "http://127.0.0.1:8000";
+            BaseUrl = ResolveDefaultBaseUrl();
         }
 
         public string BaseUrl
@@ -39,6 +39,35 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
 
                 _httpClient.BaseAddress = new Uri(trimmed + "/");
             }
+        }
+
+        private static string ResolveDefaultBaseUrl()
+        {
+            string defaultUrl = "http://127.0.0.1:8000";
+
+            string? envBaseUrl =
+                Environment.GetEnvironmentVariable("BRAKEDISC_BACKEND_BASEURL") ??
+                Environment.GetEnvironmentVariable("BRAKEDISC_BACKEND_BASE_URL") ??
+                Environment.GetEnvironmentVariable("BRAKEDISC_BACKEND_URL");
+
+            if (!string.IsNullOrWhiteSpace(envBaseUrl))
+            {
+                return envBaseUrl;
+            }
+
+            var host = Environment.GetEnvironmentVariable("BRAKEDISC_BACKEND_HOST") ??
+                       Environment.GetEnvironmentVariable("HOST");
+            var port = Environment.GetEnvironmentVariable("BRAKEDISC_BACKEND_PORT") ??
+                       Environment.GetEnvironmentVariable("PORT");
+
+            if (!string.IsNullOrWhiteSpace(host) || !string.IsNullOrWhiteSpace(port))
+            {
+                host = string.IsNullOrWhiteSpace(host) ? "127.0.0.1" : host.Trim();
+                port = string.IsNullOrWhiteSpace(port) ? "8000" : port.Trim();
+                return $"{host}:{port}";
+            }
+
+            return defaultUrl;
         }
 
         public async Task<FitOkResult> FitOkAsync(string roleId, string roiId, double mmPerPx, IEnumerable<string> okImagePaths)

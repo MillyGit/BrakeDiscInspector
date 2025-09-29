@@ -48,6 +48,13 @@ Aplicación WPF (.NET 8) que permite preparar ROIs, gestionar datasets y comunic
 }
 ```
 
+También puedes sobreescribir `BaseUrl` mediante variables de entorno:
+
+- `BRAKEDISC_BACKEND_BASEURL` / `BRAKEDISC_BACKEND_BASE_URL`
+- o `BRAKEDISC_BACKEND_HOST` + `BRAKEDISC_BACKEND_PORT` (acepta también `HOST` / `PORT`)
+
+La GUI normaliza automáticamente la URL (añade `http://` si falta) antes de usarla.
+
 ---
 
 ## 5. Problemas comunes
