@@ -20,7 +20,7 @@ namespace BrakeDiscInspector_GUI_ROI
 
     public static class BackendAPI
     {
-        public static string BaseUrl { get; private set; } = "http://127.0.0.1:5000";
+        public static string BaseUrl { get; private set; } = "http://127.0.0.1:8000";
 
         // === Endpoints
         public const string AnalyzeEndpoint = "/analyze";
@@ -33,12 +33,16 @@ namespace BrakeDiscInspector_GUI_ROI
         {
             try
             {
-                var json = File.ReadAllText("appsettings.json");
-                using var doc = JsonDocument.Parse(json);
-                if (doc.RootElement.TryGetProperty("Backend", out var be) &&
-                    be.TryGetProperty("BaseUrl", out var baseUrlEl))
+                var settingsPath = Path.Combine(AppContext.BaseDirectory, "appsettings.json");
+                if (File.Exists(settingsPath))
                 {
-                    BaseUrl = baseUrlEl.GetString() ?? BaseUrl;
+                    var json = File.ReadAllText(settingsPath);
+                    using var doc = JsonDocument.Parse(json);
+                    if (doc.RootElement.TryGetProperty("Backend", out var be) &&
+                        be.TryGetProperty("BaseUrl", out var baseUrlEl))
+                    {
+                        BaseUrl = baseUrlEl.GetString() ?? BaseUrl;
+                    }
                 }
             }
             catch { /* fallback */ }
