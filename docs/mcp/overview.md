@@ -1,109 +1,79 @@
 # MCP Overview
 
-The Maintenance & Communication Plan (MCP) keeps all contributors aligned on how the BrakeDiscInspector
-platform evolves. It complements the architectural, data-format and API guides by describing **who does what**,
-**how updates are coordinated**, and **where canonical artefacts live**.
+The Maintenance & Communication Plan (MCP) keeps all contributors aligned on how BrakeDiscInspector evolves. It complements the architectural, data-format and API guides by clarifying responsibilities, coordination workflows and artefact ownership.
 
 ## Scope
 
 The MCP covers every change that can affect:
 
-- The backend inference service in [`backend/`](../../backend) and its documented interfaces.
-- The WPF GUI located in [`gui/`](../../gui).
-- Shared datasets, exported models, or configuration thresholds that impact defect detection results.
+- The FastAPI backend in [`backend/`](../../backend) and its contracts (`/health`, `/fit_ok`, `/calibrate_ng`, `/infer`).
+- The WPF GUI in [`gui/`](../../gui) that manages ROI datasets and interacts with the backend.
+- Shared datasets, trained artefacts under `backend/models/<role>/<roi>/`, and calibration thresholds persisted in `calib.json`.
 - Operational tooling (PowerShell scripts, logging, deployment flows) referenced across the repository.
 
 ## Roles & Responsibilities
 
 | Role | Primary Responsibilities | Reference Material |
 |------|--------------------------|--------------------|
-| MCP Maintainer | Curate this documentation, track outstanding action items, and publish updates in [`latest_updates.md`](latest_updates.md). | This folder |
-| Backend Lead | Own API/contracts, model management and deployment readiness for the Python service. | [`API_REFERENCE.md`](../../API_REFERENCE.md), [`DEPLOYMENT.md`](../../DEPLOYMENT.md) |
-| GUI Lead | Coordinate GUI release cadence and ROI tooling updates. | [`ARCHITECTURE.md`](../../ARCHITECTURE.md), GUI folder |
-| Data Steward | Version the training/inference datasets, manage `model/current_model.h5`, and align threshold files. | [`DATA_FORMATS.md`](../../DATA_FORMATS.md), [`ROI_AND_MATCHING_SPEC.md`](../../ROI_AND_MATCHING_SPEC.md) |
+| MCP Maintainer | Curate this documentation, track action items, publish updates in [`latest_updates.md`](latest_updates.md). | This folder |
+| Backend Lead | Own API/contract stability, PatchCore artefacts, deployment readiness. | [`API_REFERENCE.md`](../../API_REFERENCE.md), [`backend/README_backend.md`](../../backend/README_backend.md) |
+| GUI Lead | Coordinate GUI release cadence, ROI tooling updates, dataset UX. | [`ARCHITECTURE.md`](../../ARCHITECTURE.md), [`DEV_GUIDE.md`](../../DEV_GUIDE.md) |
+| Data Steward | Version datasets, manage `models/<role>/<roi>/memory.npz` and `calib.json`, ensure mm/px consistency. | [`DATA_FORMATS.md`](../../DATA_FORMATS.md), [`ROI_AND_MATCHING_SPEC.md`](../../ROI_AND_MATCHING_SPEC.md) |
 
 ## Change Management Workflow
 
-1. **Propose** the change via an issue or pull request. Reference impacted components and link to the most
-   relevant spec (architecture, data formats, logging, etc.).
-2. **Assess impact** with the appropriate role owner(s). Confirm dataset, API, and GUI compatibility.
-3. **Validate** using the documented procedures in [`DEV_GUIDE.md`](../../DEV_GUIDE.md) and
-   [`DEPLOYMENT.md`](../../DEPLOYMENT.md). Attach logs or artefacts when the change affects inference results.
-4. **Document** the outcome here:
-   - Update the pertinent guide (architecture, data format, logging, etc.).
-   - Record the summary in [`latest_updates.md`](latest_updates.md) with date, owner, and next steps.
-5. **Communicate** the release to the broader team (Slack/email) and include links to the updated markdown files.
+1. **Propose** the change via issue or PR, referencing impacted specs (architecture, data formats, logging, deployment).
+2. **Assess impact** with relevant role owners (backend, GUI, data). Confirm compatibility with existing artefacts.
+3. **Validate** using procedures in [`DEV_GUIDE.md`](../../DEV_GUIDE.md) and smoke tests from [`DEPLOYMENT.md`](../../DEPLOYMENT.md).
+4. **Document** the outcome:
+   - Update the pertinent guide(s).
+   - Record the summary in [`latest_updates.md`](latest_updates.md) with date, owner, links to evidence.
+5. **Communicate** the release to the wider team (Slack/email) with links to the updated markdown files.
 
-## Data & Artefact Registry
+## Artefact Registry
 
-- **Models**: `backend/model/current_model.h5` (TensorFlow). Ensure thresholds are stored in `backend/model/threshold.txt`.
-- **Sample datasets**: Refer to the locations described in [`DATA_FORMATS.md`](../../DATA_FORMATS.md).
-- **Logs**: Locations and rotation policies are maintained in [`LOGGING.md`](../../LOGGING.md).
-- **Scripts**: PowerShell utilities live in [`scripts/`](../../scripts) for setup and runtime management.
+- **PatchCore memory**: `backend/models/<role>/<roi>/memory.npz` (+ optional `index.faiss`).
+- **Calibration**: `backend/models/<role>/<roi>/calib.json`.
+- **Dataset exports**: `datasets/<role>/<roi>/<ok|ng>/` (PNG + metadata JSON).
+- **Logs**: Backend/GUI expectations documented in [`LOGGING.md`](../../LOGGING.md).
 
 ## Model & Dataset Update Playbook
 
-1. **Coloca los artefactos base** siguiendo las rutas prescritas en el [README](../../README.md#backend-python):
-   - Sustituye `backend/model/current_model.h5` y `backend/model/threshold.txt` con las nuevas versiones aprobadas, preservando los nombres de archivo para que el backend los cargue automáticamente.
-   - Si la actualización incluye dataset auxiliar (muestras de verificación o logs de entrenamiento), archívalos en el repositorio correspondiente y enlázalos en la bitácora.
-2. **Ejecuta los tests rápidos** descritos en [`DEV_GUIDE.md` §2.5](../../DEV_GUIDE.md#25-tests-básicos) para validar la carga inicial:
-   - Asegúrate de que el backend se inicie sin errores y luego ejecuta `curl http://127.0.0.1:5000/train_status` para confirmar que la metadata del modelo refleja los artefactos recién colocados.
-   - Registra la salida del comando y, si procede, añade la evidencia de `curl /analyze` con un crop de control para comprobar coherencia.
-3. **Documenta métricas y umbral** empleando la estructura de respuesta definida en [`DATA_FORMATS.md` §2.2](../../DATA_FORMATS.md#22-train_status):
-   - Copia los campos relevantes (`threshold`, `artifacts.model`, `artifacts.threshold`, `model_runtime`) en la bitácora de evaluación y resalta cualquier desviación frente al release anterior.
-   - Si `/analyze` se usó para smoke tests, captura `label`, `score` y `threshold` del JSON de salida para respaldar la decisión del Data Steward.
-4. **Actualiza la trazabilidad** en [`latest_updates.md`](latest_updates.md):
-   - Inserta una entrada fechada con responsable, versión del modelo/dataset, métricas clave y enlaces a la evidencia (`curl`, reportes, capturas).
-   - Menciona explícitamente que los artefactos fueron colocados conforme al README y que los tests rápidos del DEV_GUIDE se completaron, de modo que otros roles puedan seguir el mismo flujo operativo.
+1. **Place artefacts** under `backend/models/<role>/<roi>/` using the same naming convention (`memory.npz`, `index.faiss`, `calib.json`).
+2. **Run smoke tests**:
+   ```bash
+   curl http://127.0.0.1:8000/health
+   curl -X POST http://127.0.0.1:8000/infer -F role_id=<role> -F roi_id=<roi> -F mm_per_px=<value> -F image=@<sample>
+   ```
+   Capture the JSON responses as evidence.
+3. **Document metrics**: record `score`, `threshold`, `token_shape`, and any calibration parameters in [`latest_updates.md`](latest_updates.md).
+4. **Update dataset manifests** if new PNG/JSON pairs are added (counts, timestamps, mm/px values).
 
 ## Logging & Observability Coordination
 
-Logging expectations for the platform are centralised in [`LOGGING.md`](../../LOGGING.md) and must be treated as release
-gates so that troubleshooting is reliable across teams.
+Expectations are centralised in [`LOGGING.md`](../../LOGGING.md):
 
-- **Eventos mínimos**:
-  - Backend: iniciar carga de modelo, umbral vigente, cada request `/analyze`, `/train_status` y `/match_master`,
-    incluyendo bytes recibidos, `label/score/threshold`, latencia y `logger.exception` ante errores.
-  - GUI: arranque de la app, carga de imágenes (anonimizadas), ajustes ROI, solicitudes **Analyze** con tamaño PNG y
-    respuesta (`label/score/threshold`).
-- **Correlación GUI–backend**: toda solicitud **Analyze** debe llevar `X-Correlation-Id` generado en la GUI y los
-  logs del backend deben persistirlo para seguimiento de punta a punta.
-- **Métricas mínimas**: capturar media y p95 de latencia de `/analyze`, conteo de decisiones `OK/NG` y errores por tipo
-  (decoding/model/annulus) como base para los tableros de observabilidad.
-- **Rotación**: rotar `backend.log` semanalmente (logrotate/Task Scheduler) y asegurar retención comprimida de al menos
-  ocho ciclos.
-
-| Ítem | Validación pre-release | Validación post-release |
-|------|-----------------------|-------------------------|
-| Eventos mínimos backend | Backend Lead verifica trazas recientes en `backend/logs/` | Backend Lead audita resumen de logs tras la primera hora del despliegue |
-| Eventos mínimos GUI | GUI Lead revisa archivo `gui.log` generado durante smoke tests | GUI Lead confirma correlaciones con muestras reales del release |
-| Correlación `X-Correlation-Id` | Backend Lead y GUI Lead validan encabezados en pruebas de extremo a extremo | MCP Maintainer revisa reportes de correlación en el informe post-mortem del release |
-| Métricas mínimas | Backend Lead valida exportación/consulta del tablero de latencias y conteos | MCP Maintainer compila métricas y las anexa a la bitácora del release |
-| Rotación | Backend Lead confirma configuración activa de logrotate/Task Scheduler | MCP Maintainer verifica que no haya crecido el volumen fuera de los límites acordados |
-
-> Cualquier desviación (ajuste de niveles de log, nueva herramienta de observabilidad, cambios en rotación, etc.) debe
-> registrarse en [`latest_updates.md`](latest_updates.md) con fecha y responsables para mantener trazabilidad.
+- Backend logs `/fit_ok`, `/calibrate_ng`, `/infer` with correlation IDs and latencies.
+- GUI logs dataset operations and backend responses without PII.
+- Weekly log rotation (logrotate or Task Scheduler) with at least eight compressed backups.
+- Optional metrics (latency, OK/NG counts) reported to stakeholders.
 
 ## Release Cadence
 
-- **GUI + Backend Releases**: Target coordinated releases so ROI contracts and REST endpoints remain synchronized.
-- **Emergency Fixes**: Document hotfixes in [`latest_updates.md`](latest_updates.md) with context and mitigation steps.
-- **Model Refreshes**: Run evaluation pipelines and capture metrics before swapping `current_model.h5`.
+- **Coordinated releases**: Backend and GUI should be released together when contracts change.
+- **Emergency fixes**: Document hotfixes (who/when/why) in [`latest_updates.md`](latest_updates.md).
+- **Model refreshes**: Always run smoke tests and capture evidence before swapping artefacts.
 
 ### Release Readiness Checklist
 
-- [ ] Ejecuta los `curl` de `/train_status` y `/analyze`, captura sus respuestas y adjunta la evidencia en la bitácora del release siguiendo las pruebas de humo descritas en [`DEPLOYMENT.md` §3](../../DEPLOYMENT.md#3-pruebas-de-humo-smoke-tests) y en los tests básicos del backend en [`DEV_GUIDE.md` §2.5](../../DEV_GUIDE.md#25-tests-básicos).
-- [ ] Documenta un resumen de los resultados anteriores (incluyendo umbrales reportados y etiquetas devueltas) en el paquete de notas de release para auditar el comportamiento del modelo antes del envío, siguiendo el formato de evidencias descrito en [`DEPLOYMENT.md` §3](../../DEPLOYMENT.md#3-pruebas-de-humo-smoke-tests) y los lineamientos de bitácora en [`DEV_GUIDE.md` §2.5](../../DEV_GUIDE.md#25-tests-básicos).
-- [ ] Confirma que `gui/BrakeDiscInspector_GUI_ROI/appsettings.json` apunta al backend correcto según las directrices de despliegue de GUI en [`DEPLOYMENT.md` §2.2](../../DEPLOYMENT.md#22-gui) y la configuración detallada en [`DEV_GUIDE.md` §3.3](../../DEV_GUIDE.md#33-configuración).
-- [ ] Recorre el checklist final de despliegue en [`DEPLOYMENT.md` §10](../../DEPLOYMENT.md#10-checklist-de-despliegue) y marca cada ítem antes de solicitar la ventana coordinada.
-
-> Al completar la lista, enlaza el resultado en [`latest_updates.md`](latest_updates.md) cada vez que se programe un release coordinado.
+- [ ] Smoke tests completed (`/health`, `/fit_ok`, `/infer`).
+- [ ] `memory.npz` + `calib.json` present for all active roles/ROIs.
+- [ ] GUI `appsettings.json` updated con la URL correcta del backend.
+- [ ] Logs revisados durante la primera hora tras despliegue.
+- [ ] Entrada en [`latest_updates.md`](latest_updates.md) con resultados y responsables.
 
 ## Maintaining this Folder
 
-- Keep files in `docs/mcp/` scoped to MCP coordination topics.
+- Scope limited to MCP coordination topics.
 - Add a dated entry to [`latest_updates.md`](latest_updates.md) for every meaningful change.
-- When introducing new MCP subsections, create additional markdown files in this directory and link them from here.
-
-> 📌 **Reminder:** If a change modifies repository structure or contracts, also update cross-references in
-> [`README.md`](../../README.md) so downstream contributors can locate the MCP documentation easily.
+- Cross-link new MCP documents from here and ensure README references remain valid.

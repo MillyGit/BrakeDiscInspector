@@ -1,72 +1,77 @@
-# BrakeDiscInspector_GUI_ROI
+# BrakeDiscInspector GUI — ROI Workflow
 
-## 1. Objetivo del sistema
-Sistema de inspección visual de discos de freno mediante GUI en C# WPF y backend en Python (Flask + OpenCV/TensorFlow). Permite definir ROIs, validar patrones maestros y ejecutar inspección de defectos.
+## 1. Objetivo
 
----
-
-## 2. Flujo de uso
-1. Cargar imagen BMP en el GUI.
-2. Dibujar ROIs: Master1 Pattern, Master1 Search, Master2 Pattern, Master2 Search, ROI de Inspección.
-3. Guardar layout y preset.
-4. Validar masters: matcher local o backend.
-5. Analizar inspección: mover ROI según masters y enviar a backend `/analyze`.
-6. Mostrar resultados (cruces, logs, estado).
+Aplicación WPF (.NET 8) que permite preparar ROIs, gestionar datasets y comunicarse con el backend FastAPI (PatchCore + DINOv2). La GUI exporta ROIs canónicos (crop + rotación) y consume los endpoints `/fit_ok`, `/calibrate_ng`, `/infer`.
 
 ---
 
-## 3. Estructura del GUI (C#)
-- **MainWindow.xaml / .cs**: control principal de la UI y flujo de análisis.
-- **MainWindow.cs**: código parcial auxiliar.
-- **BackendAPI.cs**: comunicación HTTP con Flask (MatchMasterAsync → `/match_master` alias `/match_one`, AnalyzeAsync, TryCropToPng).
-- **LocalMatcher.cs**: coincidencia local con OpenCVSharp.
-- **RoiAdorner.cs / RoiOverlay.cs**: dibujo y manipulación de ROIs.
-- **PresetManager.cs**: gestión de parámetros de coincidencia.
-- **MasterLayout.cs**: persistencia de ROIs y layouts.
-- **AssemblyInfo.cs**: metadatos del ensamblado.
+## 2. Flujo principal
+
+1. Cargar imagen (BMP/PNG/JPG) en la vista principal.
+2. Dibujar y rotar el ROI con los adorners existentes (`RoiAdorner`, `RoiRotateAdorner`).
+3. **Dataset tab**:
+   - `Add OK/NG from current ROI` → guarda PNG + metadata JSON en `datasets/<role>/<roi>/<ok|ng>/`.
+   - `Remove selected`, `Open folder` para mantenimiento rápido.
+4. **Train tab**:
+   - `Train memory (fit_ok)` → empaqueta todos los PNG OK y llama a `/fit_ok`.
+   - Muestra `n_embeddings`, `coreset_size`, `token_shape` y guarda el log.
+5. **Calibrate tab** (opcional):
+   - Llama a `/calibrate_ng` con scores OK/NG para fijar `threshold` y `area_mm2_thr`.
+6. **Infer tab**:
+   - `Infer current ROI` → llama a `/infer`, decodifica `heatmap_png_base64` y lo superpone.
+   - Permite ajustar visualmente el umbral sin modificar el backend (slider local).
 
 ---
 
-## 4. Backend (Python)
-- **app.py**: servidor Flask con endpoints:
-  - `/match_master` (alias `/match_one`)
-  - `/analyze`
-  - `/train_status`
-- **matcher.py**: lógica de matching ORB/SIFT.
-- **model.py**: TensorFlow (EfficientNetB3) para inspección de defectos.
+## 3. Estructura del proyecto
+
+- `App.xaml` / `App.xaml.cs`
+- `MainWindow.xaml` / `.cs` (tabs Dataset/Train/Calibrate/Infer)
+- `Workflow/BackendClient.cs` (HttpClient async)
+- `ROI/` — modelos y adorners (no modificar geometría base)
+- `Overlays/` — sincronización canvas ↔ imagen (`RoiOverlay`)
+- `Workflow/DatasetManager.cs` — helpers para PNG + JSON
+- `ViewModels/` — lógica MVVM para cada tab
 
 ---
 
-## 5. Problemas comunes resueltos
-- `.center` en `MatchOneResult` eliminado → usar `x/y`.
-- `TryCropToPng` con `out MemoryStream, out string`.
-- Conversión `double→int` → `Math.Round`.
-- Logs depurados.
-- Timeout backend → revisar JSON esperado.
+## 4. Configuración
+
+`appsettings.json`:
+```json
+{
+  "Backend": {
+    "BaseUrl": "http://127.0.0.1:8000",
+    "DatasetRoot": "C:\\data\\brakedisc\\datasets"
+  }
+}
+```
 
 ---
 
-## 6. Archivos necesarios
-1. MainWindow.xaml.cs  
-2. MainWindow.cs  
-3. MainWindow.xaml.txt (si no abre bien el XAML)  
-4. BackendAPI.cs  
-5. LocalMatcher.cs  
-6. RoiAdorner.cs  
-7. RoiOverlay.cs  
-8. PresetManager.cs  
-9. MasterLayout.cs  
-10. AssemblyInfo.cs  
-11. BrakeDiscInspector_GUI_ROI.csproj.txt  
-12. BrakeDiscInspector_GUI_ROI.sln.txt  
-13. all_snippets.txt  
-14. Backend: app.py, matcher.py, model.py, data de validación
+## 5. Problemas comunes
+
+- **Adorners desalineados**: ejecutar `SyncOverlayToImage()` al cargar imagen y en `SizeChanged`.
+- **Heatmap invertido**: verificar que el PNG devuelto por `/infer` se muestra con el mismo tamaño del ROI canónico.
+- **Timeouts**: aumentar `HttpClient.Timeout` cuando se suben docenas de muestras a `/fit_ok`.
+- **Memoria no encontrada**: ejecutar `/fit_ok` antes de `/infer` y revisar carpeta `backend/models/<role>/<roi>/`.
 
 ---
 
-## 7. Notas finales
-- Usar siempre la última versión de BackendAPI.cs.
-- Confirmar que el JSON del backend contiene `found`, `center_x`, `center_y`, `confidence`, `score`, `scale`.
-- Verificar conectividad entre Windows y WSL (0.0.0.0 vs 127.0.0.1).
+## 6. Registro
+
+Utiliza `AppendLog` (o equivalente) para escribir en `logs/gui.log`:
+```
+2024-06-05 14:23:10.512 [INFO] FitOk role=Master1 roi=Pattern images=48 nEmb=34992 coreset=700
+2024-06-05 14:23:35.901 [INFO] Infer role=Master1 roi=Pattern score=18.7 thr=20.0 regions=1 dt=142ms
+```
 
 ---
+
+## 7. Referencias
+
+- [README.md](../../README.md) — visión general del proyecto
+- [ARCHITECTURE.md](../../ARCHITECTURE.md) — flujo GUI ↔ backend
+- [API_REFERENCE.md](../../API_REFERENCE.md) — contratos FastAPI
+- [instructions_codex_gui_workflow.md](../../instructions_codex_gui_workflow.md) — guía detallada para agentes/colaboradores GUI

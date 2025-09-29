@@ -1,204 +1,186 @@
-
 # DATA_FORMATS — BrakeDiscInspector
 
-Este documento define los formatos de datos usados en el sistema: requests/responses del backend, estructuras internas de la GUI y tipos de archivo soportados.
+Este documento resume los formatos de datos utilizados entre la GUI y el backend PatchCore (FastAPI), así como los archivos generados en disco.
 
 ---
 
-## 1) Formatos de request (Backend)
+## 1) Requests al backend
 
-### 1.1 `/analyze`
+### 1.1 `POST /fit_ok`
 
-- **Método**: POST  
 - **Tipo**: `multipart/form-data`
+- **Campos**:
+  | Campo | Tipo | Descripción |
+  |-------|------|-------------|
+  | `role_id` | string | Identificador del rol o layout actual. |
+  | `roi_id` | string | Identificador de la ROI dentro del rol. |
+  | `mm_per_px` | float | Resolución usada para reportar áreas. |
+  | `images[]` | fichero(s) | PNG/JPG del ROI canónico (recortado + rotado). |
 
-#### Campos:
-- `file`: PNG con el crop de ROI (requerido).
-- `mask`: PNG binaria (opcional).
-- `annulus`: JSON con parámetros de anillo (opcional).
+### 1.2 `POST /calibrate_ng`
 
-Ejemplo:
-```
-multipart/form-data
-├─ file: crop.png
-├─ mask: mask.png
-└─ annulus: {"cx":400,"cy":300,"ri":50,"ro":200}
-```
+- **Tipo**: `application/json`
+- **Esquema**:
+  ```json
+  {
+    "role_id": "Master1",
+    "roi_id": "Pattern",
+    "mm_per_px": 0.2,
+    "ok_scores": [12.1, 10.8, 11.5],
+    "ng_scores": [28.4],
+    "area_mm2_thr": 1.0,
+    "score_percentile": 99
+  }
+  ```
+- `ng_scores` es opcional. Si está vacío, el backend usa `p99(ok_scores)` como umbral.
 
-### 1.2 `/train_status`
+### 1.3 `POST /infer`
 
-- **Método**: GET  
-- **Tipo**: `application/json`  
-- **Body**: vacío
-
-### 1.3 `/match_master` (alias `/match_one`)
-
-- **Método**: POST
 - **Tipo**: `multipart/form-data`
-- **Campos obligatorios**:
-  - `image`: imagen donde buscar la plantilla.
-  - `template`: plantilla (PNG en BGR o BGRA para máscara implícita).
-- **Campos opcionales**:
-  - `feature`, `thr`, `tm_thr`, `rot_range`, `scale_min`, `scale_max`.
-  - `search_x`, `search_y`, `search_w`, `search_h` para limitar el área de búsqueda.
-  - `debug` (`1/true`) para incluir capturas base64 de depuración.
+- **Campos**:
+  | Campo | Tipo | Descripción |
+  |-------|------|-------------|
+  | `role_id` | string | Debe coincidir con el usado en `/fit_ok`. |
+  | `roi_id` | string | Debe coincidir con el usado en `/fit_ok`. |
+  | `mm_per_px` | float | Resolución para calcular áreas mm². |
+  | `image` | fichero | PNG/JPG del ROI canónico. |
+  | `shape` | string JSON (opcional) | Máscara (`rect`, `circle`, `annulus`) en coordenadas del ROI. |
+
+### 1.4 `GET /health`
+
+- **Tipo**: `application/json`
+- **Body**: vacío.
 
 ---
 
-## 2) Formatos de response (Backend)
+## 2) Responses del backend
 
-### 2.1 `/analyze`
-
+### 2.1 `/fit_ok`
 ```json
 {
-  "label": "NG",
-  "score": 0.83,
-  "threshold": 0.57,
-  "heatmap_png_b64": "iVBORw0KGgoAAAANS..."
+  "n_embeddings": 34992,
+  "coreset_size": 700,
+  "token_shape": [32, 32],
+  "coreset_rate_requested": 0.02,
+  "coreset_rate_applied": 0.018
 }
 ```
 
-### 2.2 `/train_status`
-
+### 2.2 `/calibrate_ng`
 ```json
 {
-  "state": "idle",
-  "threshold": 0.57,
-  "artifacts": {
-    "model": {
-      "path": ".../model/current_model.h5",
-      "exists": true,
-      "size_bytes": 7340032,
-      "modified_at": 1717000200.123,
-      "loaded": true
-    },
-    "threshold": {
-      "path": ".../model/threshold.txt",
-      "exists": true,
-      "size_bytes": 6,
-      "modified_at": 1717000200.456,
-      "value": 0.57,
-      "source": "model_cache"
-    },
-    "log": {
-      "path": ".../model/logs/train.log",
-      "exists": true,
-      "size_bytes": 10240,
-      "modified_at": 1717000200.789,
-      "tail": "Epoch 5/20 - val_loss=0.21..."
-    }
-  },
-  "model_runtime": {
-    "loaded": true,
-    "name": "classifier",
-    "layer_count": 5,
-    "layers_preview": ["input", "conv1", "conv2", "dense", "logits", "..."],
-    "input_shape": [null, 600, 600, 3],
-    "output_shape": [null, 1],
-    "trainable_params": 123456,
-    "non_trainable_params": 2048
+  "threshold": 20.0,
+  "p99_ok": 12.0,
+  "p5_ng": 28.0,
+  "mm_per_px": 0.2,
+  "area_mm2_thr": 1.0,
+  "score_percentile": 99
+}
+```
+
+### 2.3 `/infer`
+```json
+{
+  "role_id": "Master1",
+  "roi_id": "Pattern",
+  "score": 18.7,
+  "threshold": 20.0,
+  "heatmap_png_base64": "iVBORw0K...",
+  "regions": [
+    {"bbox": [x, y, w, h], "area_px": 250.0, "area_mm2": 10.0, "contour": [[x1, y1], ...]}
+  ],
+  "token_shape": [32, 32],
+  "params": {
+    "coreset_rate": 0.02,
+    "score_percentile": 99,
+    "mm_per_px": 0.2
   }
 }
 ```
 
-### 2.3 `/match_master` (alias `/match_one`)
+- `heatmap_png_base64`: PNG de 8 bits (grises) del heatmap.
+- `regions`: lista ordenada por área descendente tras aplicar `area_mm2_thr` y filtrado morfológico.
 
+### 2.4 `/health`
 ```json
 {
-  "found": true,
-  "stage": "TM_OK",
-  "center_x": 412.5,
-  "center_y": 298.0,
-  "confidence": 0.91,
-  "tm_best": 0.91,
-  "tm_thr": 0.8,
-  "bbox": [380.0, 260.0, 65.0, 76.0],
-  "sift_orb": {
-    "detector": "auto->orb",
-    "matches": 480,
-    "good": 132,
-    "confidence": 0.86
-  }
+  "status": "ok",
+  "device": "cuda",
+  "model": "vit_small_patch14_dinov2.lvd142m",
+  "version": "0.1.0"
 }
 ```
 
+**Errores**: cualquier endpoint puede responder `{ "error": "mensaje", "trace": "stacktrace" }` con códigos 4xx/5xx.
+
 ---
 
-## 3) Estructuras internas (GUI)
+## 3) Archivos generados en disco
 
-### 3.1 ROI
+### 3.1 Persistencia del backend (`backend/models/<role>/<roi>/`)
+
+| Archivo | Tipo | Descripción |
+|---------|------|-------------|
+| `memory.npz` | NumPy NPZ | Contiene `emb` (coreset), `token_h`, `token_w` y metadata (`coreset_rate`, `applied_rate`). |
+| `index.faiss` | Binario | Índice FlatL2 serializado (opcional; se crea si FAISS está disponible). |
+| `calib.json` | JSON | Resultado de `/calibrate_ng` con umbral y parámetros persistidos. |
+
+### 3.2 Dataset local de la GUI (`datasets/<role>/<roi>/<ok|ng>/`)
+
+| Archivo | Contenido |
+|---------|-----------|
+| `*.png` | ROI canónico exportado por la GUI (PNG 8/24 bits). |
+| `*.json` | Metadata asociada: `role_id`, `roi_id`, `mm_per_px`, `shape`, `source_path`, `angle`, `timestamp`. |
+
+### 3.3 Heatmaps temporales
+
+- La GUI decodifica `heatmap_png_base64` a `byte[]` y lo muestra sin persistir por defecto.
+- Si se decide guardar evidencias, se recomienda carpeta `evidence/<fecha>/<role>/<roi>/heatmap_<timestamp>.png` (fuera del repo).
+
+---
+
+## 4) Modelos de datos en la GUI (C#)
 
 ```csharp
-class ROI {
-    public double X { get; set; }
-    public double Y { get; set; }
-    public double Width { get; set; }
-    public double Height { get; set; }
-    public double AngleDeg { get; set; }
-    public string Legend { get; set; }
-}
+public record BackendRegion(
+    Rect BBox,
+    double AreaPx,
+    double AreaMm2,
+    IReadOnlyList<Point> Contour
+);
+
+public record InferResult(
+    string RoleId,
+    string RoiId,
+    double Score,
+    double Threshold,
+    byte[] HeatmapPng,
+    IReadOnlyList<BackendRegion> Regions,
+    int TokenHeight,
+    int TokenWidth
+);
+
+public record FitOkResult(int NEmbeddings, int CoresetSize, int TokenHeight, int TokenWidth);
+
+public record CalibrateResult(
+    double Threshold,
+    double? P99Ok,
+    double? P5Ng,
+    double MmPerPx,
+    double AreaMm2Thr,
+    int ScorePercentile
+);
 ```
 
-### 3.2 Respuesta de análisis
-
-```csharp
-class AnalyzeResponse {
-    public string label { get; set; }
-    public double score { get; set; }
-    public double threshold { get; set; }
-    public string heatmap_png_b64 { get; set; }
-}
-```
-
-### 3.3 MatchingResponse
-
-```csharp
-class MatchingResponse {
-    public bool found { get; set; }
-    public string stage { get; set; }
-    public double center_x { get; set; }
-    public double center_y { get; set; }
-    public double confidence { get; set; }
-    public double tm_best { get; set; }
-    public double tm_thr { get; set; }
-    public MatchingDebug debug { get; set; } // opcional cuando se solicita
-}
-
-class MatchingDebug {
-    public string gray_png { get; set; }
-    public string tpl_gray_png { get; set; }
-    public MatchingStats stats { get; set; }
-}
-
-class MatchingStats {
-    public double gray_mean { get; set; }
-    public double gray_std { get; set; }
-}
-```
+Las estructuras anteriores deben mantenerse sincronizadas con los contratos documentados.
 
 ---
 
-## 4) Tipos de archivo soportados
+## 5) Convenciones generales
 
-- **Imágenes entrada**: BMP, PNG, JPG (convertidas a Mat en GUI).  
-- **Formato transmisión**: PNG (cropped, rotado).  
-- **Máscaras**: PNG binaria (0/255).  
-- **Annulus**: JSON.  
-- **Modelo**: TensorFlow `.h5`.  
-- **Heatmap**: PNG codificado en Base64.  
+- Todas las coordenadas (`bbox`, contornos) se expresan en píxeles del ROI canónico.
+- `mm_per_px` siempre acompaña a las operaciones para convertir áreas a mm².
+- Los ficheros JSON deben guardarse en UTF-8 sin BOM.
+- El backend acepta PNG/JPG; la GUI recomienda PNG para evitar pérdidas de calidad.
 
----
-
-## 5) Convenciones
-
-- Encoding JSON: siempre UTF‑8.  
-- Precision de `score` y `threshold`: 3 decimales típicamente (`F3`).  
-- Todas las coordenadas (`X`, `Y`, etc.) en píxeles de la imagen original.  
-
----
-
-## 6) Referencias cruzadas
-
-- **API_REFERENCE.md** → contratos de endpoints  
-- **ROI_AND_MATCHING_SPEC.md** → geometría de ROI  
-- **ARCHITECTURE.md** → flujo de datos  
+Consulta [API_REFERENCE.md](API_REFERENCE.md) para ejemplos detallados de llamadas HTTP y [ARCHITECTURE.md](ARCHITECTURE.md) para el flujo end-to-end.

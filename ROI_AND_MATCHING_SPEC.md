@@ -1,146 +1,120 @@
-
 # ROI_AND_MATCHING_SPEC — BrakeDiscInspector
 
-Este documento define el modelo de **Regiones de Interés (ROI)** y el mecanismo de **matching** usado en la aplicación.
+Especificación de las Regiones de Interés (ROI) y de la información geométrica que intercambian la GUI y el backend PatchCore. La funcionalidad de *template matching* legado ha sido retirada; este documento se centra en el flujo ROI → backend.
 
 ---
 
-## 1) Definición de ROI
+## 1) Modelo de ROI en la GUI
 
-Cada ROI representa un área rectangular dentro de la imagen del disco de freno, con rotación y metadatos.
+| Campo | Tipo | Descripción |
+|-------|------|-------------|
+| `X` | double | Coordenada X del centro (en píxeles de la imagen original). |
+| `Y` | double | Coordenada Y del centro. |
+| `Width` | double | Ancho del rectángulo que delimita el ROI (mínimo 10 px). |
+| `Height` | double | Alto del rectángulo. |
+| `AngleDeg` | double | Ángulo de rotación (grados) aplicado alrededor del centro. |
+| `Legend` | string | Etiqueta descriptiva (ej. `"Pattern"`, `"Inspection"`). |
 
-### 1.1 Campos del ROI
-
-| Campo     | Tipo    | Descripción |
-|-----------|---------|-------------|
-| `X`       | double  | Coordenada X (en píxeles de la imagen) del centro del ROI. |
-| `Y`       | double  | Coordenada Y (en píxeles de la imagen) del centro del ROI. |
-| `Width`   | double  | Ancho en píxeles. Debe ser ≥ 10. |
-| `Height`  | double  | Alto en píxeles. Debe ser ≥ 10. |
-| `AngleDeg`| double  | Rotación en grados, aplicada alrededor del centro del ROI. |
-| `Legend`  | string  | Etiqueta textual asociada (ej. `"M1"`). |
-
-### 1.2 Restricciones
-
-- ROI mínimo: **10×10 píxeles**.  
-- `AngleDeg` se maneja en la GUI (rotación visual), el backend recibe un PNG ya rotado → el backend **no necesita aplicar rotación**.  
-- Si el ROI sale parcialmente fuera de la imagen, se recorta al borde válido.
+Restricciones:
+- El ROI debe permanecer dentro de los límites de la imagen; si se sale parcialmente, la GUI recorta la zona válida.
+- `AngleDeg` solo se utiliza en la GUI. El backend recibe un PNG ya rotado (ROI canónico).
 
 ---
 
-## 2) Rotación del ROI
+## 2) Canonicalización del ROI
 
-- Implementada en GUI con el thumb NE del `RoiAdorner`.
-- Se aplica `Cv2.GetRotationMatrix2D` + `Cv2.WarpAffine` a la imagen completa.  
-- Después se extrae el sub-rectángulo correspondiente.  
-- Esto garantiza que el backend recibe un crop ya orientado correctamente.
-
----
-
-## 3) Annulus (anillo de centrado)
-
-El **annulus** es un mecanismo opcional para delimitar un área circular de interés.
-
-### 3.1 Definición JSON
-
-```json
-{
-  "cx": 400,
-  "cy": 300,
-  "ri": 50,
-  "ro": 200
-}
-```
-
-- `cx, cy`: centro en píxeles.  
-- `ri`: radio interno.  
-- `ro`: radio externo.  
-
-### 3.2 Comportamiento
-
-- Los píxeles fuera del anillo se anulan (puestos a negro).  
-- Puede combinarse con un ROI: primero se aplica rotación/recorte, luego el annulus sobre el crop.
+1. La GUI rota la imagen completa usando `Cv2.GetRotationMatrix2D` y `Cv2.WarpAffine` alrededor del centro del ROI.
+2. Posteriormente recorta el rectángulo `Width × Height` sobre la imagen rotada.
+3. El resultado es un PNG (ROI canónico) que se envía al backend en `/fit_ok` y `/infer`.
+4. La GUI genera un archivo JSON asociado con metadatos:
+   ```json
+   {
+     "role_id": "Master1",
+     "roi_id": "Pattern",
+     "mm_per_px": 0.20,
+     "shape": { "kind": "circle", "cx": 192, "cy": 192, "r": 180 },
+     "source_path": "C:/datasets/raw.png",
+     "angle": 32.0,
+     "timestamp": "2024-06-01T12:34:56.789Z"
+   }
+   ```
 
 ---
 
-## 4) Matching maestro
+## 3) Shapes soportados por el backend
 
-Además del análisis de defectos, el backend expone `/match_master` (alias `/match_one`) para localizar un patrón maestro en una captura.
+El campo `shape` es opcional y se expresa siempre en coordenadas del ROI canónico (post rotación/crop).
 
-### 4.1 Parámetros soportados
+- **Rectángulo completo**:
+  ```json
+  {"kind":"rect","x":0,"y":0,"w":W,"h":H}
+  ```
+- **Círculo**:
+  ```json
+  {"kind":"circle","cx":CX,"cy":CY,"r":R}
+  ```
+- **Annulus**:
+  ```json
+  {"kind":"annulus","cx":CX,"cy":CY,"r":R_OUTER,"r_inner":R_INNER}
+  ```
 
-- `image` (**obligatorio**): imagen completa donde buscar.
-- `template` (**obligatorio**): plantilla; si es PNG con canal alfa, éste se usa como máscara.
-- `feature`: `auto` (default), `sift`, `orb`, `tm_rot` o `geom`.
-- `thr`, `tm_thr`: umbrales de coincidencia.
-- `rot_range`, `scale_min`, `scale_max`: rango y escalas para el modo `tm_rot`.
-- `search_x`, `search_y`, `search_w`, `search_h`: restringen la búsqueda a un ROI previo.
-- `debug`: `1/true` para recibir capturas `debug.*` codificadas en Base64.
-
-### 4.2 Respuesta
-
-La respuesta incluye siempre `found`/`stage` y, cuando hay éxito, coordenadas absolutas (`center_x`, `center_y`) y métricas (`confidence`, `tm_best`, `tm_thr`, `sift_orb`, etc.). Ejemplo:
-
-```json
-{
-  "found": true,
-  "stage": "TM_ROT_OK",
-  "center_x": 410.2,
-  "center_y": 302.7,
-  "confidence": 0.93,
-  "tm_best": 0.93,
-  "tm_thr": 0.8,
-  "tm_rot": {
-    "angle_deg": -2.0,
-    "scale": 1.01
-  }
-}
-```
-
-Si no se alcanza el umbral configurado se devuelve `found=false` junto con `reason`, `tm_best`, `crop_off` y el bloque `sift_orb` indicando el detector usado o el fallo.
+Si el shape no se envía, el backend asume todo el ROI.
 
 ---
 
-## 5) Mapeo imagen ↔ canvas
+## 4) Conversión de coordenadas GUI ↔ imagen
 
-La GUI renderiza la imagen con `Stretch="Uniform"`. Para mantener alineación entre ROI (en canvas) y píxeles reales:
-
-```csharp
-scale = Math.Min(ImgMain.ActualWidth / bmp.PixelWidth,
-                 ImgMain.ActualHeight / bmp.PixelHeight);
-drawWidth  = bmp.PixelWidth  * scale;
-drawHeight = bmp.PixelHeight * scale;
-offsetX = (ImgMain.ActualWidth  - drawWidth)  / 2;
-offsetY = (ImgMain.ActualHeight - drawHeight) / 2;
-```
-
-Con este cálculo:  
-- `CanvasROI` se coloca en `(offsetX, offsetY)`  
-- `CanvasROI.Width = drawWidth`  
-- `CanvasROI.Height = drawHeight`  
-
-Conversión coordenadas:  
-- Imagen → Canvas: `(imageX * sx, imageY * sy)`  
-- Canvas → Imagen: `(canvasX / sx, canvasY / sy)`
-
----
-
-## 6) Decisión de clasificación
-
-El backend determina la etiqueta final con la regla:
+La imagen se muestra con `Stretch="Uniform"`. Para alinear el canvas de ROI:
 
 ```
-if score >= threshold → label = "NG"
-else → label = "OK"
+scale = min(ImageHost.ActualWidth  / PixelWidth,
+            ImageHost.ActualHeight / PixelHeight)
+drawWidth  = PixelWidth  * scale
+drawHeight = PixelHeight * scale
+offsetX = (ImageHost.ActualWidth  - drawWidth)  / 2
+offsetY = (ImageHost.ActualHeight - drawHeight) / 2
+
+CanvasROI.Width  = drawWidth
+CanvasROI.Height = drawHeight
+Canvas.SetLeft(CanvasROI, offsetX)
+Canvas.SetTop(CanvasROI,  offsetY)
 ```
 
-- `score`: salida del modelo ∈ [0,1]  
-- `threshold`: valor leido de `model/threshold.txt`
+Conversión:
+- **Imagen → Canvas**: `(canvasX, canvasY) = (imageX * sx, imageY * sy)`.
+- **Canvas → Imagen**: `(imageX, imageY) = (canvasX / sx, canvasY / sy)`.
 
 ---
 
-## 7) Referencias cruzadas
+## 5) Integración con el backend
 
-- **ARCHITECTURE.md**: descripción de flujo GUI↔backend  
-- **API_REFERENCE.md**: contratos de endpoints  
-- **DATA_FORMATS.md**: formatos de requests/responses  
+- `/fit_ok` y `/infer` reciben siempre el PNG canónico (no raw image) y, opcionalmente, el `shape` JSON serializado como string.
+- `/calibrate_ng` consume únicamente los scores devueltos por `/infer`; no recibe geometría.
+- El backend devuelve `regions` en píxeles del ROI canónico; la GUI puede convertirlos a mm² usando `mm_per_px`.
+
+---
+
+## 6) Persistencia de datasets
+
+La GUI guarda muestras en `datasets/<role>/<roi>/<ok|ng>/` con pares PNG/JSON. Se recomienda mantener consistencia en la nomenclatura:
+```
+datasets/Master1/Pattern/ok/OK_20240601_123456.png
+datasets/Master1/Pattern/ok/OK_20240601_123456.json
+```
+
+Los archivos JSON deben incluir `role_id`, `roi_id`, `mm_per_px`, `shape`, `angle`, `timestamp` y `source_path` (opcional).
+
+---
+
+## 7) Áreas y unidades
+
+- El backend aplica un filtro de islas usando `area_mm2_thr` (mm²). La GUI debe proporcionar `mm_per_px` correcto para evitar falsos positivos/negativos.
+- Las áreas devueltas en `regions` contienen tanto `area_px` como `area_mm2` ya convertida.
+
+---
+
+## 8) Referencias cruzadas
+
+- [ARCHITECTURE.md](ARCHITECTURE.md) — flujo completo GUI ↔ backend.
+- [API_REFERENCE.md](API_REFERENCE.md) — contratos de `/fit_ok`, `/calibrate_ng`, `/infer`.
+- [DATA_FORMATS.md](DATA_FORMATS.md) — esquemas de archivos y JSON.
