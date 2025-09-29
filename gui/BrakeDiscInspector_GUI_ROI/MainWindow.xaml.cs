@@ -446,6 +446,513 @@ namespace BrakeDiscInspector_GUI_ROI
 
 
 
+
+
+        private void ClearPersistedRoisFromCanvas()
+        {
+            if (CanvasROI == null)
+                return;
+
+            var persisted = CanvasROI.Children
+                .OfType<Shape>()
+                .Where(shape => !ReferenceEquals(shape, _previewShape) && shape.Tag is RoiModel)
+                .ToList();
+
+            foreach (var shape in persisted)
+            {
+                RemoveRoiAdorners(shape);
+                CanvasROI.Children.Remove(shape);
+            }
+
+            _roiShapesById.Clear();
+        }
+
+        private void RedrawOverlay()
+        {
+            if (CanvasROI == null)
+                return;
+
+            var staleShapes = CanvasROI.Children
+                .OfType<Shape>()
+                .Where(shape => !ReferenceEquals(shape, _previewShape) && shape.Tag is RoiModel)
+                .ToList();
+
+            foreach (var shape in staleShapes)
+            {
+                RemoveRoiAdorners(shape);
+                CanvasROI.Children.Remove(shape);
+            }
+
+            _roiShapesById.Clear();
+
+            if (_imgW <= 0 || _imgH <= 0)
+                return;
+
+            void AddPersistentRoi(RoiModel? roi)
+            {
+                if (roi == null)
+                    return;
+
+                var shape = CreateLayoutShape(roi);
+                if (shape == null)
+                {
+                    AppendLog($"[overlay] build failed for {roi.Role} ({roi.Label})");
+                    return;
+                }
+
+                CanvasROI.Children.Add(shape);
+                _roiShapesById[roi.Id] = shape;
+
+                if (ShouldEnableRoiEditing(roi.Role))
+                {
+                    AttachRoiAdorner(shape);
+                }
+            }
+
+            AddPersistentRoi(_layout.Master1Search);
+            AddPersistentRoi(_layout.Master1Pattern);
+            AddPersistentRoi(_layout.Master2Search);
+            AddPersistentRoi(_layout.Master2Pattern);
+            AddPersistentRoi(_layout.Inspection);
+
+            if (_layout.Inspection != null)
+            {
+                SyncCurrentRoiFromInspection(_layout.Inspection);
+            }
+        }
+
+        private Shape? CreateLayoutShape(RoiModel roi)
+        {
+            var canvasRoi = ImageToCanvas(roi);
+            canvasRoi.Role = roi.Role;
+            canvasRoi.Label = roi.Label;
+            canvasRoi.Id = roi.Id;
+
+            Shape shape = canvasRoi.Shape switch
+            {
+                RoiShape.Rectangle => new WRectShape(),
+                _ => new WEllipse()
+            };
+
+            var style = GetRoiStyle(canvasRoi.Role);
+
+            shape.Stroke = style.stroke;
+            shape.Fill = style.fill;
+            shape.StrokeThickness = style.thickness;
+            if (style.dash != null)
+                shape.StrokeDashArray = style.dash;
+            shape.SnapsToDevicePixels = true;
+            shape.IsHitTestVisible = ShouldEnableRoiEditing(canvasRoi.Role);
+
+            if (canvasRoi.Shape == RoiShape.Rectangle)
+            {
+                Canvas.SetLeft(shape, canvasRoi.Left);
+                Canvas.SetTop(shape, canvasRoi.Top);
+                shape.Width = canvasRoi.Width;
+                shape.Height = canvasRoi.Height;
+            }
+            else
+            {
+                double diameter = Math.Max(canvasRoi.Width, canvasRoi.R * 2.0);
+                double height = canvasRoi.Shape == RoiShape.Annulus && canvasRoi.Height > 0 ? canvasRoi.Height : diameter;
+                Canvas.SetLeft(shape, canvasRoi.CX - diameter / 2.0);
+                Canvas.SetTop(shape, canvasRoi.CY - height / 2.0);
+                shape.Width = diameter;
+                shape.Height = height;
+            }
+
+            shape.Tag = canvasRoi;
+            Panel.SetZIndex(shape, style.zIndex);
+            ApplyRoiRotationToShape(shape, canvasRoi.AngleDeg);
+
+            return shape;
+        }
+
+        private (WBrush stroke, WBrush fill, double thickness, DoubleCollection? dash, int zIndex) GetRoiStyle(RoiRole role)
+        {
+            var transparent = WBrushes.Transparent;
+            switch (role)
+            {
+                case RoiRole.Master1Pattern:
+                    {
+                        var fill = new SolidColorBrush(WColor.FromArgb(30, 0, 255, 255));
+                        fill.Freeze();
+                        return (WBrushes.Cyan, fill, 2.0, null, 5);
+                    }
+                case RoiRole.Master1Search:
+                    {
+                        var fill = new SolidColorBrush(WColor.FromArgb(18, 255, 215, 0));
+                        fill.Freeze();
+                        var dash = new DoubleCollection { 4, 3 };
+                        dash.Freeze();
+                        return (WBrushes.Gold, fill, 1.5, dash, 4);
+                    }
+                case RoiRole.Master2Pattern:
+                    {
+                        var fill = new SolidColorBrush(WColor.FromArgb(30, 255, 165, 0));
+                        fill.Freeze();
+                        return (WBrushes.Orange, fill, 2.0, null, 6);
+                    }
+                case RoiRole.Master2Search:
+                    {
+                        var fill = new SolidColorBrush(WColor.FromArgb(18, 205, 92, 92));
+                        fill.Freeze();
+                        var dash = new DoubleCollection { 4, 3 };
+                        dash.Freeze();
+                        return (WBrushes.IndianRed, fill, 1.5, dash, 4);
+                    }
+                case RoiRole.Inspection:
+                    {
+                        var fill = new SolidColorBrush(WColor.FromArgb(45, 50, 205, 50));
+                        fill.Freeze();
+                        return (WBrushes.Lime, fill, 2.5, null, 7);
+                    }
+                default:
+                    return (WBrushes.White, transparent, 2.0, null, 5);
+            }
+        }
+
+        private void AttachRoiAdorner(Shape shape)
+        {
+            if (!ShouldEnableRoiEditing((shape.Tag as RoiModel)?.Role ?? RoiRole.Inspection))
+                return;
+
+            var layer = AdornerLayer.GetAdornerLayer(shape);
+            if (layer == null)
+                return;
+
+            var existing = layer.GetAdorners(shape);
+            if (existing != null)
+            {
+                foreach (var adorner in existing.OfType<RoiAdorner>())
+                    layer.Remove(adorner);
+            }
+
+            if (shape.Tag is not RoiModel roiInfo)
+                return;
+
+            var adorner = new RoiAdorner(shape, (changeKind, updatedModel) =>
+            {
+                var pixelModel = CanvasToImage(updatedModel);
+                UpdateLayoutFromPixel(pixelModel);
+                HandleAdornerChange(changeKind, updatedModel, pixelModel, "[adorner]");
+            }, AppendLog);
+
+            layer.Add(adorner);
+        }
+
+        private void RemoveRoiAdorners(Shape shape)
+        {
+            var layer = AdornerLayer.GetAdornerLayer(shape);
+            if (layer == null)
+                return;
+
+            var adorners = layer.GetAdorners(shape);
+            if (adorners == null)
+                return;
+
+            foreach (var adorner in adorners.OfType<RoiAdorner>())
+                layer.Remove(adorner);
+        }
+
+
+        private async Task ShowHeatmapOverlayAsync(Workflow.RoiExportResult export, byte[] heatmapBytes, double opacity)
+        {
+            if (export == null || heatmapBytes == null || heatmapBytes.Length == 0)
+                return;
+
+            try
+            {
+                BitmapSource heatmapSource;
+                using (var ms = new MemoryStream(heatmapBytes))
+                {
+                    var decoder = new PngBitmapDecoder(ms, BitmapCreateOptions.PreservePixelFormat, BitmapCacheOption.OnLoad);
+                    heatmapSource = decoder.Frames[0];
+                    heatmapSource.Freeze();
+                }
+
+                await Dispatcher.InvokeAsync(() =>
+                {
+                    _heatmapBitmap = heatmapSource;
+                    _heatmapRoiImage = export.RoiImage.Clone();
+                    _heatmapOverlayOpacity = Math.Clamp(opacity, 0.0, 1.0);
+
+                    if (HeatmapImage != null)
+                    {
+                        HeatmapImage.Source = _heatmapBitmap;
+                    }
+
+                    EnterAnalysisView();
+
+                    if (CanvasROI != null)
+                    {
+                        if (_heatmapOverlayImage == null)
+                        {
+                            _heatmapOverlayImage = new System.Windows.Controls.Image
+                            {
+                                Stretch = Stretch.Fill,
+                                IsHitTestVisible = false
+                            };
+                            Panel.SetZIndex(_heatmapOverlayImage, 20);
+                            CanvasROI.Children.Add(_heatmapOverlayImage);
+                        }
+
+                        _heatmapOverlayImage.Source = _heatmapBitmap;
+                        _heatmapOverlayImage.Opacity = _heatmapOverlayOpacity;
+                        RefreshHeatmapOverlay();
+                    }
+                }, DispatcherPriority.Render);
+            }
+            catch (Exception ex)
+            {
+                AppendLog("[heatmap] error: " + ex.Message);
+            }
+        }
+
+        private void ClearHeatmapOverlay()
+        {
+            if (!Dispatcher.CheckAccess())
+            {
+                Dispatcher.Invoke(ClearHeatmapOverlay);
+                return;
+            }
+
+            _heatmapBitmap = null;
+            _heatmapRoiImage = null;
+
+            if (_heatmapOverlayImage != null && CanvasROI != null)
+            {
+                CanvasROI.Children.Remove(_heatmapOverlayImage);
+                _heatmapOverlayImage = null;
+            }
+
+            if (HeatmapImage != null)
+            {
+                HeatmapImage.Source = null;
+            }
+        }
+
+        private void RefreshHeatmapOverlay()
+        {
+            if (!Dispatcher.CheckAccess())
+            {
+                Dispatcher.Invoke(RefreshHeatmapOverlay);
+                return;
+            }
+
+            if (_heatmapOverlayImage == null || _heatmapBitmap == null || _heatmapRoiImage == null || CanvasROI == null)
+                return;
+
+            if (!CanvasROI.Children.Contains(_heatmapOverlayImage))
+            {
+                CanvasROI.Children.Add(_heatmapOverlayImage);
+            }
+
+            var canvasRoi = ImageToCanvas(_heatmapRoiImage);
+
+            double width;
+            double height;
+            double left;
+            double top;
+
+            if (canvasRoi.Shape == RoiShape.Rectangle)
+            {
+                left = canvasRoi.Left;
+                top = canvasRoi.Top;
+                width = Math.Max(1.0, canvasRoi.Width);
+                height = Math.Max(1.0, canvasRoi.Height);
+            }
+            else
+            {
+                double diameter = Math.Max(canvasRoi.Width, canvasRoi.R * 2.0);
+                height = canvasRoi.Shape == RoiShape.Annulus && canvasRoi.Height > 0 ? canvasRoi.Height : diameter;
+                width = Math.Max(1.0, diameter);
+                height = Math.Max(1.0, height);
+                left = canvasRoi.CX - width / 2.0;
+                top = canvasRoi.CY - height / 2.0;
+            }
+
+            Canvas.SetLeft(_heatmapOverlayImage, left);
+            Canvas.SetTop(_heatmapOverlayImage, top);
+            _heatmapOverlayImage.Width = width;
+            _heatmapOverlayImage.Height = height;
+            _heatmapOverlayImage.Opacity = _heatmapOverlayOpacity;
+            _heatmapOverlayImage.RenderTransformOrigin = new WPoint(0.5, 0.5);
+
+            if (_heatmapOverlayImage.RenderTransform is RotateTransform rotate)
+            {
+                rotate.Angle = canvasRoi.AngleDeg;
+            }
+            else
+            {
+                _heatmapOverlayImage.RenderTransform = new RotateTransform(canvasRoi.AngleDeg);
+            }
+        }
+
+
+        private void ResetAnalysisMarks()
+        {
+            RemoveAnalysisMarks();
+            ClearHeatmapOverlay();
+            RedrawOverlaySafe();
+            _analysisViewActive = false;
+            AppendLog("[ANALYZE] Limpiadas marcas de análisis (cruces).");
+        }
+
+        private void RemoveAnalysisMarks()
+        {
+            if (!Dispatcher.CheckAccess())
+            {
+                Dispatcher.Invoke(RemoveAnalysisMarks);
+                return;
+            }
+
+            if (CanvasROI == null)
+                return;
+
+            var toRemove = CanvasROI.Children
+                .OfType<FrameworkElement>()
+                .Where(el => el.Tag is string tag && tag == ANALYSIS_TAG)
+                .ToList();
+
+            foreach (var el in toRemove)
+            {
+                CanvasROI.Children.Remove(el);
+            }
+        }
+
+        private void DrawCross(double x, double y, int size, Brush brush, double thickness)
+        {
+            if (CanvasROI == null)
+                return;
+
+            double half = size;
+
+            var lineH = new WLine
+            {
+                X1 = x - half,
+                Y1 = y,
+                X2 = x + half,
+                Y2 = y,
+                Stroke = brush,
+                StrokeThickness = thickness,
+                SnapsToDevicePixels = true,
+                IsHitTestVisible = false,
+                Tag = ANALYSIS_TAG
+            };
+
+            var lineV = new WLine
+            {
+                X1 = x,
+                Y1 = y - half,
+                X2 = x,
+                Y2 = y + half,
+                Stroke = brush,
+                StrokeThickness = thickness,
+                SnapsToDevicePixels = true,
+                IsHitTestVisible = false,
+                Tag = ANALYSIS_TAG
+            };
+
+            Panel.SetZIndex(lineH, 30);
+            Panel.SetZIndex(lineV, 30);
+
+            CanvasROI.Children.Add(lineH);
+            CanvasROI.Children.Add(lineV);
+        }
+
+        private void DrawLabeledCross(double x, double y, string label, Brush crossColor, Brush labelBg, Brush labelFg, int crossSize, double thickness)
+        {
+            DrawCross(x, y, crossSize, crossColor, thickness);
+
+            if (CanvasROI == null)
+                return;
+
+            var text = new TextBlock
+            {
+                Text = label,
+                Foreground = labelFg,
+                FontWeight = FontWeights.Bold,
+                FontSize = 12,
+                Margin = new Thickness(0),
+                Padding = new Thickness(6, 2, 6, 2)
+            };
+            TextOptions.SetTextFormattingMode(text, TextFormattingMode.Display);
+
+            var border = new Border
+            {
+                Background = labelBg,
+                CornerRadius = new CornerRadius(6),
+                BorderBrush = Brushes.Black,
+                BorderThickness = new Thickness(0.8),
+                Child = text,
+                Opacity = 0.92,
+                Tag = ANALYSIS_TAG
+            };
+
+            Canvas.SetLeft(border, x + LabelOffsetX);
+            Canvas.SetTop(border, y + LabelOffsetY);
+            Panel.SetZIndex(border, 31);
+
+            CanvasROI.Children.Add(border);
+        }
+
+        private void DrawMasterMatch(RoiModel roi, WPoint matchImagePoint, string caption, Brush brush, bool withLabel)
+        {
+            var canvasPoint = ImagePxToCanvasPt(matchImagePoint.X, matchImagePoint.Y);
+            var canvasRoi = ImageToCanvas(roi);
+            double reference = Math.Max(canvasRoi.Width, canvasRoi.Height);
+            if (reference <= 0)
+            {
+                reference = Math.Max(CanvasROI?.ActualWidth ?? 0, CanvasROI?.ActualHeight ?? 0) * 0.05;
+            }
+
+            int size = (int)Math.Round(Math.Clamp(reference * 0.2, 14, 60));
+            double thickness = Math.Max(2.0, size / 8.0);
+
+            if (withLabel)
+            {
+                DrawLabeledCross(canvasPoint.X, canvasPoint.Y, caption, brush, Brushes.Black, Brushes.White, size, thickness);
+            }
+            else
+            {
+                DrawCross(canvasPoint.X, canvasPoint.Y, size, brush, thickness);
+            }
+        }
+
+        private void EnterAnalysisView()
+        {
+            if (!Dispatcher.CheckAccess())
+            {
+                Dispatcher.Invoke(EnterAnalysisView);
+                return;
+            }
+
+            _analysisViewActive = true;
+            if (Tabs != null && TabAnalyze != null)
+            {
+                Tabs.SelectedItem = TabAnalyze;
+            }
+        }
+
+        private string? ResolveRoiLabelText(RoiModel roi)
+        {
+            if (roi == null)
+                return null;
+
+            if (!string.IsNullOrWhiteSpace(roi.Label))
+                return roi.Label;
+
+            return roi.Role switch
+            {
+                RoiRole.Master1Pattern => "Master 1",
+                RoiRole.Master1Search => "Master 1 search",
+                RoiRole.Master2Pattern => "Master 2",
+                RoiRole.Master2Search => "Master 2 search",
+                RoiRole.Inspection => "Inspection",
+                _ => null
+            };
+        }
         private void MainWindow_Loaded(object sender, RoutedEventArgs e)
         {
             ScheduleSyncOverlay(force: true);
@@ -1661,6 +2168,292 @@ namespace BrakeDiscInspector_GUI_ROI
             SyncCurrentRoiFromInspection(insp);
         }
 
+
+
+        private RoiModel BuildCurrentRoiModel(RoiRole? roleOverride = null)
+        {
+            var model = new RoiModel
+            {
+                Shape = CurrentRoi.Shape,
+                AngleDeg = CurrentRoi.AngleDeg,
+                Role = roleOverride ?? RoiRole.Inspection
+            };
+
+            if (!string.IsNullOrWhiteSpace(CurrentRoi.Legend))
+            {
+                model.Label = CurrentRoi.Legend;
+            }
+
+            if (CurrentRoi.Shape == RoiShape.Rectangle)
+            {
+                model.X = CurrentRoi.X;
+                model.Y = CurrentRoi.Y;
+                model.Width = Math.Max(1.0, CurrentRoi.Width);
+                model.Height = Math.Max(1.0, CurrentRoi.Height);
+                model.CX = model.X;
+                model.CY = model.Y;
+                model.R = Math.Max(model.Width, model.Height) / 2.0;
+                model.RInner = 0;
+            }
+            else
+            {
+                model.CX = CurrentRoi.CX;
+                model.CY = CurrentRoi.CY;
+                model.R = Math.Max(1.0, CurrentRoi.R);
+                model.Width = model.R * 2.0;
+                model.Height = model.Width;
+                model.X = model.CX;
+                model.Y = model.CY;
+                model.RInner = CurrentRoi.Shape == RoiShape.Annulus
+                    ? AnnulusDefaults.ClampInnerRadius(CurrentRoi.RInner, model.R)
+                    : 0;
+                if (CurrentRoi.Shape == RoiShape.Annulus && CurrentRoi.RInner > 0)
+                {
+                    model.Height = Math.Max(model.Height, CurrentRoi.R * 2.0);
+                }
+            }
+
+            var role = roleOverride ?? _layout.Inspection?.Role ?? GetCurrentStateRole() ?? RoiRole.Inspection;
+            model.Role = role;
+            return model;
+        }
+
+        private Mat GetRotatedCrop(Mat source)
+        {
+            if (source == null || source.Empty())
+                return new Mat();
+
+            CurrentRoi.EnforceMinSize(10, 10);
+            var currentModel = BuildCurrentRoiModel();
+            if (!RoiCropUtils.TryBuildRoiCropInfo(currentModel, out var info))
+                return new Mat();
+
+            if (RoiCropUtils.TryGetRotatedCrop(source, info, currentModel.AngleDeg, out var crop, out _))
+                return crop;
+
+            return new Mat();
+        }
+
+        private bool LooksLikeCanvasCoords(RoiModel roi)
+        {
+            if (roi == null)
+                return false;
+
+            var disp = GetImageDisplayRect();
+            if (disp.Width <= 0 || disp.Height <= 0)
+                return false;
+
+            var (pw, ph) = GetImagePixelSize();
+
+            double width = roi.Shape == RoiShape.Rectangle ? roi.Width : Math.Max(1.0, roi.R * 2.0);
+            double height = roi.Shape == RoiShape.Rectangle
+                ? roi.Height
+                : (roi.Shape == RoiShape.Annulus && roi.Height > 0 ? roi.Height : Math.Max(1.0, roi.R * 2.0));
+            double left = roi.Shape == RoiShape.Rectangle ? roi.Left : roi.CX - width / 2.0;
+            double top = roi.Shape == RoiShape.Rectangle ? roi.Top : roi.CY - height / 2.0;
+
+            bool withinCanvas = left >= -1 && top >= -1 && width <= disp.Width + 2 && height <= disp.Height + 2;
+            bool clearlyNotImageScale = width > pw + 2 || height > ph + 2;
+            return withinCanvas && clearlyNotImageScale;
+        }
+
+        private Mat GetUiMatOrReadFromDisk()
+        {
+            if (ImgMain?.Source is BitmapSource bs)
+            {
+                return BitmapSourceConverter.ToMat(bs);
+            }
+
+            if (!string.IsNullOrWhiteSpace(_currentImagePathWin))
+            {
+                var mat = Cv2.ImRead(_currentImagePathWin, ImreadModes.Unchanged);
+                if (!mat.Empty())
+                    return mat;
+            }
+
+            throw new InvalidOperationException("No hay imagen disponible para exportar el ROI.");
+        }
+
+        private string EnsureAndGetPreviewDir()
+        {
+            var imgDir = Path.GetDirectoryName(_currentImagePathWin) ?? string.Empty;
+            var previewDir = Path.Combine(imgDir, "roi_previews");
+            Directory.CreateDirectory(previewDir);
+            return previewDir;
+        }
+
+        private void SaveRoiCropPreview(RoiModel roi, string tag)
+        {
+            try
+            {
+                if (roi == null)
+                {
+                    AppendLog("[preview] ROI == null");
+                    return;
+                }
+
+                var roiImage = LooksLikeCanvasCoords(roi) ? CanvasToImage(roi) : roi.Clone();
+
+                using var src = GetUiMatOrReadFromDisk();
+                if (src.Empty())
+                {
+                    AppendLog("[preview] Imagen fuente vacía.");
+                    return;
+                }
+
+                if (!RoiCropUtils.TryBuildRoiCropInfo(roiImage, out var cropInfo))
+                {
+                    AppendLog("[preview] ROI no soportado para recorte.");
+                    return;
+                }
+
+                if (!RoiCropUtils.TryGetRotatedCrop(src, cropInfo, roiImage.AngleDeg, out var cropMat, out var cropRect))
+                {
+                    AppendLog("[preview] No se pudo obtener el recorte rotado.");
+                    return;
+                }
+
+                Mat? alphaMask = null;
+                try
+                {
+                    alphaMask = RoiCropUtils.BuildRoiMask(cropInfo, cropRect);
+                    using var cropWithAlpha = RoiCropUtils.ConvertCropToBgra(cropMat, alphaMask);
+
+                    var outDir = EnsureAndGetPreviewDir();
+                    string ts = DateTime.Now.ToString("yyyyMMdd_HHmmssfff");
+                    string fname = $"{tag}_{ts}.png";
+                    var outPath = Path.Combine(outDir, fname);
+
+                    Cv2.ImWrite(outPath, cropWithAlpha);
+                    AppendLog($"[preview] Guardado {fname} ROI=({cropInfo.Left:0.#},{cropInfo.Top:0.#},{cropInfo.Width:0.#},{cropInfo.Height:0.#}) " +
+                              $"crop=({cropRect.X},{cropRect.Y},{cropRect.Width},{cropRect.Height}) ang={roiImage.AngleDeg:0.##}");
+                }
+                finally
+                {
+                    alphaMask?.Dispose();
+                    cropMat.Dispose();
+                }
+            }
+            catch (Exception ex)
+            {
+                AppendLog("[preview] error: " + ex.Message);
+            }
+        }
+
+        private async Task<Workflow.RoiExportResult?> ExportCurrentRoiCanonicalAsync()
+        {
+            RoiModel? roiImage = null;
+            string? imagePath = null;
+
+            await Dispatcher.InvokeAsync(() =>
+            {
+                if (_tmpBuffer != null && _tmpBuffer.Role == RoiRole.Inspection)
+                {
+                    roiImage = _tmpBuffer.Clone();
+                }
+                else if (_layout.Inspection != null)
+                {
+                    roiImage = _layout.Inspection.Clone();
+                }
+                else
+                {
+                    roiImage = BuildCurrentRoiModel(RoiRole.Inspection);
+                }
+
+                imagePath = _currentImagePathWin;
+            });
+
+            if (roiImage == null)
+            {
+                Snack("No hay ROI de inspección definido.");
+                return null;
+            }
+
+            if (string.IsNullOrWhiteSpace(imagePath) || !File.Exists(imagePath))
+            {
+                Snack("Carga primero una imagen válida.");
+                return null;
+            }
+
+            return await Task.Run(() =>
+            {
+                var roiClone = roiImage!.Clone();
+                if (!BackendAPI.TryPrepareCanonicalRoi(imagePath!, roiClone, out var payload, out _, AppendLog) || payload == null)
+                {
+                    AppendLog("[export] canonical ROI preparation failed");
+                    return null;
+                }
+
+                var shapeJson = payload.ShapeJson ?? string.Empty;
+                return new Workflow.RoiExportResult(payload.PngBytes, shapeJson, roiClone);
+            }).ConfigureAwait(false);
+        }
+
+        private async Task<bool> VerifyPathsAndConnectivityAsync()
+        {
+            AppendLog("== VERIFY: comenzando verificación de paths/IP ==");
+            bool ok = true;
+
+            if (string.IsNullOrWhiteSpace(_currentImagePathWin) || !File.Exists(_currentImagePathWin))
+            {
+                Snack("Imagen no válida o no existe. Carga una imagen primero.");
+                ok = false;
+            }
+            else
+            {
+                try
+                {
+                    using var bmp = new System.Drawing.Bitmap(_currentImagePathWin);
+                    AppendLog($"[VERIFY] Imagen OK: {bmp.Width}x{bmp.Height}");
+                }
+                catch (Exception ex)
+                {
+                    Snack("No se pudo abrir la imagen: " + ex.Message);
+                    ok = false;
+                }
+            }
+
+            try
+            {
+                var uri = new Uri(BackendAPI.BaseUrl);
+                if (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps)
+                {
+                    Snack("BaseUrl no es http/https");
+                    ok = false;
+                }
+                AppendLog($"[VERIFY] BaseUrl OK: {uri}");
+            }
+            catch (Exception ex)
+            {
+                Snack("BaseUrl inválida: " + ex.Message);
+                ok = false;
+            }
+
+            var url = BackendAPI.BaseUrl.TrimEnd('/') + "/" + BackendAPI.TrainStatusEndpoint.TrimStart('/');
+            try
+            {
+                using var hc = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
+                var resp = await hc.GetAsync(url).ConfigureAwait(false);
+                var body = await resp.Content.ReadAsStringAsync().ConfigureAwait(false);
+                AppendLog($"[VERIFY] GET {url} -> {(int)resp.StatusCode} {resp.ReasonPhrase}");
+                if (resp.IsSuccessStatusCode)
+                {
+                    AppendLog($"[VERIFY] train_status body (tail): {body.Substring(0, Math.Min(body.Length, 200))}");
+                }
+                else
+                {
+                    Snack($"El backend respondió {resp.StatusCode} en /train_status");
+                }
+            }
+            catch (Exception ex)
+            {
+                Snack("No hay conexión con el backend: " + ex.Message);
+                ok = false;
+            }
+
+            AppendLog("== VERIFY: fin verificación ==");
+            return ok;
+        }
         private void LogPathSnapshot()
         {
             AppendLog("========== PATH SNAPSHOT ==========");
