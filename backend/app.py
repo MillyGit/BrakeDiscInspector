@@ -1,5 +1,6 @@
 from __future__ import annotations
 import json
+import sys
 import traceback
 from typing import Optional, Dict, Any, List
 from pathlib import Path
@@ -17,12 +18,26 @@ except ModuleNotFoundError as exc:  # pragma: no cover - import guard
         "Install backend requirements with 'python -m pip install -r backend/requirements.txt'."
     ) from exc
 
-from .features import DinoV2Features
-from .patchcore import PatchCoreMemory
-from .storage import ModelStore
-from .infer import InferenceEngine
-from .calib import choose_threshold
-from .utils import ensure_dir, base64_from_bytes
+if __package__ in (None, ""):
+    # Allow running as a script: `python app.py`
+    backend_dir = Path(__file__).resolve().parent
+    project_root = backend_dir.parent
+    if str(project_root) not in sys.path:
+        sys.path.insert(0, str(project_root))
+
+    from backend.features import DinoV2Features  # type: ignore[no-redef]
+    from backend.patchcore import PatchCoreMemory  # type: ignore[no-redef]
+    from backend.storage import ModelStore  # type: ignore[no-redef]
+    from backend.infer import InferenceEngine  # type: ignore[no-redef]
+    from backend.calib import choose_threshold  # type: ignore[no-redef]
+    from backend.utils import ensure_dir, base64_from_bytes  # type: ignore[no-redef]
+else:
+    from .features import DinoV2Features
+    from .patchcore import PatchCoreMemory
+    from .storage import ModelStore
+    from .infer import InferenceEngine
+    from .calib import choose_threshold
+    from .utils import ensure_dir, base64_from_bytes
 
 app = FastAPI(title="Anomaly Backend (PatchCore + DINOv2)")
 
