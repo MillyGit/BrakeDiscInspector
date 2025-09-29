@@ -1,155 +1,100 @@
-
 # LOGGING — BrakeDiscInspector
 
-Guía de **logging y trazabilidad** para el backend (Flask) y la GUI (WPF). El objetivo es facilitar el diagnóstico, auditoría y mejora del rendimiento sin almacenar datos sensibles innecesarios.
+Política de logging y trazabilidad para el backend FastAPI (PatchCore + DINOv2) y la GUI WPF.
 
 ---
 
-## 1) Objetivos y principios
+## 1) Principios
 
-- **Trazabilidad** de acciones clave: carga de modelo, llamadas a endpoints, inferencia, errores.
-- **Observabilidad**: latencias, tamaños, resultados agregados.
-- **Privacidad**: evitar PII y rutas locales sensibles en los logs.
-- **Mantenibilidad**: formato consistente, niveles claros, rotación periódica.
+- **Observabilidad**: registrar tiempos, tamaños y resultados clave sin exponer datos sensibles.
+- **Correlación**: usar `X-Correlation-Id` para unir eventos GUI ↔ backend.
+- **Retención**: rotar y conservar logs críticos según políticas de planta.
 
 ---
 
-## 2) Backend (Flask)
+## 2) Backend (FastAPI)
 
-### 2.1 Ubicación y formato
-- Archivo: `backend/logs/backend.log`
-- Configuración básica (en `app.py`):
-  ```python
-  logging.basicConfig(
-      filename=os.path.join(LOG_DIR, "backend.log"),
-      level=logging.INFO,
-      format="%(asctime)s %(levelname)s %(message)s",
-  )
-  logger = logging.getLogger("BrakeDiscInspectorBackend")
-  ```
+### 2.1 Configuración básica
 
-### 2.2 Niveles recomendados
-- `DEBUG`: datos de depuración (desactivado en prod; puede incluir matrices/shape).
-- `INFO`: eventos normales (inicio app, carga modelo, requests, decisión OK/NG).
-- `WARNING`: condiciones anómalas recuperables (threshold por defecto, annulus inválido).
-- `ERROR`: fallos en inferencia o E/S.
-- `CRITICAL`: indisponibilidad total del servicio.
+- El backend usa `logging.getLogger(__name__)` en módulos como `app.py`, `infer.py` y `storage.py`.
+- Inicializa logging en `if __name__ == "__main__"` cuando se ejecuta con `uvicorn backend.app:app` (usar `--log-level info`).
+- Para despliegues con Gunicorn, definir `log-config` o variables `LOG_LEVEL` según necesidad.
 
-### 2.3 Eventos mínimos a registrar
-- **Inicio**: versión de lib, presencia de modelo, umbral cargado.
-- **/analyze**:
-  - Inicio/fin con **correlation id** (GUID) y latencia total.
-  - Tamaño del PNG recibido en bytes.
-  - Parámetros opcionales (mask/annulus presentes o no).
-  - Resultado: `label`, `score`, `threshold` (redondeado).
-- **/train_status**: respuesta enriquecida con `state`, `threshold`, `artifacts.*`, `model_runtime` y `log_tail`.
-- **/match_master** (alias `/match_one`): estado (`stage`), `found`, `confidence`, `tm_best/tm_thr` y métricas del detector.
-- **Errores**: traza con `logger.exception(...)`.
+### 2.2 Eventos mínimos
+
+| Evento | Campos sugeridos |
+|--------|------------------|
+| Inicio del servicio | versión, dispositivo (`cpu`/`cuda`), `models_dir` activo. |
+| `/fit_ok` | `role_id`, `roi_id`, nº de imágenes, bytes totales, `n_embeddings`, `coreset_size`, `token_shape`, tiempo total. |
+| `/calibrate_ng` | `role_id`, `roi_id`, tamaño arrays OK/NG, `threshold`, `score_percentile`, `area_mm2_thr`. |
+| `/infer` | `role_id`, `roi_id`, tamaño PNG, presencia de `shape`, `score`, `threshold`, nº regiones, latencia total. |
+| Errores | Mensaje y `traceback` completo (`logger.exception`). |
 
 Ejemplo (pseudocódigo):
 ```python
-rid = uuid.uuid4().hex[:8]
+cid = headers.get("X-Correlation-Id", uuid.uuid4().hex[:8])
 t0 = time.perf_counter()
-logger.info(f"[{rid}] /analyze start bytes={len(data)} mask={'mask' in request.files} ann={'annulus' in request.form}")
-# ... inferencia ...
-dt = (time.perf_counter() - t0)*1000
-logger.info(f"[{rid}] /analyze end label={label} score={score:.3f} thr={_threshold:.3f} dt_ms={dt:.1f}")
+log.info("[%s] /infer start role=%s roi=%s bytes=%d shape=%s", cid, role_id, roi_id, len(data), bool(shape))
+...
+dt = (time.perf_counter() - t0) * 1000
+log.info("[%s] /infer end score=%.2f thr=%s regions=%d dt_ms=%.1f", cid, out["score"], out.get("threshold"), len(out["regions"]), dt)
 ```
 
-### 2.4 Rotación de logs
-- En Windows: usar **Logman** o tareas programadas para rotar por tamaño/fecha.
-- En Linux: `logrotate` (ejemplo `/etc/logrotate.d/brakedisc`):
-  ```
-  /opt/brakedisc/backend/logs/backend.log {
-      weekly
-      rotate 8
-      compress
-      missingok
-      notifempty
-      copytruncate
-  }
-  ```
+### 2.3 Rotación
 
-### 2.5 Métricas opcionales
-- Promedio y p95 de latencias `/analyze`.
-- Conteo de `OK` vs `NG` por ventana temporal.
-- Errores por tipo (decoding, model, annulus).
+- **Linux**: usar `logrotate` (ejemplo `/etc/logrotate.d/brakedisc` con rotación semanal + compresión).
+- **Windows**: emplear Task Scheduler o NSSM para rotar ficheros en `backend/logs/`.
+- Registrar la ruta exacta en documentación de despliegue.
 
-> Para setups avanzados, exportar a **Prometheus**/**Grafana** o enviar a **ELK**/**OpenSearch** vía Filebeat/Fluentd.
+### 2.4 Métricas opcionales
+
+- Promedio y percentil 95 de latencias `/infer`.
+- Conteo de `OK` vs `NG` por rol/ROI.
+- Uso opcional de Prometheus (`prometheus_fastapi_instrumentator`) para exponer métricas.
 
 ---
 
 ## 3) GUI (WPF)
 
-### 3.1 Recomendación de implementación
-- Usar `System.Diagnostics.TraceSource` o un simple `StreamWriter` con lock.
-- Archivo sugerido: `gui/BrakeDiscInspector_GUI_ROI/logs/gui.log` (añadir a `.gitignore`).
-- Nivel configurable por `appsettings` (opcional).
+### 3.1 Recomendaciones
+
+- Centralizar logs en `gui/logs/gui.log` (añadir a `.gitignore`).
+- Usar un `ConcurrentQueue` o `ObservableCollection` para mostrar eventos en pantalla y escribirlos en disco.
+- Formato sugerido: `yyyy-MM-dd HH:mm:ss.fff [Nivel] Mensaje`.
 
 ### 3.2 Eventos mínimos
-- Inicio de la app y versión (OS, .NET).
-- Carga de imagen: ruta **anonimizada** (solo nombre de archivo).
-- ROI: cambios relevantes (tamaño, posición, `AngleDeg`), respetando rate‑limit de logs.
-- Rotaciones del ROI (thumb NE del **RoiAdorner**).
-- Click **Analyze**: dimensiones del crop, tamaño PNG enviado.
-- Respuesta: `label`, `score`, `threshold` (no guardar imagen).
-- Errores de red/HTTP y conversiones Mat↔BitmapSource.
 
-Ejemplo (C#):
-```csharp
-void AppendLog(string msg) {
-    var line = $"{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff} {msg}";
-    File.AppendAllText("logs/gui.log", line + Environment.NewLine);
-}
-```
+| Evento | Contenido |
+|--------|-----------|
+| Inicio de la app | Versión, ruta del dataset, backend configurado. |
+| Carga de imagen | Nombre de archivo (anonimizado) y dimensiones. |
+| ROI exportada | `role_id`, `roi_id`, tamaño PNG generado, ángulo, `shape`. |
+| `/fit_ok` | Tiempo de ejecución y resumen de respuesta (`n_embeddings`, `coreset_size`). |
+| `/calibrate_ng` | `threshold` devuelto, tamaños de arrays. |
+| `/infer` | `score`, `threshold`, nº regiones, latencia. |
+| Errores | Mensaje y detalles (`HttpRequestException`, validaciones). |
 
-### 3.3 Buenas prácticas
-- No loggear rutas completas del usuario ni claves de API.
-- No serializar bitmaps/bytes grandes en el log.
-- Limitar la frecuencia de logs de movimiento/rotación.
+### 3.3 Correlación con backend
+
+- Generar `X-Correlation-Id` por cada operación (ej. `Guid.NewGuid().ToString("N").Substring(0,8)`).
+- Adjuntar el header en todas las llamadas HTTP y registrar el mismo ID en los logs GUI.
 
 ---
 
-## 4) Correlación GUI ↔ Backend
+## 4) Seguridad
 
-- Generar en la GUI un **CorrelationId** (GUID corto) por cada **Analyze** y adjuntarlo como header:
-  - Header: `X-Correlation-Id: <id>`
-- Backend: registrar el mismo header si existe.
-- Beneficio: seguimiento de punta a punta (GUI→backend→respuesta).
-
-Ejemplo GUI (C#):
-```csharp
-var id = Guid.NewGuid().ToString("N").Substring(0,8);
-var req = new HttpRequestMessage(HttpMethod.Post, BackendAPI.AnalyzeEndpoint);
-req.Headers.Add("X-Correlation-Id", id);
-```
-(Integrarlo en `BackendAPI.AnalyzeAsync` si se requiere).
+- No registrar rutas completas del usuario ni datos sensibles.
+- Evitar almacenar imágenes o blobs en logs (solo tamaños/nombres anónimos).
+- Asegurar permisos restrictivos en carpetas de log (`chmod 750` en Linux; ACLs en Windows).
 
 ---
 
-## 5) Entornos (niveles y verbosidad)
+## 5) Checklist
 
-- **Dev**: `DEBUG` + trazas detalladas; rotación menor.
-- **Staging**: `INFO` + métricas; rotación semanal.
-- **Prod**: `INFO/WARN/ERROR`; rotación semanal con compresión.
+- [ ] Backend registra inicio, `/fit_ok`, `/calibrate_ng`, `/infer` y errores con correlation id.
+- [ ] Rotación de logs configurada en el entorno objetivo.
+- [ ] GUI guarda logs locales sin PII y muestra últimos eventos al usuario.
+- [ ] `X-Correlation-Id` presente en ambas mitades (GUI ↔ backend).
+- [ ] Métricas opcionales documentadas en `docs/mcp/latest_updates.md` si se habilitan.
 
----
-
-## 6) Seguridad y cumplimiento
-
-- Evitar PII (nombres de usuario, emails, rutas personales).
-- Evitar volcado de contenido binario/base64 de imágenes en logs.
-- Si se guardan ejemplos para auditoría, hacerlo en carpetas separadas y con **consentimiento**/política de retención.
-- Revisar permisos de archivos de log (solo lectura/escritura para el servicio).
-
----
-
-## 7) Checklist
-
-- [ ] `backend/logs/` existe y es escribible.
-- [ ] `logging.basicConfig(...)` inicializa nivel y formato.
-- [ ] Se registra inicio de app, umbral y estado del modelo.
-- [ ] `/analyze` loggea bytes recibidos, decisión y latencia.
-- [ ] GUI registra acciones principales sin PII.
-- [ ] Rotación de logs definida (logrotate/NSSM/Task Scheduler).
-- [ ] (Opcional) CorrelationId de extremo a extremo.
+Para coordinación entre equipos revisar [docs/mcp/overview.md](docs/mcp/overview.md).

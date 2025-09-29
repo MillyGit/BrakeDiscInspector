@@ -1,213 +1,203 @@
-
 # API_REFERENCE — BrakeDiscInspector
 
-Este documento describe los endpoints HTTP expuestos por el backend Flask de BrakeDiscInspector, su formato de entrada/salida y ejemplos de uso.
+Este documento describe los endpoints expuestos por el backend **FastAPI** de BrakeDiscInspector, sus parámetros, respuestas y ejemplos prácticos.
 
 ---
 
 ## 1) Endpoints principales
 
-### 1.1 `/analyze` (POST)
+### 1.1 `GET /health`
 
-- **Descripción**: Analiza un crop de disco de freno y devuelve la predicción junto con un heatmap.
-- **URL**: `http://<host>:5000/analyze`
-- **Método**: POST
-- **Content-Type**: `multipart/form-data`
+- **Descripción**: Comprueba que el servicio está disponible y muestra información de dispositivo/modelo.
+- **URL base**: `http://<host>:8000/health`
 
-#### Parámetros de entrada
-
-- `file` (requerido): PNG del ROI ya recortado y rotado por la GUI.
-- `mask` (opcional): PNG binaria (mismo tamaño que el ROI) para anular píxeles fuera de la máscara.
-- `annulus` (opcional): JSON con los parámetros de un anillo de centrado.
-
-Ejemplo JSON de annulus:
+**Respuesta 200 OK**
 ```json
 {
-  "cx": 400,
-  "cy": 300,
-  "ri": 50,
-  "ro": 200
+  "status": "ok",
+  "device": "cuda",
+  "model": "vit_small_patch14_dinov2.lvd142m",
+  "version": "0.1.0"
 }
 ```
 
-#### Respuesta (200 OK)
+### 1.2 `POST /fit_ok`
 
+- **Descripción**: Recibe lotes de ROIs OK y construye/actualiza la memoria PatchCore (coreset + índice).
+- **Método**: `multipart/form-data`
+- **Campos obligatorios**:
+  - `role_id` *(str)* — Identificador del rol/preset (ej. `Master1`).
+  - `roi_id` *(str)* — Identificador de la ROI (ej. `Pattern`).
+  - `mm_per_px` *(float)* — Resolución de la ROI para reporting (mm por pixel).
+  - `images` *(files[])* — Uno o más PNG/JPG del ROI canónico (crop + rotación ya aplicados por la GUI).
+
+**Respuesta 200 OK**
 ```json
 {
-  "label": "NG",
-  "score": 0.83,
-  "threshold": 0.57,
-  "heatmap_png_b64": "iVBORw0KGgoAAAANS..."
+  "n_embeddings": 34992,
+  "coreset_size": 700,
+  "token_shape": [32, 32],
+  "coreset_rate_requested": 0.02,
+  "coreset_rate_applied": 0.018
 }
 ```
 
-- `label`: `"OK"` o `"NG"`
-- `score`: valor de 0.0 a 1.0 (score de defecto)
-- `threshold`: umbral leído de `threshold.txt`
-- `heatmap_png_b64`: heatmap de Grad-CAM codificado en PNG y Base64
-
-#### Errores
-
-- 400 Bad Request: si falta el archivo o parámetros incorrectos.
-- 500 Internal Server Error: error en inferencia u otro fallo interno.
-
-Ejemplo con `curl`:
+**Ejemplo `curl`**
 ```bash
-curl -X POST http://127.0.0.1:5000/analyze   -F "file=@crop.png"   -F "annulus={"cx":400,"cy":300,"ri":50,"ro":200}"
+curl -X POST http://127.0.0.1:8000/fit_ok \
+  -F role_id=Master1 \
+  -F roi_id=Pattern \
+  -F mm_per_px=0.20 \
+  -F images=@datasets/Master1/Pattern/ok/sample_001.png \
+  -F images=@datasets/Master1/Pattern/ok/sample_002.png
 ```
 
----
+### 1.3 `POST /calibrate_ng`
 
-### 1.2 `/train_status` (GET)
+- **Descripción**: Calcula y persiste el umbral óptimo por `(role_id, roi_id)` a partir de scores OK/NG.
+- **Método**: `application/json`
+- **Body**:
+  ```json
+  {
+    "role_id": "Master1",
+    "roi_id": "Pattern",
+    "mm_per_px": 0.20,
+    "ok_scores": [12.1, 10.8, 11.5],
+    "ng_scores": [28.4],
+    "area_mm2_thr": 1.0,
+    "score_percentile": 99
+  }
+  ```
+- `ng_scores` es opcional; si se omite, el umbral será `p99(OK)`.
 
-- **Descripción**: Informa del estado actual del modelo cargado.
-- **URL**: `http://<host>:5000/train_status`
-- **Método**: GET
-
-#### Respuesta (200 OK)
+**Respuesta 200 OK**
 ```json
 {
-  "state": "idle",
-  "threshold": 0.57,
-  "pid": 9124,
-  "artifacts": {
-    "model": {
-      "path": "/app/backend/model/current_model.h5",
-      "exists": true,
-      "size_bytes": 7340032,
-      "modified_at": 1717000200.123,
-      "loaded": true
-    },
-    "threshold": {
-      "path": "/app/backend/model/threshold.txt",
-      "exists": true,
-      "size_bytes": 6,
-      "modified_at": 1717000200.456,
-      "value": 0.57,
-      "source": "model_cache"
-    },
-    "log": {
-      "path": "/app/backend/model/logs/train.log",
-      "exists": true,
-      "size_bytes": 10240,
-      "modified_at": 1717000200.789,
-      "tail": "Epoch 5/20 - val_loss=0.21..."
-    }
-  },
-  "model_runtime": {
-    "loaded": true,
-    "name": "classifier",
-    "layer_count": 5,
-    "layers_preview": [
-      "input",
-      "conv1",
-      "conv2",
-      "dense",
-      "logits",
-      "..."
-    ],
-    "input_shape": [null, 600, 600, 3],
-    "output_shape": [null, 1],
-    "trainable_params": 123456,
-    "non_trainable_params": 2048
-  },
-  "log_tail": "Epoch 5/20 - val_loss=0.21..."
+  "threshold": 20.0,
+  "p99_ok": 12.0,
+  "p5_ng": 28.0,
+  "mm_per_px": 0.2,
+  "area_mm2_thr": 1.0,
+  "score_percentile": 99
 }
 ```
 
-> Los valores numéricos (`size_bytes`, `modified_at`, etc.) variarán en función de tu despliegue.
+### 1.4 `POST /infer`
 
----
+- **Descripción**: Ejecuta inferencia sobre un ROI canónico usando la memoria entrenada.
+- **Método**: `multipart/form-data`
+- **Campos**:
+  - `role_id`, `roi_id`, `mm_per_px` — mismos valores utilizados durante el entrenamiento/calibración.
+  - `image` *(file)* — PNG/JPG del ROI canónico.
+  - `shape` *(string, opcional)* — JSON que describe la máscara en coordenadas del ROI (`rect`, `circle`, `annulus`).
 
-### 1.3 `/match_master` (POST) — alias `/match_one`
-
-- **Descripción**: Matching maestro que localiza la plantilla (`template`) dentro de una imagen (`image`).
-- **URL**: `http://<host>:5000/match_master` (compatible con `/match_one`).
-- **Método**: POST
-
-#### Entrada (`multipart/form-data`)
-- `image`: captura donde buscar (obligatoria).
-- `template`: plantilla de referencia (obligatoria, se acepta PNG con canal alfa para máscara implícita).
-- Parámetros opcionales:
-  - `feature`: `auto` (por defecto) / `sift` / `orb` / `tm_rot` / `geom`.
-  - `thr`: umbral de confianza para coincidencia geométrica/SIFT-ORB (por defecto `0.6`).
-  - `tm_thr`: umbral de template matching (`0.8` por defecto).
-  - `rot_range`: rango de rotaciones ±grados para `tm_rot`.
-  - `scale_min` / `scale_max`: escalas mín./máx. para `tm_rot`.
-  - `search_x`, `search_y`, `search_w`, `search_h`: ROI para limitar la búsqueda.
-  - `debug`: `1/true` para adjuntar capturas de depuración codificadas en Base64.
-
-#### Respuesta (ejemplo `found=true`)
+**Respuesta 200 OK (resumen)**
 ```json
 {
-  "found": true,
-  "stage": "TM_OK",
-  "center_x": 412.5,
-  "center_y": 298.0,
-  "confidence": 0.91,
-  "tm_best": 0.91,
-  "tm_thr": 0.8,
-  "bbox": [380.0, 260.0, 65.0, 76.0],
-  "sift_orb": {
-    "detector": "auto->orb",
-    "kp_tpl": 523,
-    "kp_img": 497,
-    "matches": 480,
-    "good": 132,
-    "confidence": 0.86
+  "role_id": "Master1",
+  "roi_id": "Pattern",
+  "score": 18.7,
+  "threshold": 20.0,
+  "heatmap_png_base64": "iVBORw0K...",
+  "regions": [
+    {"bbox": [x, y, w, h], "area_px": 250.0, "area_mm2": 10.0, "contour": [[x1, y1], ...]}
+  ],
+  "token_shape": [32, 32],
+  "params": {
+    "extractor": "vit_small_patch14_dinov2.lvd142m",
+    "input_size": 448,
+    "patch_size": 14,
+    "coreset_rate": 0.02,
+    "score_percentile": 99,
+    "mm_per_px": 0.2
   }
 }
 ```
 
-#### Respuesta (ejemplo `found=false`)
-```json
-{
-  "found": false,
-  "stage": "TM_FAIL",
-  "reason": "tm_below_threshold",
-  "tm_best": 0.42,
-  "tm_thr": 0.8,
-  "crop_off": [0, 0],
-  "sift_orb": {
-    "detector": "auto->orb",
-    "matches": 12,
-    "good": 1,
-    "fail_reason": "not_enough_good_matches"
-  }
-}
-```
-
----
-
-## 2) Convenciones generales
-
-- **Formato de imágenes**: se espera PNG en BGR (decodificado por OpenCV).
-- **Máscaras**: PNG binaria o annulus JSON. Solo se aplicará una de ellas si ambas se envían.
-- **Decisión**: `"NG"` si `score ≥ threshold`; de lo contrario `"OK"`.
-
----
-
-## 3) Ejemplos de uso
-
-### 3.1 Análisis simple desde GUI
-- GUI rota ROI → envía `file=crop.png`
-- Backend devuelve `label/score/threshold/heatmap`
-
-### 3.2 Uso con máscara
+**Ejemplo `curl`**
 ```bash
-curl -X POST http://127.0.0.1:5000/analyze   -F "file=@crop.png"   -F "mask=@mask.png"
+curl -X POST http://127.0.0.1:8000/infer \
+  -F role_id=Master1 \
+  -F roi_id=Pattern \
+  -F mm_per_px=0.20 \
+  -F image=@datasets/Master1/Pattern/ok/sample_eval.png \
+  -F shape='{"kind":"circle","cx":192,"cy":192,"r":180}'
 ```
 
-### 3.3 Solo consulta de estado
-```bash
-curl http://127.0.0.1:5000/train_status
-```
+**Códigos de error**
+- `400 Bad Request`: memoria inexistente para `(role_id, roi_id)` o datos inválidos.
+- `422 Unprocessable Entity`: payload JSON malformado.
+- `500 Internal Server Error`: excepciones no controladas (se devuelve `{ "error", "trace" }`).
 
 ---
 
-## 4) Referencias cruzadas
+## 2) Máscaras (`shape`) soportadas
 
-- **README.md** → descripción general
-- **ARCHITECTURE.md** → flujo GUI↔backend
-- **ROI_AND_MATCHING_SPEC.md** → detalles de ROI y annulus
-- **DATA_FORMATS.md** → formatos internos
+Todas las coordenadas se expresan en el espacio del ROI canónico (post crop + rotación):
+
+- **Rectángulo completo**:
+  ```json
+  {"kind":"rect","x":0,"y":0,"w":W,"h":H}
+  ```
+- **Círculo**:
+  ```json
+  {"kind":"circle","cx":CX,"cy":CY,"r":R}
+  ```
+- **Annulus**:
+  ```json
+  {"kind":"annulus","cx":CX,"cy":CY,"r":R_OUTER,"r_inner":R_INNER}
+  ```
+
+Si no se envía `shape`, el backend asume la imagen completa.
+
+---
+
+## 3) Persistencia de artefactos
+
+Tras un `POST /fit_ok` exitoso, se genera la carpeta `backend/models/<role>/<roi>/` con:
+
+- `memory.npz` — embeddings del coreset (`emb`), `token_h`, `token_w`, `metadata` (coreset rate aplicado).
+- `index.faiss` — índice serializado (si FAISS está disponible).
+- `calib.json` — creado por `/calibrate_ng` con `threshold`, percentiles y parámetros de área.
+
+Los endpoints `/infer` y `/calibrate_ng` leen estos artefactos para mantener consistencia entre ejecuciones.
+
+---
+
+## 4) Ejemplos adicionales
+
+### 4.1 Obtener scores para calibración manual
+
+Para recolectar scores de muestras NG antes de llamar a `/calibrate_ng`:
+```bash
+curl -X POST http://127.0.0.1:8000/infer \
+  -F role_id=Master1 \
+  -F roi_id=Pattern \
+  -F mm_per_px=0.20 \
+  -F image=@datasets/Master1/Pattern/ng/sample_ng.png \
+  -F shape='{"kind":"rect","x":0,"y":0,"w":384,"h":384}' \
+  | jq '.score'
+```
+
+### 4.2 Reentrenar con muestras adicionales
+
+Repite `/fit_ok` tantas veces como sea necesario; el backend sobrescribe `memory.npz` e índice con los embeddings recalculados.
+
+### 4.3 Limpieza de artefactos
+
+Para reiniciar un rol/ROI:
+```bash
+rm -rf backend/models/Master1/Pattern
+```
+La próxima llamada a `/infer` devolverá `400` indicando que falta memoria.
+
+---
+
+## 5) Convenciones generales
+
+- Imágenes esperadas: PNG/JPG en BGR (`cv2.imdecode`).
+- Tamaño de entrada: se reescala internamente al múltiplo de 14 más cercano al `input_size` configurado (448 por defecto).
+- Percentil de score: configurable vía `score_percentile` (99 por defecto) y persistido en `calib.json`.
+- Respuestas de error: `{ "error": "mensaje", "trace": "stacktrace" }` para facilitar debugging desde la GUI.
+
+Para más detalles sobre formatos JSON y almacenamiento en disco consulta [DATA_FORMATS.md](DATA_FORMATS.md) y [backend/README_backend.md](backend/README_backend.md).

@@ -1,35 +1,19 @@
 
 # BrakeDiscInspector
 
-**BrakeDiscInspector** es un sistema completo de **inspección de discos de freno** mediante visión artificial.  
-El proyecto se compone de:
+**BrakeDiscInspector** es una solución integral para inspección de discos de freno que combina una **GUI WPF** para preparar imágenes y un **backend FastAPI** que implementa detección de anomalías basada en **PatchCore + DINOv2**.
 
-- Un **backend en Python (Flask + TensorFlow + OpenCV)** para la detección de defectos, clasificación y generación de mapas de calor.
-- Una **interfaz gráfica (GUI en C# / WPF con OpenCvSharp)** que permite al usuario cargar imágenes, dibujar regiones de interés (ROI), rotarlas, enviar recortes al backend y visualizar resultados con etiquetas, puntuaciones y mapas de calor.
-
-El entorno está documentado y estructurado para ser **Codex-ready**: cualquier agente de IA puede navegar el repo, encontrar los puntos de anclaje y modificar o extender el sistema sin ambigüedades.
+La documentación está organizada para que cualquier colaborador (humano o agente) pueda localizar rápidamente los contratos, las guías de desarrollo y los flujos operativos.
 
 ---
 
 ## ✨ Características principales
 
-- **Detección de defectos** en discos de freno con modelos de deep learning (TensorFlow).
-- **Comunicación HTTP** entre GUI y backend (endpoint `/analyze` y otros auxiliares).
-- **Rotación interactiva del ROI** en la GUI con adorners personalizados.
-- **Letterboxing automático** para mantener la relación de aspecto entre imagen original y canvas.
-- **Visualización de resultados**:
-  - Etiqueta (OK / NG o clase de defecto).
-  - Score numérico y umbral.
-  - Heatmap en tiempo real superpuesto a la ROI.
-- **Arquitectura extensible** con documentación detallada en Markdown:
-  - `ARCHITECTURE.md`
-  - `API_REFERENCE.md`
-  - `ROI_AND_MATCHING_SPEC.md`
-  - `DATA_FORMATS.md`
-  - `DEV_GUIDE.md`
-  - `DEPLOYMENT.md`
-  - `LOGGING.md`
-  - `CONTRIBUTING.md`
+- **Pipeline “good-only”**: el backend aprende únicamente a partir de muestras OK gracias a un extractor DINOv2 ViT-S/14 congelado y memoria PatchCore con coreset k-center greedy.【F:backend/app.py†L40-L118】【F:backend/patchcore.py†L1-L200】
+- **Flujo completo en la GUI**: gestión de datasets por `(role_id, roi_id)`, entrenamiento (`/fit_ok`), calibración (`/calibrate_ng`) e inferencia (`/infer`) usando el ROI canónico exportado desde los adorners existentes.【F:instructions_codex_gui_workflow.md†L1-L120】
+- **Heatmaps y contornos**: el backend devuelve mapas de calor en PNG Base64 y regiones con área en px/mm² listos para superponer en la GUI.【F:backend/app.py†L118-L199】
+- **Persistencia por rol/ROI**: embeddings, índices e información de calibración se almacenan en `models/<role>/<roi>/` para reutilizar entrenamientos previos.【F:backend/storage.py†L1-L200】
+- **Documentación extensa**: guías de arquitectura, datos, despliegue, logging y MCP sincronizadas con la implementación actual.
 
 ---
 
@@ -37,126 +21,124 @@ El entorno está documentado y estructurado para ser **Codex-ready**: cualquier 
 
 ```
 BrakeDiscInspector/
-├─ backend/                 # Backend Flask (detección)
-│  ├─ app.py
-│  ├─ requirements.txt
-│  ├─ environment.yml
-│  └─ utils/
-├─ gui/                     # GUI en WPF (C# + OpenCvSharp)
-│  ├─ BrakeDiscInspector_GUI_ROI.sln
+├─ backend/
+│  ├─ app.py                 # FastAPI con /health, /fit_ok, /calibrate_ng, /infer
+│  ├─ features.py            # Extractor DINOv2 (timm)
+│  ├─ patchcore.py           # Memoria PatchCore y kNN (FAISS/sklearn)
+│  ├─ infer.py               # Posprocesado: heatmap, score, contornos
+│  ├─ calib.py               # Selección de umbral con 0–3 NG
+│  ├─ roi_mask.py            # Construcción de máscaras rect/círculo/annulus
+│  ├─ storage.py             # Persistencia en models/<role>/<roi>/
+│  ├─ requirements.txt       # Dependencias (torch, timm, fastapi, faiss, etc.)
+│  └─ README_backend.md      # Guía específica del servicio
+├─ gui/
 │  └─ BrakeDiscInspector_GUI_ROI/
 │     ├─ App.xaml / App.xaml.cs
 │     ├─ MainWindow.xaml / MainWindow.xaml.cs
-│     ├─ BackendAPI.cs
-│     ├─ ROI/
-│     │  ├─ ROI.cs
-│     │  └─ RoiAdorner.cs
-│     └─ Overlays/
-│        └─ RoiOverlay.cs
-├─ scripts/                 # utilidades PowerShell
-│  ├─ setup_dev.ps1
-│  ├─ run_backend.ps1
-│  ├─ run_gui.ps1
-│  ├─ check_env.ps1
-│  └─ export_onnx.ps1
-├─ README.md                # este archivo
-├─ ARCHITECTURE.md
-├─ API_REFERENCE.md
-├─ ROI_AND_MATCHING_SPEC.md
-├─ DATA_FORMATS.md
-├─ DEV_GUIDE.md
-├─ DEPLOYMENT.md
-├─ LOGGING.md
-├─ CONTRIBUTING.md
-├─ .gitignore
-└─ .editorconfig
+│     ├─ Workflow/BackendClient.cs (cliente HTTP async)
+│     ├─ ROI/                # Modelos y adorners existentes (no modificar)
+│     ├─ Overlays/           # Sincronización imagen ↔ canvas
+│     └─ Workflow/DatasetManager.cs  # Gestión de muestras OK/NG y metadatos
+├─ docs/
+│  └─ mcp/                   # Maintenance & Communication Plan (MCP)
+├─ scripts/                  # Utilidades (PowerShell) para entorno Windows
+├─ README.md                 # Este archivo
+├─ ARCHITECTURE.md           # Arquitectura actualizada
+├─ API_REFERENCE.md          # Contratos FastAPI
+├─ DATA_FORMATS.md           # Esquemas de requests/responses
+├─ DEV_GUIDE.md              # Preparación de entorno y flujos de trabajo
+├─ DEPLOYMENT.md             # Despliegue local, laboratorio y producción
+├─ LOGGING.md                # Política de logging y observabilidad
+├─ CONTRIBUTING.md           # Normas de contribución
+└─ agents.md                 # Playbook para agentes/IA colaboradores
 ```
 
 ---
 
-## 🚀 Instalación y uso
+## 🚀 Puesta en marcha rápida
 
-### Backend (Python)
+### Backend (Python / FastAPI)
 
-1. Entra a la carpeta `backend/`:
+1. Crear entorno virtual e instalar dependencias:
    ```bash
    cd backend
    python -m venv .venv
-   .venv\Scripts\activate   # en Windows
+   source .venv/bin/activate      # PowerShell: .venv\Scripts\Activate.ps1
    pip install -r requirements.txt
    ```
-2. Coloca tu modelo entrenado en:
-   ```
-   backend/model/current_model.h5
-   backend/model/threshold.txt   # umbral, ej. 0.57
-   ```
-3. Arranca el servidor:
+2. Lanzar el servicio en desarrollo:
    ```bash
-   python app.py
+   uvicorn backend.app:app --reload --port 8000
    ```
-4. Comprueba:
+3. Verificar estado:
    ```bash
-   curl http://127.0.0.1:5000/train_status
+   curl http://127.0.0.1:8000/health
+   ```
+4. Entrenar la memoria con muestras OK (ejemplo):
+   ```bash
+   curl -X POST http://127.0.0.1:8000/fit_ok \
+        -F role_id=Master1 \
+        -F roi_id=Pattern \
+        -F mm_per_px=0.20 \
+        -F images=@datasets/Master1/Pattern/ok/sample_001.png
    ```
 
-### GUI (WPF en C#)
+Los artefactos se guardarán automáticamente en `backend/models/Master1/Pattern/`.
 
-1. Abre `gui/BrakeDiscInspector_GUI_ROI.sln` en Visual Studio.
-2. Instala los paquetes NuGet necesarios:
-   - `OpenCvSharp4`
-   - `OpenCvSharp4.runtime.win`
-   - `OpenCvSharp4.Extensions`
-3. Configura `appsettings.json`:
+### GUI (WPF / .NET 8)
+
+1. Abrir `gui/BrakeDiscInspector_GUI_ROI.sln` en Visual Studio 2022 o superior.
+2. Restaurar paquetes NuGet (`OpenCvSharp4`, `OpenCvSharp4.runtime.win`, `OpenCvSharp4.Extensions`, `CommunityToolkit.Mvvm`).
+3. Configurar `appsettings.json`:
    ```json
    {
-     "Backend": { "BaseUrl": "http://127.0.0.1:5000" }
+     "Backend": {
+       "BaseUrl": "http://127.0.0.1:8000",
+       "DatasetRoot": "C:\\data\\brakedisc\\datasets"
+     }
    }
    ```
-4. Compila y ejecuta:
-   - Carga una imagen.
-   - Dibuja ROI (mínimo 10x10).
-   - Rota ROI con el adorner de rotación.
-   - Pulsa **Analyze** → la GUI envía el crop rotado al backend, recibe etiqueta/score/threshold y muestra el heatmap.
+4. Flujo recomendado:
+   1. Dibujar y rotar el ROI con los adorners existentes.
+   2. Guardar muestras OK/NG desde el panel **Dataset** (la GUI exporta PNG + metadata JSON).
+   3. Ejecutar **Train memory (fit_ok)** y revisar `n_embeddings`, `coreset_size` y `token_shape`.
+   4. (Opcional) Ejecutar **Calibrate threshold** aportando scores OK/NG.
+   5. Lanzar **Infer current ROI** para obtener `score`, `threshold` y heatmap superpuesto.
 
 ---
 
-## 🔗 API disponible
+## 🔗 API principal
 
-### `/analyze` (POST)
-- Entrada: imagen PNG de la ROI, opcional máscara/annulus.
-- Salida:
-  ```json
-  {
-    "label": "NG",
-    "score": 0.83,
-    "threshold": 0.57,
-    "heatmap_png_b64": "..."
-  }
-  ```
+- `GET /health` → estado del servicio, dispositivo y versión del modelo base.
+- `POST /fit_ok` → recibe lotes de ROI OK, construye memoria PatchCore y persiste embeddings/índices.
+- `POST /calibrate_ng` → calcula umbral por `(role_id, roi_id)` a partir de scores OK/NG y guarda `calib.json`.
+- `POST /infer` → infiere sobre un ROI canónico y devuelve `score`, `threshold`, `heatmap_png_base64`, `regions` y `token_shape`.
 
-### `/train_status` (GET)
-- Retorna info del modelo cargado y metadata de artefactos (tamaño, timestamp, tail del log, threshold cargado, etc.).
-
-### `/match_master` (POST) — alias `/match_one`
-- Matching por plantilla entre `image` y `template` enviados como `multipart/form-data`.
-- Parámetros opcionales: `thr`, `tm_thr`, `feature` (`auto|sift|orb|tm_rot|geom`), `rot_range`, `scale_min`, `scale_max`, `search_x/y/w/h`, `debug`.
-- Respuesta: campos como `found`, `center_x`, `center_y`, `confidence`, `stage`, `tm_best`, `tm_thr`, `sift_orb` y bloques `debug` cuando se solicitan.
-
-> Detalles completos en [API_REFERENCE.md](API_REFERENCE.md)
+Detalles ampliados y ejemplos en [API_REFERENCE.md](API_REFERENCE.md) y [DATA_FORMATS.md](DATA_FORMATS.md).
 
 ---
 
-## 📐 ROI y matching
+## 📐 ROI y shapes
 
-- ROI definido por: `X`, `Y`, `Width`, `Height`, `AngleDeg`, `Legend`.
-- ROI mínimo: **10x10 píxeles**.
-- Rotación en tiempo real vía adorner.
-- Annulus opcional para centrado de disco.
-- Letterbox garantiza la coherencia imagen→canvas.
+- Los ROIs se dibujan en la GUI con adorners existentes (`RoiAdorner`, `RoiRotateAdorner`, `RoiOverlay`).
+- El backend siempre recibe **ROI canónico** (crop + rotación ya aplicados) y, opcionalmente, una máscara `shape` en coordenadas del ROI (`rect`, `circle`, `annulus`).
+- La GUI mantiene letterboxing sincronizado para que los heatmaps retornados encajen de forma exacta sobre la imagen original.
 
-Más detalles en [ROI_AND_MATCHING_SPEC.md](ROI_AND_MATCHING_SPEC.md).
+Más detalles prácticos en [ROI_AND_MATCHING_SPEC.md](ROI_AND_MATCHING_SPEC.md).
 
 ---
+
+## 📚 Documentación relacionada
+
+- [ARCHITECTURE.md](ARCHITECTURE.md) — vista detallada de componentes, flujo de datos y sincronización ROI.
+- [DEV_GUIDE.md](DEV_GUIDE.md) — preparación de entorno, tooling y debugging.
+- [DEPLOYMENT.md](DEPLOYMENT.md) — despliegue en local, laboratorio y producción (Gunicorn/Uvicorn).
+- [LOGGING.md](LOGGING.md) — eventos mínimos, correlación GUI↔backend, rotación de logs.
+- [docs/mcp/](docs/mcp/overview.md) — Maintenance & Communication Plan actualizado.
+
+---
+
+¿Quieres contribuir? Revisa [CONTRIBUTING.md](CONTRIBUTING.md) y participa 🚀
 
 ## 📑 Documentación adicional
 
@@ -187,7 +169,7 @@ Con esto, cualquier agente Codex puede navegar el proyecto, entender los compone
 ## Para Codex
 - [Arquitectura](ARCHITECTURE.md)
 - [API](API_REFERENCE.md)
-- [ROI / Matching](ROI_AND_MATCHING_SPEC.md)
+  - [ROI & Shapes](ROI_AND_MATCHING_SPEC.md)
 - [Datos](DATA_FORMATS.md)
 - [Dev Guide](DEV_GUIDE.md)
 - [Despliegue](DEPLOYMENT.md)
