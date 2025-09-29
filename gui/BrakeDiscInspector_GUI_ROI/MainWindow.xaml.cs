@@ -1388,86 +1388,80 @@ namespace BrakeDiscInspector_GUI_ROI
                 }
             }
 
-            // 2) Backend si falta alguno
+            // 2) Backend fallback mediante /infer
+            InferFromImageResult? backendM1 = null;
+            InferFromImageResult? backendM2 = null;
+            double? t1 = null, t2 = null;
+
             if (c1 is null || c2 is null)
             {
-                AppendLog("[FLOW] Usando backend matcher");
+                AppendLog("[FLOW] Intentando fallback con backend /infer");
 
-                var tpl1Rect = RoiToRect(_layout.Master1Pattern!);
-                var tpl2Rect = RoiToRect(_layout.Master2Pattern!);
-
-                // Intentar usar el PNG guardado del patrón (mejor que recortar de la imagen actual)
-                var tpl1Path = TryGetSavedPatternPath("M1");
-                var tpl2Path = TryGetSavedPatternPath("M2");
-
-                // --- M1 ---
-                AppendLog($"[BACKEND] M1 ROI=({tpl1Rect.X:0},{tpl1Rect.Y:0},{tpl1Rect.Width:0},{tpl1Rect.Height:0})");
-
-                (bool ok, System.Windows.Point? center, double score, string? error) r1;
-
-                if (!string.IsNullOrEmpty(tpl1Path) && File.Exists(tpl1Path))
+                if (!TryGetBackendDataset(out var roleId, out var baseRoiId, out var mmPerPx))
                 {
-                    // Enviar template DESDE ARCHIVO (patrón guardado)
-                    r1 = await BackendAPI.MatchOneViaTemplateAsync(
-                        _currentImagePathWin, tpl1Path,
-                        _preset.MatchThr, _preset.RotRange, _preset.ScaleMin, _preset.ScaleMax,
-                        string.IsNullOrWhiteSpace(_preset.Feature) ? "auto" : _preset.Feature,
-                        0.8, "M1", _layout.Master1Search, AppendLog);
+                    AppendLog("[BACKEND] Contexto de dataset no disponible. No se puede invocar /infer para fallback.");
                 }
                 else
                 {
-                    // Fallback: recorte desde la imagen actual (no ideal, pero seguimos)
-                    AppendLog("[WARN] M1 sin patrón PNG guardado. Fallback a recorte de la imagen actual.");
-                    r1 = await BackendAPI.MatchOneViaFilesAsync(
-                        _currentImagePathWin, _layout.Master1Pattern!,
-                        _preset.MatchThr, _preset.RotRange, _preset.ScaleMin, _preset.ScaleMax,
-                        string.IsNullOrWhiteSpace(_preset.Feature) ? "auto" : _preset.Feature,
-                        0.8, false, "M1", _layout.Master1Search, AppendLog);
-                }
+                    if (c1 is null && _layout.Master1Pattern != null)
+                    {
+                        var roiId = ResolveBackendRoiId(_layout.Master1Pattern, baseRoiId, "Master1Pattern");
+                        AppendLog($"[BACKEND] Fallback M1 → role={roleId} roi={roiId}");
+                        var result = await BackendAPI.InferAsync(
+                            _currentImagePathWin,
+                            _layout.Master1Pattern,
+                            roleId,
+                            roiId,
+                            mmPerPx,
+                            AppendLog);
 
-                if (r1.ok && r1.center.HasValue)
-                {
-                    c1 = new WPoint(r1.center.Value.X, r1.center.Value.Y);
-                    s1 = r1.score;
-                    AppendLog($"[MATCH] M1 FOUND stage=backend center=({c1.Value.X:0.##},{c1.Value.Y:0.##}) score={s1:0.###}");
-                }
-                else
-                {
-                    AppendLog("[BACKEND] M1 FAIL :: " + (r1.error ?? "unknown"));
-                }
+                        if (result.ok && result.result != null)
+                        {
+                            backendM1 = result.result;
+                            var resp = result.result.Response;
+                            t1 = resp.threshold;
+                            s1 = resp.score;
+                            var center = _layout.Master1Pattern.GetCenter();
+                            c1 = new WPoint(center.cx, center.cy);
+                            AppendLog($"[BACKEND] M1 score={resp.score:0.###} thr={resp.threshold:0.###} regions={resp.regions?.Length ?? 0}");
+                            AppendLog("[BACKEND] M1 fallback usa el centro persistido del ROI");
+                            LogBackendRegions("M1", resp.regions);
+                        }
+                        else
+                        {
+                            AppendLog("[BACKEND] M1 fallback error :: " + (result.error ?? "unknown"));
+                        }
+                    }
 
-                // --- M2 ---
-                AppendLog($"[BACKEND] M2 ROI=({tpl2Rect.X:0},{tpl2Rect.Y:0},{tpl2Rect.Width:0},{tpl2Rect.Height:0})");
+                    if (c2 is null && _layout.Master2Pattern != null)
+                    {
+                        var roiId = ResolveBackendRoiId(_layout.Master2Pattern, baseRoiId, "Master2Pattern");
+                        AppendLog($"[BACKEND] Fallback M2 → role={roleId} roi={roiId}");
+                        var result = await BackendAPI.InferAsync(
+                            _currentImagePathWin,
+                            _layout.Master2Pattern,
+                            roleId,
+                            roiId,
+                            mmPerPx,
+                            AppendLog);
 
-                (bool ok, System.Windows.Point? center, double score, string? error) r2;
-
-                if (!string.IsNullOrEmpty(tpl2Path) && File.Exists(tpl2Path))
-                {
-                    r2 = await BackendAPI.MatchOneViaTemplateAsync(
-                        _currentImagePathWin, tpl2Path,
-                        _preset.MatchThr, _preset.RotRange, _preset.ScaleMin, _preset.ScaleMax,
-                        string.IsNullOrWhiteSpace(_preset.Feature) ? "auto" : _preset.Feature,
-                        0.8, "M2", _layout.Master2Search, AppendLog);
-                }
-                else
-                {
-                    AppendLog("[WARN] M2 sin patrón PNG guardado. Fallback a recorte de la imagen actual.");
-                    r2 = await BackendAPI.MatchOneViaFilesAsync(
-                        _currentImagePathWin, _layout.Master2Pattern!,
-                        _preset.MatchThr, _preset.RotRange, _preset.ScaleMin, _preset.ScaleMax,
-                        string.IsNullOrWhiteSpace(_preset.Feature) ? "auto" : _preset.Feature,
-                        0.8, false, "M2", _layout.Master2Search, AppendLog);
-                }
-
-                if (r2.ok && r2.center.HasValue)
-                {
-                    c2 = new WPoint(r2.center.Value.X, r2.center.Value.Y);
-                    s2 = r2.score;
-                    AppendLog($"[MATCH] M2 FOUND stage=backend center=({c2.Value.X:0.##},{c2.Value.Y:0.##}) score={s2:0.###}");
-                }
-                else
-                {
-                    AppendLog("[BACKEND] M2 FAIL :: " + (r2.error ?? "unknown"));
+                        if (result.ok && result.result != null)
+                        {
+                            backendM2 = result.result;
+                            var resp = result.result.Response;
+                            t2 = resp.threshold;
+                            s2 = resp.score;
+                            var center = _layout.Master2Pattern.GetCenter();
+                            c2 = new WPoint(center.cx, center.cy);
+                            AppendLog($"[BACKEND] M2 score={resp.score:0.###} thr={resp.threshold:0.###} regions={resp.regions?.Length ?? 0}");
+                            AppendLog("[BACKEND] M2 fallback usa el centro persistido del ROI");
+                            LogBackendRegions("M2", resp.regions);
+                        }
+                        else
+                        {
+                            AppendLog("[BACKEND] M2 fallback error :: " + (result.error ?? "unknown"));
+                        }
+                    }
                 }
             }
 
@@ -1515,7 +1509,7 @@ namespace BrakeDiscInspector_GUI_ROI
             MasterLayoutManager.Save(_preset, _layout);
             AppendLog("[FLOW] Layout guardado");
 
-            Snack($"Masters OK. Scores: M1={s1:0.000}, M2={s2:0.000}. ROI inspección reubicado.");
+            Snack($"Masters OK. Scores: M1={s1:0.000}{FormatThreshold(t1)}, M2={s2:0.000}{FormatThreshold(t2)}. ROI inspección reubicado.");
             _state = MasterState.Ready;
             UpdateWizardState();
             AppendLog("[FLOW] AnalyzeMastersAsync terminado");
@@ -1740,14 +1734,52 @@ namespace BrakeDiscInspector_GUI_ROI
             if (string.IsNullOrWhiteSpace(_currentImagePathWin)) { Snack("No hay imagen actual"); return; }
             if (_layout.Inspection == null) { Snack("Falta ROI de Inspección"); return; }
 
-
-            var resp = await BackendAPI.AnalyzeAsync(_currentImagePathWin, _layout.Inspection, _preset, AppendLog);
-            if (!resp.ok)
+            if (!TryGetBackendDataset(out var roleId, out var roiId, out var mmPerPx))
             {
-                Snack(resp.error ?? "Error en Analyze");
+                Snack("Configura Role/ROI en la pestaña Dataset & AI antes de analizar.");
+                AppendLog("[infer] sin contexto de dataset");
                 return;
             }
-            Snack($"Resultado: {resp.label} (score={resp.score:0.000})");
+
+            var result = await BackendAPI.InferAsync(
+                _currentImagePathWin,
+                _layout.Inspection,
+                roleId,
+                roiId,
+                mmPerPx,
+                AppendLog);
+
+            if (!result.ok || result.result == null)
+            {
+                Snack(result.error ?? "Error en /infer");
+                return;
+            }
+
+            var infer = result.result.Response;
+            var label = infer.threshold > 0 && infer.score <= infer.threshold ? "OK" : "NG";
+            AppendLog($"[infer] ROI score={infer.score:0.###} thr={infer.threshold:0.###} regions={infer.regions?.Length ?? 0}");
+            LogBackendRegions("ROI", infer.regions);
+            Snack($"Resultado backend: {label} (score={infer.score:0.###}, thr={infer.threshold:0.###})");
+            UpdateResultLabel(label, infer);
+
+            if (!string.IsNullOrWhiteSpace(infer.heatmap_png_base64))
+            {
+                try
+                {
+                    var heatBytes = Convert.FromBase64String(infer.heatmap_png_base64);
+                    var export = new RoiExportResult(result.result.PngBytes, result.result.ShapeJson, result.result.RoiImage);
+                    await ShowHeatmapOverlayAsync(export, heatBytes, _heatmapOverlayOpacity);
+                }
+                catch (FormatException ex)
+                {
+                    AppendLog("[infer] heatmap decode error: " + ex.Message);
+                }
+            }
+            else
+            {
+                AppendLog("[infer] Heatmap vacío");
+                ClearHeatmapOverlay();
+            }
         }
 
 
@@ -2181,167 +2213,6 @@ namespace BrakeDiscInspector_GUI_ROI
             return new System.Drawing.Rectangle((int)r.X, (int)r.Y, (int)r.Width, (int)r.Height);
         }
 
-        // ====== Backend (multipart) helpers ======
-        private static byte[] CropTemplatePng(string imagePathWin, WRect rect)
-        {
-            using var bmp = new System.Drawing.Bitmap(imagePathWin);
-            var x = Math.Max(0, (int)rect.X);
-            var y = Math.Max(0, (int)rect.Y);
-            var w = Math.Max(1, (int)rect.Width);
-            var h = Math.Max(1, (int)rect.Height);
-            if (x + w > bmp.Width) w = Math.Max(1, bmp.Width - x);
-            if (y + h > bmp.Height) h = Math.Max(1, bmp.Height - y);
-            using var crop = bmp.Clone(new System.Drawing.Rectangle(x, y, w, h), bmp.PixelFormat);
-            using var ms = new System.IO.MemoryStream();
-            crop.Save(ms, System.Drawing.Imaging.ImageFormat.Png);
-            return ms.ToArray();
-        }
-
-        private class MatchOneResult
-        {
-            public bool ok { get; set; }
-            public double x { get; set; }
-            public double y { get; set; }
-            public double score { get; set; }
-            public string error { get; set; } = "";
-        }
-
-        // Reemplazo robusto: acepta {ok,x,y,score} y también {found,center_x,center_y,confidence}
-        // ✅ Versión correcta: envía image + template (PNG recortado) al backend.
-        //    Acepta tanto respuestas {ok,x,y,score} como {found,center_x,center_y,confidence}.
-        // ✅ Envía image + template (PNG) y usa timeout corto por petición.
-        //    Acepta respuestas {ok,x,y,score} o {found,center_x,center_y,confidence}.
-        // ✅ Envía image + template (PNG) y, opcionalmente, el rectángulo de búsqueda (search_*).
-        // ===== En MainWindow.xaml.cs =====
-        private async Task<(bool ok, System.Windows.Point? center, double score, string? error)> TryMatchOneViaFilesAsync(
-            string imagePathWin,
-            RoiModel templateRoi,
-            string which,
-            double thr,
-            double rotRange,
-            double scaleMin,
-            double scaleMax,
-            string feature,
-            double tmThr,
-            bool debug)
-        {
-            var swTotal = System.Diagnostics.Stopwatch.StartNew();
-
-            MemoryStream? tplStream = null; // NO usar 'using var' si se va a pasar como contenido del multipart
-            MemoryStream? maskStream = null;
-
-            try
-            {
-                string url = BackendAPI.BaseUrl.TrimEnd('/') + BackendAPI.MatchEndpoint;
-                AppendLog($"[MATCH] Preparando POST {which} → {url}");
-
-                // Log tamaño de la imagen (opcional)
-                try
-                {
-                    using var tmpBmp = new System.Drawing.Bitmap(imagePathWin);
-                    AppendLog($"[MATCH] {which} imagen='{System.IO.Path.GetFileName(imagePathWin)}' size={tmpBmp.Width}x{tmpBmp.Height}");
-                }
-                catch (Exception ex)
-                {
-                    AppendLog($"[MATCH] {which} WARN: no se pudo abrir imagen para info: {ex.Message}");
-                }
-
-                using var hc = new System.Net.Http.HttpClient();
-                using var mp = new System.Net.Http.MultipartFormDataContent();
-
-                // 1) Imagen completa
-                var imgBytes = System.IO.File.ReadAllBytes(imagePathWin);
-                AppendLog($"[MATCH] {which} bytes(image)={imgBytes.Length:n0}");
-                mp.Add(new System.Net.Http.ByteArrayContent(imgBytes), "image", System.IO.Path.GetFileName(imagePathWin));
-
-                // 2) Template (crop) — NO usar 'using var' con out/ref
-                var templateRect = RoiToRect(templateRoi);
-                if (!BackendAPI.TryCropToPng(imagePathWin, templateRoi, out tplStream, out maskStream, out var tplName, AppendLog))
-                {
-                    var msg = "crop template failed";
-                    AppendLog($"[MATCH] {which} ERROR: {msg}");
-                    return (false, null, 0, msg);
-                }
-                tplStream.Position = 0;
-                AppendLog($"[MATCH] {which} bytes(template)={tplStream.Length:n0} rect=({(int)templateRect.X},{(int)templateRect.Y},{(int)templateRect.Width},{(int)templateRect.Height})");
-                if (maskStream != null)
-                {
-                    AppendLog($"[MATCH] {which} mask bytes={maskStream.Length:n0} (embebida como alfa)");
-                }
-                mp.Add(new System.Net.Http.StreamContent(tplStream), "template", string.IsNullOrWhiteSpace(tplName) ? "template.png" : tplName);
-
-                // 3) Parámetros
-                string feat = string.IsNullOrWhiteSpace(feature) ? "auto" : feature;
-                mp.Add(new System.Net.Http.StringContent(which), "tag");
-                mp.Add(new System.Net.Http.StringContent(thr.ToString(System.Globalization.CultureInfo.InvariantCulture)), "thr");
-                mp.Add(new System.Net.Http.StringContent(rotRange.ToString(System.Globalization.CultureInfo.InvariantCulture)), "rot_range");
-                mp.Add(new System.Net.Http.StringContent(scaleMin.ToString(System.Globalization.CultureInfo.InvariantCulture)), "scale_min");
-                mp.Add(new System.Net.Http.StringContent(scaleMax.ToString(System.Globalization.CultureInfo.InvariantCulture)), "scale_max");
-                mp.Add(new System.Net.Http.StringContent(feat), "feature");
-                mp.Add(new System.Net.Http.StringContent(tmThr.ToString(System.Globalization.CultureInfo.InvariantCulture)), "tm_thr");
-                mp.Add(new System.Net.Http.StringContent(debug ? "1" : "0"), "debug");
-
-                // 4) POST con timeout acotado
-                using var cts = new System.Threading.CancellationTokenSource(TimeSpan.FromSeconds(30));
-                var swHttp = System.Diagnostics.Stopwatch.StartNew();
-                AppendLog($"[MATCH] POST {which} lanzado...");
-                System.Net.Http.HttpResponseMessage resp;
-                try
-                {
-                    resp = await hc.PostAsync(url, mp, cts.Token);
-                }
-                catch (TaskCanceledException)
-                {
-                    AppendLog($"[MATCH] {which} TIMEOUT (30s)");
-                    return (false, null, 0, "timeout");
-                }
-                swHttp.Stop();
-
-                var body = await resp.Content.ReadAsStringAsync();
-                AppendLog($"[MATCH] {which} HTTP {(int)resp.StatusCode} {resp.ReasonPhrase} ({swHttp.ElapsedMilliseconds} ms)");
-                AppendLog($"[MATCH] {which} BODY: {(body.Length > 800 ? body.Substring(0, 800) + "...(trunc)" : body)}");
-
-                if (!resp.IsSuccessStatusCode)
-                    return (false, null, 0, $"HTTP {(int)resp.StatusCode}: {resp.ReasonPhrase}");
-
-                using var doc = System.Text.Json.JsonDocument.Parse(body);
-                var root = doc.RootElement;
-
-                bool found = root.TryGetProperty("found", out var fEl) && fEl.GetBoolean();
-                string? stage = root.TryGetProperty("stage", out var st) ? st.GetString() : null;
-
-                if (!found)
-                {
-                    string reason = root.TryGetProperty("reason", out var rEl) ? (rEl.GetString() ?? "not found") : "not found";
-                    double tm_best = root.TryGetProperty("tm_best", out var tb) ? tb.GetDouble() : double.NaN;
-                    double tm_thr2 = root.TryGetProperty("tm_thr", out var tt) ? tt.GetDouble() : double.NaN;
-                    AppendLog($"[MATCH] {which} NOT FOUND stage={stage} reason={reason} tm_best={tm_best:0.###} tm_thr={tm_thr2:0.###}");
-                    return (false, null, 0, reason);
-                }
-
-                double cx = root.GetProperty("center_x").GetDouble();
-                double cy = root.GetProperty("center_y").GetDouble();
-                double score = 0.0;
-                if (root.TryGetProperty("confidence", out var cEl)) score = cEl.GetDouble();
-                else if (root.TryGetProperty("score", out var sEl)) score = sEl.GetDouble();
-
-                AppendLog($"[MATCH] {which} FOUND stage={stage} center=({cx:0.##},{cy:0.##}) score={score:0.###}");
-                return (true, new System.Windows.Point(cx, cy), score, null);
-            }
-            catch (Exception ex)
-            {
-                AppendLog($"[MATCH] EX {which}: {ex.Message}");
-                return (false, null, 0, ex.Message);
-            }
-            finally
-            {
-                swTotal.Stop();
-                AppendLog($"[MATCH] total {which} elapsed={swTotal.ElapsedMilliseconds} ms");
-
-                // Liberar el stream del template manualmente (no se pudo usar 'using var' por el out)
-                try { tplStream?.Dispose(); } catch { /* noop */ }
-                try { maskStream?.Dispose(); } catch { /* noop */ }
-            }
         }
 
 
@@ -2351,80 +2222,6 @@ namespace BrakeDiscInspector_GUI_ROI
 
 
 
-        private class AnalyzeResp
-        {
-            public bool ok { get; set; }
-            public string label { get; set; } = "";
-            public double score { get; set; }
-            public string error { get; set; } = "";
-        }
-
-        private static string SerializeRoiToJson(RoiModel roi)
-        {
-            var obj = new System.Collections.Generic.Dictionary<string, object?>
-            {
-                ["shape"] = roi.Shape.ToString().ToLowerInvariant(),
-                ["role"] = roi.Role.ToString(),
-                ["x"] = roi.X,
-                ["y"] = roi.Y,
-                ["w"] = roi.Width,
-                ["h"] = roi.Height,
-                ["cx"] = roi.CX,
-                ["cy"] = roi.CY,
-                ["r"] = roi.R,
-                ["ri"] = roi.RInner,
-                ["angle_deg"] = roi.AngleDeg
-            };
-            return System.Text.Json.JsonSerializer.Serialize(obj);
-        }
-
-        private async System.Threading.Tasks.Task<(bool ok, string? label, double score, string? error)> AnalyzeRoiViaFilesAsync(
-            string imagePathWin, RoiModel inspection, PresetFile preset, System.Action<string>? log)
-        {
-            try
-            {
-                var url = BackendAPI.BaseUrl.TrimEnd('/') + BackendAPI.AnalyzeEndpoint;
-                var imgBytes = System.IO.File.ReadAllBytes(imagePathWin);
-
-                using var hc = new System.Net.Http.HttpClient();
-                using var mp = new System.Net.Http.MultipartFormDataContent();
-
-                mp.Add(new System.Net.Http.ByteArrayContent(imgBytes), "image", System.IO.Path.GetFileName(imagePathWin));
-                mp.Add(new System.Net.Http.StringContent(SerializeRoiToJson(inspection),
-                        System.Text.Encoding.UTF8, "application/json"), "roi");
-
-                // parámetros opcionales por si el backend los usa
-                mp.Add(new System.Net.Http.StringContent(preset.Feature ?? "auto"), "feature");
-                mp.Add(new System.Net.Http.StringContent((preset.MatchThr > 0 ? preset.MatchThr : 85).ToString()), "thr");
-                mp.Add(new System.Net.Http.StringContent((preset.RotRange > 0 ? preset.RotRange : 10).ToString()), "rot_range");
-                mp.Add(new System.Net.Http.StringContent(preset.ScaleMin.ToString(System.Globalization.CultureInfo.InvariantCulture)), "scale_min");
-                mp.Add(new System.Net.Http.StringContent(preset.ScaleMax.ToString(System.Globalization.CultureInfo.InvariantCulture)), "scale_max");
-
-                var resp = await hc.PostAsync(url, mp);
-                var json = await resp.Content.ReadAsStringAsync();
-
-                if (!resp.IsSuccessStatusCode)
-                    return (false, null, 0, $"HTTP {(int)resp.StatusCode}: {resp.ReasonPhrase}");
-
-                try
-                {
-                    var obj = System.Text.Json.JsonSerializer.Deserialize<AnalyzeResp>(json);
-                    if (obj != null && obj.ok) return (true, obj.label, obj.score, null);
-                    return (false, null, 0, obj?.error ?? "Respuesta no válida");
-                }
-                catch (System.Exception ex)
-                {
-                    log?.Invoke("[analyze] parse error: " + ex.Message);
-                    return (false, null, 0, "parse error: " + ex.Message);
-                }
-            }
-            catch (System.Exception ex)
-            {
-                return (false, null, 0, ex.Message);
-            }
-        }
-
-        // ===== NET LOG ==========
         private static readonly object _netLogLock = new object();
         private static string _netLogFile = System.IO.Path.Combine(
             System.IO.Path.GetTempPath(),
@@ -2757,7 +2554,7 @@ namespace BrakeDiscInspector_GUI_ROI
             try
             {
                 AppendLog($"[CFG] BaseUrl={BackendAPI.BaseUrl}");
-                AppendLog($"[CFG] MatchEndpoint={BackendAPI.MatchEndpoint}  AnalyzeEndpoint={BackendAPI.AnalyzeEndpoint}");
+                AppendLog($"[CFG] InferEndpoint={BackendAPI.InferEndpoint} FitOk={BackendAPI.FitOkEndpoint} Calibrate={BackendAPI.CalibrateEndpoint}");
                 AppendLog($"[IMG] _currentImagePathWin='{_currentImagePathWin}'  exists={System.IO.File.Exists(_currentImagePathWin)}");
 
                 if (_layout.Master1Pattern != null)
@@ -3482,6 +3279,72 @@ namespace BrakeDiscInspector_GUI_ROI
             }
         }
 
+        private bool TryGetBackendDataset(out string roleId, out string roiId, out double mmPerPx)
+        {
+            roleId = string.Empty;
+            roiId = string.Empty;
+            mmPerPx = 0.20;
+
+            if (_workflowViewModel == null)
+            {
+                return false;
+            }
+
+            roleId = _workflowViewModel.RoleId?.Trim() ?? string.Empty;
+            roiId = _workflowViewModel.RoiId?.Trim() ?? string.Empty;
+            mmPerPx = _workflowViewModel.MmPerPx;
+
+            if (mmPerPx <= 0)
+            {
+                mmPerPx = 0.20;
+            }
+
+            return !string.IsNullOrWhiteSpace(roleId) && !string.IsNullOrWhiteSpace(roiId);
+        }
+
+        private static string ResolveBackendRoiId(RoiModel roi, string baseRoiId, string fallbackSuffix)
+        {
+            if (!string.IsNullOrWhiteSpace(roi.Label))
+                return roi.Label.Trim();
+
+            if (!string.IsNullOrWhiteSpace(baseRoiId))
+                return $"{baseRoiId}_{fallbackSuffix}";
+
+            return fallbackSuffix;
+        }
+
+        private static string FormatThreshold(double? threshold)
+        {
+            return threshold.HasValue && threshold.Value > 0
+                ? $" (thr={threshold.Value:0.000})"
+                : string.Empty;
+        }
+
+        private void LogBackendRegions(string tag, InferRegion[]? regions)
+        {
+            if (regions == null || regions.Length == 0)
+            {
+                AppendLog($"[BACKEND] {tag} sin regiones destacadas");
+                return;
+            }
+
+            foreach (var region in regions)
+            {
+                AppendLog($"[BACKEND] {tag} region=({region.x:0.##},{region.y:0.##},{region.w:0.##},{region.h:0.##}) area_px={region.area_px:0.##} area_mm2={region.area_mm2:0.###}");
+            }
+        }
+
+        private void UpdateResultLabel(string label, InferResponse response)
+        {
+            Dispatcher.Invoke(() =>
+            {
+                if (ResultLabel != null)
+                {
+                    ResultLabel.Text = $"{label} (score={response.score:0.###}, thr={response.threshold:0.###})";
+                }
+            });
+        }
+
         private RoiModel BuildCurrentRoiModel(RoiRole? roleOverride = null)
         {
             double width = Math.Max(CurrentRoi.Width, 0.0);
@@ -3560,70 +3423,6 @@ namespace BrakeDiscInspector_GUI_ROI
         // using System.Windows.Media.Imaging;
         // using System;
 
-        private async void AnalyzeButton_Click(object sender, RoutedEventArgs e)
-        {
-            try
-            {
-                // 1) Validaciones básicas
-                var currentFrame = bgrFrame;
-                if (currentFrame == null || currentFrame.Empty())
-                {
-                    MessageBox.Show("No hay imagen cargada.");
-                    return;
-                }
-
-                // 2) Obtener el crop YA ROTADO desde tu ROI actual
-                //    Nota: se asume que tienes implementado GetRotatedCrop(Mat bgr)
-                using var crop = GetRotatedCrop(currentFrame);
-                if (crop == null || crop.Empty())
-                {
-                    MessageBox.Show("No se pudo obtener el recorte.");
-                    return;
-                }
-
-                // 3) Codificar PNG (SIN 'using'; ImEncode devuelve byte[])
-                byte[] cropPng = crop.ImEncode(".png");
-
-                // 4) (Opcional) parámetros de anillo perfecto (annulus) si quieres usarlos
-                //    Si no usas annulus, deja 'annulus' en null y 'maskPng' en null.
-                object annulus = null;
-                // bool useAnnulus = false; // habilítalo según tu UI
-                // if (useAnnulus)
-                // {
-                //     annulus = new
-                //     {
-                //         cx = crop.Width / 2,
-                //         cy = crop.Height / 2,
-                //         ri = 40,
-                //         ro = 60
-                //     };
-                // }
-                byte[]? maskPng = null;
-
-                // 5) Llamada al backend /analyze
-                var resp = await BackendAPI.AnalyzeAsync(cropPng, maskPng, annulus);
-
-                // 6) Mostrar texto (si tienes el TextBlock en XAML)
-                if (ResultLabel != null)
-                    ResultLabel.Text = $"{resp.label} ({resp.score:F3} / thr {resp.threshold:F3})";
-
-                // 7) Decodificar heatmap y pintarlo en el Image del XAML
-                var heatBytes = Convert.FromBase64String(resp.heatmap_png_b64);
-                using var heat = OpenCvSharp.Cv2.ImDecode(heatBytes, OpenCvSharp.ImreadModes.Color);
-
-                if (HeatmapImage != null)
-                    HeatmapImage.Source = WriteableBitmapConverter.ToWriteableBitmap(heat);
-
-                // (Opcional) Log
-                // AppendLog?.Invoke($"Analyze -> {resp.label} (score={resp.score:F3}, thr={resp.threshold:F3})");
-            }
-            catch (Exception ex)
-            {
-                // (Opcional) Log
-                // AppendLog?.Invoke("[Analyze] EX: " + ex.Message);
-                MessageBox.Show("Error en Analyze: " + ex.Message);
-            }
-        }
         private System.Windows.Point GetCurrentRoiCenterOnCanvas()
         {
             return ImagePxToCanvasPt(CurrentRoi.X, CurrentRoi.Y);

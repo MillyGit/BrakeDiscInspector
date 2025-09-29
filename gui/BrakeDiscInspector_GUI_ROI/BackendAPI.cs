@@ -3,19 +3,46 @@ using System.Globalization;
 using System.IO;
 using System.Net.Http;
 using System.Net.Http.Headers;
+using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
 using OpenCvSharp;
-using WPoint = System.Windows.Point;
 
 namespace BrakeDiscInspector_GUI_ROI
 {
-    public class AnalyzeResponse
+    public sealed class InferRegion
     {
-        public string label { get; set; }
+        public double x { get; set; }
+        public double y { get; set; }
+        public double w { get; set; }
+        public double h { get; set; }
+        public double area_px { get; set; }
+        public double area_mm2 { get; set; }
+    }
+
+    public sealed class InferResponse
+    {
         public double score { get; set; }
         public double threshold { get; set; }
-        public string heatmap_png_b64 { get; set; }
+        public string? heatmap_png_base64 { get; set; }
+        public InferRegion[]? regions { get; set; }
+        public int[]? token_shape { get; set; }
+    }
+
+    public sealed class InferFromImageResult
+    {
+        public InferFromImageResult(InferResponse response, byte[] pngBytes, string shapeJson, RoiModel roiImage)
+        {
+            Response = response;
+            PngBytes = pngBytes;
+            ShapeJson = shapeJson;
+            RoiImage = roiImage;
+        }
+
+        public InferResponse Response { get; }
+        public byte[] PngBytes { get; }
+        public string ShapeJson { get; }
+        public RoiModel RoiImage { get; }
     }
 
     public static class BackendAPI
@@ -23,11 +50,16 @@ namespace BrakeDiscInspector_GUI_ROI
         public static string BaseUrl { get; private set; } = "http://127.0.0.1:8000";
 
         // === Endpoints
-        public const string AnalyzeEndpoint = "/analyze";
+        public const string InferEndpoint = "/infer";
+        public const string FitOkEndpoint = "/fit_ok";
+        public const string CalibrateEndpoint = "/calibrate_ng";
         public const string TrainStatusEndpoint = "/train_status";
-        public const string MatchEndpoint = "/match_one";   // ajusta si tu backend usa otro path
 
         private static readonly HttpClient http = new HttpClient { Timeout = TimeSpan.FromSeconds(100) };
+        private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
+        {
+            PropertyNameCaseInsensitive = true
+        };
 
         static BackendAPI()
         {
@@ -92,268 +124,118 @@ namespace BrakeDiscInspector_GUI_ROI
             return trimmed.TrimEnd('/');
         }
 
-        // ========= /analyze (bytes ya rotados)
-        public static async Task<AnalyzeResponse> AnalyzeAsync(byte[] rotatedCropPng, byte[]? maskPng = null, object? annulus = null)
+        public static async Task<InferResponse> InferFromBytesAsync(
+            string roleId,
+            string roiId,
+            double mmPerPx,
+            byte[] canonicalPng,
+            string? shapeJson = null,
+            Action<string>? log = null)
         {
+            if (string.IsNullOrWhiteSpace(roleId))
+                throw new ArgumentException("roleId is required", nameof(roleId));
+            if (string.IsNullOrWhiteSpace(roiId))
+                throw new ArgumentException("roiId is required", nameof(roiId));
+            if (canonicalPng == null || canonicalPng.Length == 0)
+                throw new ArgumentException("canonical ROI PNG is empty", nameof(canonicalPng));
+
             using var form = new MultipartFormDataContent();
+            form.Add(new StringContent(roleId), "role_id");
+            form.Add(new StringContent(roiId), "roi_id");
+            form.Add(new StringContent(mmPerPx.ToString(CultureInfo.InvariantCulture)), "mm_per_px");
 
-            var imgContent = new ByteArrayContent(rotatedCropPng);
+            var imgContent = new ByteArrayContent(canonicalPng);
             imgContent.Headers.ContentType = MediaTypeHeaderValue.Parse("image/png");
-            form.Add(imgContent, "file", "crop.png");
+            form.Add(imgContent, "image", "roi.png");
 
-            if (maskPng != null)
+            if (!string.IsNullOrWhiteSpace(shapeJson))
             {
-                var maskContent = new ByteArrayContent(maskPng);
-                maskContent.Headers.ContentType = MediaTypeHeaderValue.Parse("image/png");
-                form.Add(maskContent, "mask", "mask.png");
-            }
-            else if (annulus != null)
-            {
-                var annulusJson = JsonSerializer.Serialize(annulus);
-                form.Add(new StringContent(annulusJson), "annulus");
+                var shapeContent = new StringContent(shapeJson, Encoding.UTF8, "application/json");
+                form.Add(shapeContent, "shape");
             }
 
-            using var resp = await http.PostAsync(AnalyzeEndpoint, form).ConfigureAwait(false);
-            resp.EnsureSuccessStatusCode();
-            var json = await resp.Content.ReadAsStringAsync().ConfigureAwait(false);
-            return JsonSerializer.Deserialize<AnalyzeResponse>(json, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
-        }
+            using var resp = await http.PostAsync(InferEndpoint, form).ConfigureAwait(false);
+            var body = await resp.Content.ReadAsStringAsync().ConfigureAwait(false);
 
-        // ========= /analyze (sobrecarga 4 args que usa tu MainWindow)
-        public static async Task<(bool ok, string? label, double score, string? error, double threshold)> AnalyzeAsync(
-            string imagePathWin, RoiModel inspectionRoi, PresetFile preset, Action<string>? log = null)
-        {
+            if (!resp.IsSuccessStatusCode)
+            {
+                log?.Invoke($"[/infer] HTTP {(int)resp.StatusCode}: {resp.ReasonPhrase} :: {body}");
+                throw new HttpRequestException($"/infer failed with status {(int)resp.StatusCode}: {resp.ReasonPhrase}");
+            }
+
             try
             {
-                if (!File.Exists(imagePathWin)) return (false, null, 0, "image not found", 0);
-
-                if (!TryCropToPng(imagePathWin, inspectionRoi, out var pngMs, out var maskMs, out var name, log))
-                    return (false, null, 0, "crop failed", 0);
-
-                using (pngMs)
-                using (maskMs)
+                var result = JsonSerializer.Deserialize<InferResponse>(body, JsonOptions);
+                if (result == null)
                 {
-                    var bytes = pngMs.ToArray();
-                    byte[]? maskBytes = maskMs?.ToArray();
-                    var resp = await AnalyzeAsync(bytes, maskBytes, null);
-                    return (true, resp.label, resp.score, null, resp.threshold);
+                    throw new InvalidOperationException("Empty /infer response");
                 }
+
+                return result;
             }
-            catch (Exception ex)
+            catch (JsonException jex)
             {
-                log?.Invoke("[Analyze] EX: " + ex.Message);
-                return (false, null, 0, ex.Message, 0);
+                log?.Invoke("[/infer] JSON parse error: " + jex.Message);
+                throw;
             }
         }
 
-        // ========= match one: template desde fichero
-        public static async Task<(bool ok, WPoint? center, double score, string? error)> MatchOneViaTemplateAsync(
+        public static async Task<(bool ok, InferFromImageResult? result, string? error)> InferAsync(
             string imagePathWin,
-            string templatePngPath,
-            double thr,
-            double rotRange,
-            double scaleMin,
-            double scaleMax,
-            string feature,
-            double tmThr,
-            string tag,
-            RoiModel? searchRoi = null,
+            RoiModel roi,
+            string roleId,
+            string roiId,
+            double mmPerPx,
             Action<string>? log = null)
         {
-            try
-            {
-                string url = BaseUrl.TrimEnd('/') + MatchEndpoint;
-
-                using var hc = new HttpClient();
-                using var mp = new MultipartFormDataContent();
-
-                mp.Add(new ByteArrayContent(File.ReadAllBytes(imagePathWin)), "image", Path.GetFileName(imagePathWin));
-                mp.Add(new ByteArrayContent(File.ReadAllBytes(templatePngPath)), "template", Path.GetFileName(templatePngPath));
-
-                mp.Add(new StringContent(tag), "tag");
-                mp.Add(new StringContent(thr.ToString(CultureInfo.InvariantCulture)), "thr");
-                mp.Add(new StringContent(rotRange.ToString(CultureInfo.InvariantCulture)), "rot_range");
-                mp.Add(new StringContent(scaleMin.ToString(CultureInfo.InvariantCulture)), "scale_min");
-                mp.Add(new StringContent(scaleMax.ToString(CultureInfo.InvariantCulture)), "scale_max");
-                mp.Add(new StringContent(string.IsNullOrWhiteSpace(feature) ? "auto" : feature), "feature");
-                mp.Add(new StringContent(tmThr.ToString(CultureInfo.InvariantCulture)), "tm_thr");
-                mp.Add(new StringContent("0"), "debug");
-
-                AddSearchParameters(mp, searchRoi);
-
-                using var cts = new System.Threading.CancellationTokenSource(TimeSpan.FromSeconds(30));
-                var resp = await hc.PostAsync(url, mp, cts.Token);
-                var body = await resp.Content.ReadAsStringAsync();
-
-                if (!resp.IsSuccessStatusCode)
-                    return (false, null, 0, $"HTTP {(int)resp.StatusCode}: {resp.ReasonPhrase}");
-
-                using var doc = JsonDocument.Parse(body);
-                var root = doc.RootElement;
-
-                bool found = root.TryGetProperty("found", out var fEl) && fEl.GetBoolean();
-                if (!found)
-                {
-                    string reason = root.TryGetProperty("reason", out var rEl) ? (rEl.GetString() ?? "not found") : "not found";
-                    return (false, null, 0, reason);
-                }
-
-                double cx = root.GetProperty("center_x").GetDouble();
-                double cy = root.GetProperty("center_y").GetDouble();
-                double score = root.TryGetProperty("confidence", out var cEl) ? cEl.GetDouble()
-                             : root.TryGetProperty("score", out var sEl) ? sEl.GetDouble() : 0;
-
-                return (true, new WPoint(cx, cy), score, null);
-            }
-            catch (Exception ex)
-            {
-                log?.Invoke("[MatchOneViaTemplate] EX: " + ex.Message);
-                return (false, null, 0, ex.Message);
-            }
-        }
-
-        // ========= match one: recortando desde la imagen
-        public static async Task<(bool ok, WPoint? center, double score, string? error)> MatchOneViaFilesAsync(
-            string imagePathWin,
-            RoiModel templateRoi,
-            double thr,
-            double rotRange,
-            double scaleMin,
-            double scaleMax,
-            string feature,
-            double tmThr,
-            bool debug,
-            string tag,
-            RoiModel? searchRoi = null,
-            Action<string>? log = null)
-        {
-            MemoryStream? tplStream = null;
+            MemoryStream? pngStream = null;
             MemoryStream? maskStream = null;
             try
             {
-                string url = BaseUrl.TrimEnd('/') + MatchEndpoint;
-
-                using var hc = new HttpClient();
-                using var mp = new MultipartFormDataContent();
-
-                mp.Add(new ByteArrayContent(File.ReadAllBytes(imagePathWin)), "image", Path.GetFileName(imagePathWin));
-
-                if (!TryCropToPng(imagePathWin, templateRoi, out tplStream, out maskStream, out var tplName, log))
-                    return (false, null, 0, "crop template failed");
-
-                tplStream.Position = 0;
-                mp.Add(new StreamContent(tplStream), "template", string.IsNullOrWhiteSpace(tplName) ? "template.png" : tplName);
-                if (maskStream != null)
+                if (!File.Exists(imagePathWin))
                 {
-                    log?.Invoke($"[MatchOneViaFiles] mask bytes={maskStream.Length:n0} (alpha en template)");
+                    return (false, null, "image not found");
                 }
 
-                mp.Add(new StringContent(tag), "tag");
-                mp.Add(new StringContent(thr.ToString(CultureInfo.InvariantCulture)), "thr");
-                mp.Add(new StringContent(rotRange.ToString(CultureInfo.InvariantCulture)), "rot_range");
-                mp.Add(new StringContent(scaleMin.ToString(CultureInfo.InvariantCulture)), "scale_min");
-                mp.Add(new StringContent(scaleMax.ToString(CultureInfo.InvariantCulture)), "scale_max");
-                mp.Add(new StringContent(string.IsNullOrWhiteSpace(feature) ? "auto" : feature), "feature");
-                mp.Add(new StringContent(tmThr.ToString(CultureInfo.InvariantCulture)), "tm_thr");
-                mp.Add(new StringContent(debug ? "1" : "0"), "debug");
-
-                AddSearchParameters(mp, searchRoi);
-
-                using var cts = new System.Threading.CancellationTokenSource(TimeSpan.FromSeconds(30));
-                var resp = await hc.PostAsync(url, mp, cts.Token);
-                var body = await resp.Content.ReadAsStringAsync();
-
-                if (!resp.IsSuccessStatusCode)
-                    return (false, null, 0, $"HTTP {(int)resp.StatusCode}: {resp.ReasonPhrase}");
-
-                using var doc = JsonDocument.Parse(body);
-                var root = doc.RootElement;
-
-                bool found = root.TryGetProperty("found", out var fEl) && fEl.GetBoolean();
-                if (!found)
+                if (!TryCropToPng(imagePathWin, roi, out pngStream, out maskStream, out var name, out var info, out var cropRect, log))
                 {
-                    string reason = root.TryGetProperty("reason", out var rEl) ? (rEl.GetString() ?? "not found") : "not found";
-                    return (false, null, 0, reason);
+                    return (false, null, "crop failed");
                 }
 
-                double cx = root.GetProperty("center_x").GetDouble();
-                double cy = root.GetProperty("center_y").GetDouble();
-                double score = root.TryGetProperty("confidence", out var cEl) ? cEl.GetDouble()
-                             : root.TryGetProperty("score", out var sEl) ? sEl.GetDouble() : 0;
-
-                return (true, new WPoint(cx, cy), score, null);
+                var pngBytes = pngStream.ToArray();
+                var shapeJson = BuildShapeJson(roi, info, cropRect);
+                var response = await InferFromBytesAsync(roleId, roiId, mmPerPx, pngBytes, shapeJson, log).ConfigureAwait(false);
+                var roiImage = roi.Clone();
+                return (true, new InferFromImageResult(response, pngBytes, shapeJson, roiImage), null);
             }
             catch (Exception ex)
             {
-                log?.Invoke("[MatchOneViaFiles] EX: " + ex.Message);
-                return (false, null, 0, ex.Message);
+                log?.Invoke("[/infer] EX: " + ex.Message);
+                return (false, null, ex.Message);
             }
             finally
             {
-                try { tplStream?.Dispose(); } catch { /* noop */ }
-                try { maskStream?.Dispose(); } catch { /* noop */ }
+                try { pngStream?.Dispose(); } catch { /* ignore */ }
+                try { maskStream?.Dispose(); } catch { /* ignore */ }
             }
-        }
-
-        private static void AddSearchParameters(MultipartFormDataContent mp, RoiModel? searchRoi)
-        {
-            if (searchRoi == null)
-                return;
-
-            if (!TryGetSearchRect(searchRoi, out var x, out var y, out var w, out var h))
-                return;
-
-            mp.Add(new StringContent(x.ToString(CultureInfo.InvariantCulture)), "search_x");
-            mp.Add(new StringContent(y.ToString(CultureInfo.InvariantCulture)), "search_y");
-            mp.Add(new StringContent(w.ToString(CultureInfo.InvariantCulture)), "search_w");
-            mp.Add(new StringContent(h.ToString(CultureInfo.InvariantCulture)), "search_h");
-        }
-
-        private static bool TryGetSearchRect(RoiModel roi, out int x, out int y, out int w, out int h)
-        {
-            x = y = 0;
-            w = h = 0;
-
-            if (roi == null)
-                return false;
-
-            double sx, sy, sw, sh;
-
-            switch (roi.Shape)
-            {
-                case RoiShape.Circle:
-                case RoiShape.Annulus:
-                    sx = roi.CX - roi.R;
-                    sy = roi.CY - roi.R;
-                    sw = roi.R * 2.0;
-                    sh = roi.R * 2.0;
-                    break;
-                case RoiShape.Rectangle:
-                default:
-                    sx = roi.Left;
-                    sy = roi.Top;
-                    sw = roi.Width;
-                    sh = roi.Height;
-                    break;
-            }
-
-            if (double.IsNaN(sx) || double.IsNaN(sy) || double.IsNaN(sw) || double.IsNaN(sh))
-                return false;
-
-            x = Math.Max(0, (int)Math.Round(sx));
-            y = Math.Max(0, (int)Math.Round(sy));
-            w = Math.Max(1, (int)Math.Round(sw));
-            h = Math.Max(1, (int)Math.Round(sh));
-
-            return w > 0 && h > 0;
         }
 
         // ========= util: recortar PNG desde ruta/rect
-        public static bool TryCropToPng(string imagePathWin, RoiModel roi, out MemoryStream pngStream, out MemoryStream? maskStream, out string fileName, Action<string>? log = null)
+        public static bool TryCropToPng(
+            string imagePathWin,
+            RoiModel roi,
+            out MemoryStream pngStream,
+            out MemoryStream? maskStream,
+            out string fileName,
+            out RoiCropInfo cropInfo,
+            out Rect cropRect,
+            Action<string>? log = null)
         {
             pngStream = null;
             maskStream = null;
             fileName = $"crop_{DateTime.Now:yyyyMMdd_HHmmssfff}.png";
+            cropInfo = default;
+            cropRect = default;
 
             try
             {
@@ -376,12 +258,14 @@ namespace BrakeDiscInspector_GUI_ROI
                     return false;
                 }
 
-                if (!RoiCropUtils.TryGetRotatedCrop(src, info, roi.AngleDeg, out var cropMat, out var cropRect))
+                cropInfo = info;
+                if (!RoiCropUtils.TryGetRotatedCrop(src, info, roi.AngleDeg, out var cropMat, out var cropRectLocal))
                 {
                     log?.Invoke("[TryCropToPng] failed to get rotated crop");
                     return false;
                 }
 
+                cropRect = cropRectLocal;
                 Mat? maskMat = null;
                 Mat? encodeMat = null;
                 try
@@ -443,6 +327,59 @@ namespace BrakeDiscInspector_GUI_ROI
                 }
                 return false;
             }
+        }
+
+        private static string BuildShapeJson(RoiModel roi, RoiCropInfo info, Rect cropRect)
+        {
+            double w = cropRect.Width;
+            double h = cropRect.Height;
+
+            object shape = roi.Shape switch
+            {
+                RoiShape.Rectangle => new { kind = "rect", x = 0, y = 0, w, h },
+                RoiShape.Circle => new
+                {
+                    kind = "circle",
+                    cx = w / 2.0,
+                    cy = h / 2.0,
+                    r = Math.Min(w, h) / 2.0
+                },
+                RoiShape.Annulus => new
+                {
+                    kind = "annulus",
+                    cx = w / 2.0,
+                    cy = h / 2.0,
+                    r = ResolveOuterRadiusPx(info, cropRect),
+                    r_inner = ResolveInnerRadiusPx(info, cropRect)
+                },
+                _ => new { kind = "rect", x = 0, y = 0, w, h }
+            };
+
+            return JsonSerializer.Serialize(shape, JsonOptions);
+        }
+
+        private static double ResolveOuterRadiusPx(RoiCropInfo info, Rect cropRect)
+        {
+            double outer = info.Radius > 0 ? info.Radius : Math.Max(info.Width, info.Height) / 2.0;
+            double scale = Math.Min(cropRect.Width / Math.Max(info.Width, 1.0), cropRect.Height / Math.Max(info.Height, 1.0));
+            double result = outer * scale;
+            if (result <= 0)
+            {
+                result = Math.Min(cropRect.Width, cropRect.Height) / 2.0;
+            }
+
+            return result;
+        }
+
+        private static double ResolveInnerRadiusPx(RoiCropInfo info, Rect cropRect)
+        {
+            if (info.Shape != RoiShape.Annulus)
+                return 0;
+
+            double inner = Math.Clamp(info.InnerRadius, 0, info.Radius);
+            double scale = Math.Min(cropRect.Width / Math.Max(info.Width, 1.0), cropRect.Height / Math.Max(info.Height, 1.0));
+            double result = inner * scale;
+            return Math.Max(0, result);
         }
 
         // ========= /train_status
