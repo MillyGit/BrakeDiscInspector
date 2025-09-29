@@ -14,6 +14,16 @@
 - Necesitamos detección por **anomalía “good-only”** estilo **PatchCore** con **coreset** y kNN (FAISS/sklearn), **sin entrenar** con NG, y usar **0–3 NG** solo para **calibrar** el umbral.
 
 
+## 🧭 Índice rápido
+
+- [Objetivo técnico](#-objetivo-técnico)
+- [Estructura propuesta](#-estructura-propuesta-código-y-módulos)
+- [Extractor DINOv2](#-extractor-dinov2-vit-s--sin-entrenamiento)
+- [Memoria OK (PatchCore)](#-memoria-ok-patchcore--coreset--knn)
+- [Inferencia](#-inferencia)
+- [Calibración](#-calibración-con-0–3-ng)
+- [Endpoints HTTP](#-endpoints-http-fastapi)
+
 ## 🎯 OBJETIVO TÉCNICO
 
 Implementar un **microservicio backend** (Python) con FastAPI (o Flask), que:

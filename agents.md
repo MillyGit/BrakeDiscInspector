@@ -2,8 +2,27 @@
 
 This document defines **roles, scope, constraints, workflows, and acceptance criteria** for assistants/agents (e.g., GitHub Copilot/Codex) collaborating on this repository.
 
-> **Context**: The project consists of a WPF GUI for **ROI drawing and export** (crop + rotation) and a Python FastAPI backend implementing an **anomaly detection pipeline (PatchCore + DINOv2)**.  
+> **Context**: The project consists of a WPF GUI for **ROI drawing and export** (crop + rotation) and a Python FastAPI backend implementing an **anomaly detection pipeline (PatchCore + DINOv2)**.
 > The GUI is responsible for **canonical ROI** generation; the backend **does not** crop/rotate images.
+
+---
+
+## Quick index
+
+- [Repository layout](#0-repository-layout-expected)
+- [Roles](#1-roles-agents)
+- [Critical constraints](#2-critical-constraints-non-regression)
+- [Backend contract](#3-backend-contract-stable)
+- [GUI workflows](#4-gui-workflows)
+- [Shape JSON](#5-shape-json-canonical-image-coordinates)
+- [Coding standards & UX](#6-coding-standards--ux-gui)
+- [Acceptance criteria](#7-acceptance-criteria)
+- [Test plan](#8-test-plan-qa)
+- [Do / Don’t](#9-do--dont-quick-reference)
+- [Open questions](#10-open-questions-ask-before-coding-if-unclear)
+- [Backend quick-start](#11-backend-quick-start-for-local-dev)
+- [Glossary](#12-glossary)
+- [Contact points](#13-contact-points)
 
 ---
 

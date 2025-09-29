@@ -7,6 +7,19 @@ This log records notable Maintenance & Communication Plan (MCP) events for Brake
 - **Summary** of the change and links to detailed documents or pull requests
 - **Next Steps / Follow-ups** when applicable
 
+## Quick index
+
+- [2024-06-12 — Comprehensive Markdown Refresh](#2024-06-12--comprehensive-markdown-refresh)
+- [2024-06-05 — PatchCore Documentation Refresh](#2024-06-05--patchcore-documentation-refresh)
+- [2024-05-28 — Initial MCP Publication](#2024-05-28--initial-mcp-publication)
+
+## 2024-06-12 — Comprehensive Markdown Refresh
+
+- **Owners:** MCP Maintainer, Backend Lead, GUI Lead
+- **Summary:** Reorganised every Markdown guide with quick indices, environment tables and cross-links to ease onboarding after cache resets. Highlighted environment variables (`DEVICE`, `CORESET_RATE`, `MODELS_DIR`) and clarified dataset manifests for GUI workflows.
+- **Evidence:** Updated files — `README.md`, `ARCHITECTURE.md`, `API_REFERENCE.md`, `DATA_FORMATS.md`, `DEV_GUIDE.md`, `DEPLOYMENT.md`, `LOGGING.md`, `ROI_AND_MATCHING_SPEC.md`, `backend/README_backend.md`, `backend/agents_for_backend.md`, `instructions_codex_gui_workflow.md`, `gui/BrakeDiscInspector_GUI_ROI/README.md`, `docs/mcp/overview.md`.
+- **Next Steps:** Share the new documentation index with new contributors and capture feedback during the next sync meeting.
+
 ## 2024-06-05 — PatchCore Documentation Refresh
 
 - **Owners:** MCP Maintainer, Backend Lead, GUI Lead

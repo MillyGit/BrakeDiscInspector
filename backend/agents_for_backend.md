@@ -3,8 +3,21 @@
 This playbook is for assistants/agents implementing and maintaining the **backend anomaly detection service**.
 The service is a **FastAPI** microservice that provides PatchCore-style anomaly detection with a **frozen DINOv2 ViT‑S/14** feature extractor.
 
-> **Key contract**: The **GUI supplies a canonical ROI image** (already **cropped + rotated**).  
+> **Key contract**: The **GUI supplies a canonical ROI image** (already **cropped + rotated**).
 > Backend must **not** change geometry (no extra crop/rotate). Optional `shape` only **masks** the heatmap (rect/circle/annulus).
+
+---
+
+## Quick index
+
+- [Repository layout](#0-repository-layout-backend)
+- [API (stable contract)](#1-api-stable-contract)
+- [Persistence](#2-persistence-formats)
+- [Feature extractor](#3-feature-extractor-dinov2)
+- [PatchCore memory](#4-patchcore-memory)
+- [Inference pipeline](#5-inference-pipeline)
+- [Configuration](#6-configuration)
+- [Validation & Errors](#7-validation--errors)
 
 ---
 

@@ -4,6 +4,18 @@ Gracias por tu interés en contribuir al proyecto **BrakeDiscInspector**. Este d
 
 ---
 
+## Índice rápido
+
+- [Código de conducta](#1-código-de-conducta)
+- [Primeros pasos](#2-primeros-pasos)
+- [Estilo de código](#3-estilo-de-código)
+- [Pull Requests](#4-pull-requests)
+- [Tests y validación](#5-tests-y-validación)
+- [Documentación](#6-documentación)
+- [Checklist antes de abrir un PR](#7-checklist-antes-de-abrir-un-pr)
+
+---
+
 ## 1) Código de conducta
 
 - Respeto y comunicación clara entre contribuidores.

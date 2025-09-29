@@ -4,6 +4,21 @@ Guía de despliegue para ejecutar BrakeDiscInspector en entornos de desarrollo, 
 
 ---
 
+## Índice rápido
+
+- [Prerrequisitos](#1-prerrequisitos)
+- [Despliegue local](#2-despliegue-local-desarrollo)
+- [Pruebas de humo](#3-pruebas-de-humo)
+- [Despliegue en laboratorio / LAN](#4-despliegue-en-laboratorio--lan-windows)
+- [Producción (Linux)](#5-producción-linux)
+- [Variables de entorno útiles](#6-variables-de-entorno-útiles)
+- [Logging y observabilidad](#7-logging-y-observabilidad)
+- [Seguridad](#8-seguridad)
+- [Troubleshooting](#9-troubleshooting)
+- [Checklist previo a release](#10-checklist-previo-a-release)
+
+---
+
 ## 1) Prerrequisitos
 
 ### Backend
@@ -144,6 +159,8 @@ Resultados esperados:
    sudo apt install -y certbot python3-certbot-nginx
    sudo certbot --nginx -d your.server.local
    ```
+
+> **Nota sobre GPU**: si el servidor dispone de CUDA, instala las bibliotecas correspondientes antes de crear el entorno virtual (`nvidia-driver`, `cuda-toolkit`) y ajusta la variable `DEVICE=cuda` en el servicio systemd.
 
 ### 5.2 GUI en producción
 - Actualizar `appsettings.json` con la URL HTTPS del backend.

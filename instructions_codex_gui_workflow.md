@@ -4,6 +4,23 @@
 
 ---
 
+## Quick index
+
+- [Scope & Non-Regression Rules](#scope--non-regression-rules)
+- [Backend Contract](#backend-contract-summary)
+- [New GUI Features](#new-gui-features-tabs-or-wizard)
+- [Shape JSON mapping](#shape-json-mapping-from-existing-roi-types)
+- [File/Folder Structure](#filefolder-structure-gui-side)
+- [New/Updated Code](#newupdated-code-wpf)
+- [Error Handling & UX](#error-handling--ux)
+- [Acceptance Criteria](#acceptance-criteria)
+- [Testing Plan](#testing-plan)
+- [Coding Standards](#coding-standards)
+- [Deliverables](#deliverables)
+- [Do/Don’t Summary](#dodont-summary)
+
+---
+
 ## Scope & Non‑Regression Rules
 
 1. **Scope**: Modify **GUI (WPF)** only. The backend (FastAPI) already exposes `/fit_ok`, `/calibrate_ng`, `/infer`, `/health`.

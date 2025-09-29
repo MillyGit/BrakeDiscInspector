@@ -4,6 +4,16 @@ Política de logging y trazabilidad para el backend FastAPI (PatchCore + DINOv2)
 
 ---
 
+## Índice rápido
+
+- [Principios](#1-principios)
+- [Backend (FastAPI)](#2-backend-fastapi)
+- [GUI (WPF)](#3-gui-wpf)
+- [Seguridad](#4-seguridad)
+- [Checklist](#5-checklist)
+
+---
+
 ## 1) Principios
 
 - **Observabilidad**: registrar tiempos, tamaños y resultados clave sin exponer datos sensibles.
@@ -19,6 +29,7 @@ Política de logging y trazabilidad para el backend FastAPI (PatchCore + DINOv2)
 - El backend usa `logging.getLogger(__name__)` en módulos como `app.py`, `infer.py` y `storage.py`.
 - Inicializa logging en `if __name__ == "__main__"` cuando se ejecuta con `uvicorn backend.app:app` (usar `--log-level info`).
 - Para despliegues con Gunicorn, definir `log-config` o variables `LOG_LEVEL` según necesidad.
+- Habilita `uvicorn.access` si necesitas auditoría HTTP; puede redirigirse a fichero separado usando la configuración de Gunicorn/Uvicorn.
 
 ### 2.2 Eventos mínimos
 
