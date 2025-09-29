@@ -12,12 +12,18 @@
 		<PublishSingleFile>false</PublishSingleFile>
 	</PropertyGroup>
 
-	<ItemGroup>
-		<PackageReference Include="OpenCvSharp4" Version="4.11.0.20250507" />
-		<PackageReference Include="OpenCvSharp4.runtime.win" Version="4.11.0.20250507" />
-		<PackageReference Include="OpenCvSharp4.Extensions" Version="4.11.0.20250507" />
-		<PackageReference Include="OpenCvSharp4.WpfExtensions" Version="4.11.0.20250507" />
-	</ItemGroup>
+        <ItemGroup>
+                <PackageReference Include="OpenCvSharp4" Version="4.11.0.20250507" />
+                <PackageReference Include="OpenCvSharp4.runtime.win" Version="4.11.0.20250507" />
+                <PackageReference Include="OpenCvSharp4.Extensions" Version="4.11.0.20250507" />
+                <PackageReference Include="OpenCvSharp4.WpfExtensions" Version="4.11.0.20250507" />
+        </ItemGroup>
+
+        <ItemGroup>
+                <Content Include="appsettings.json">
+                        <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+                </Content>
+        </ItemGroup>
 
 </Project>
 
