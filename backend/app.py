@@ -1,5 +1,6 @@
 from __future__ import annotations
 import json
+import logging
 import sys
 import traceback
 from typing import Optional, Dict, Any, List
@@ -38,6 +39,8 @@ else:
     from .infer import InferenceEngine
     from .calib import choose_threshold
     from .utils import ensure_dir, base64_from_bytes
+
+log = logging.getLogger(__name__)
 
 app = FastAPI(title="Anomaly Backend (PatchCore + DINOv2)")
 
@@ -228,3 +231,16 @@ def infer(
         return out
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e), "trace": traceback.format_exc()})
+
+
+if __name__ == "__main__":
+    if not logging.getLogger().handlers:
+        logging.basicConfig(level=logging.INFO)
+
+    host = "0.0.0.0"
+    port = 8000
+    log.info("Starting backend service on %s:%s", host, port)
+
+    import uvicorn
+
+    uvicorn.run("backend.app:app", host=host, port=port, reload=False)
