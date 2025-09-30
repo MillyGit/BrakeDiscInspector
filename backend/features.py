@@ -3,6 +3,7 @@ import torch
 import numpy as np
 import inspect
 from typing import Tuple, Sequence
+import torch.nn.functional as F
 
 try:
     import timm
@@ -120,20 +121,57 @@ class DinoV2Features:
             return fn(x, n=n)
 
 
-    def _forward_tokens(self, x: torch.Tensor) -> torch.Tensor:
+def _forward_tokens(self, x: torch.Tensor) -> torch.Tensor:
+    """
+    Extrae tokens Bx(HW)xC desde el ViT, preservando tu lógica original.
+    Añade:
+      - Compatibilidad de firma con timm (return_class_token / return_cls_token / reshape).
+      - Soporte de tamaño dinámico: set_input_size() si existe; si no, resize a img_size del modelo.
+    """
+
+    # --- Helpers internos ---
+
+        def _prepare_input_size(model, x):
+            """
+            Asegura que el tamaño de entrada cuadra con el modelo.
+            Preferimos tamaño dinámico (set_input_size). Si no existe, reescalamos.
+            Devuelve (x_prepared, how) con how in {"set_input_size","resize","unchanged"}.
+            """
+            pe = getattr(model, "patch_embed", None)
+            if pe is None:
+                return x, "unchanged"    
+    
+            H, W = x.shape[-2:]
+            # patch size
+            ps = getattr(pe, "patch_size", (14, 14))
+            if isinstance(ps, int):
+                ps = (ps, ps)
+    
+            # tamaño actual del modelo
+            img_size = getattr(pe, "img_size", (H, W))
+            if isinstance(img_size, int):
+                img_size = (img_size, img_size)
+            target_h, target_w = int(img_size[0]), int(img_size[1])
+    
+            # ¿ya coincide?
+            if (H, W) == (target_h, target_w):
+                return x, "unchanged"
+    
+            # ¿podemos activar tamaño dinámico?
+            if hasattr(pe, "set_input_size") and (H % ps[0] == 0) and (W % ps[1] == 0):
+                pe.set_input_size((H, W))
+                return x, "set_input_size"
+    
+            # Si no hay tamaño dinámico, reescalar a lo que espera el modelo
+            x_res = F.interpolate(x, size=(target_h, target_w), mode="bilinear", align_corners=False)
+            return x_res, "resize"
+    
         def _call_get_intermediate_layers_compat(model, x, out_indices, want_cls: bool, want_reshape: bool):
-            """
-            Llama a model.get_intermediate_layers con la firma compatible con la versión instalada.
-            Prueba (x, out_indices, **kwargs) y, si no cuadra, (x, len(out_indices), **kwargs).
-            Ajusta automáticamente: return_class_token / return_cls_token / reshape.
-            Devuelve la lista de capas tal cual la API nativa (tensors o tuplas).
-            """
             fn = getattr(model, "get_intermediate_layers", None)
             if fn is None:
-                return None  # el caller hará forward_features
+                return None  # el caller usará forward_features
     
             sig = inspect.signature(fn)
-            # kwargs compatibles con la versión presente
             kwargs = {}
             if "return_class_token" in sig.parameters:
                 kwargs["return_class_token"] = want_cls
@@ -142,20 +180,18 @@ class DinoV2Features:
             if "reshape" in sig.parameters:
                 kwargs["reshape"] = want_reshape
     
-            # 1) intentar con la lista de índices tal cual (como haces ahora)
+            # 1) lista de índices (tu caso original)
             try:
                 return fn(x, self.out_indices, **kwargs)
             except TypeError:
                 pass
-    
-            # 2) algunas versiones esperan un entero (n = últimas n capas)
+            # 2) entero n = len(out_indices)
             try:
                 n = len(self.out_indices) if self.out_indices else 1
                 return fn(x, n, **kwargs)
             except TypeError:
                 pass
-    
-            # 3) último intento: sin kwargs (versiones antiguas)
+            # 3) último intento, sin kwargs
             try:
                 return fn(x, self.out_indices)
             except TypeError:
@@ -163,54 +199,41 @@ class DinoV2Features:
                 return fn(x, n)
     
         def _normalize_layers(layers):
-            """
-            Convierte retornos posibles en una lista de tensores Bx(HW)xC:
-            - Acepta tensores 4D (B,H,W,C) o 3D (B,HW,C)
-            - Si la API devuelve tuplas (tokens, cls, ...), toma el primer elemento.
-            """
             feats = []
             for layer in layers:
-                # Desempaquetar tuplas tipo (tokens, cls) / (feat, cls, ...)
+                # timm puede devolver (tokens, cls, ...)
                 if isinstance(layer, (tuple, list)) and len(layer) > 0 and torch.is_tensor(layer[0]):
                     layer = layer[0]
-    
                 if not torch.is_tensor(layer):
                     raise RuntimeError(f"Tipo inesperado en capa intermedia: {type(layer)}")
     
                 if layer.ndim == 4:
-                    # (B, H, W, C)  -> (B, HW, C)
+                    # (B, H, W, C) -> (B, HW, C)
                     b, h, w, c = layer.shape
                     feats.append(layer.reshape(b, h * w, c))
                 elif layer.ndim == 3:
-                    # (B, HW, C)
                     feats.append(layer)
                 else:
                     raise RuntimeError(f"Forma inesperada en capa intermedia: {layer.shape}")
             return feats
     
+        # --- Preparar tamaño de entrada (evita el AssertionError de timm) ---
+        x, how_size = _prepare_input_size(self.model, x)
+        # (si quieres, loguea how_size para saber si usó set_input_size o resize)
+    
+        # --- Camino con get_intermediate_layers (tu rama original, robustecida) ---
         if self.out_indices and hasattr(self.model, "get_intermediate_layers"):
-            # Llamada compatible con cualquier timm/dinov2
             layers = _call_get_intermediate_layers_compat(
-                self.model,
-                x,
-                self.out_indices,
-                want_cls=False,       # conservas tu semántica original
-                want_reshape=True     # lo pides si la firma lo soporta
+                self.model, x, self.out_indices, want_cls=False, want_reshape=True
             )
     
-            if layers is None:
-                # Modelo sin get_intermediate_layers -> cae al camino de abajo
-                feats = self.model.forward_features(x)
-                t = feats.get("x") or feats.get("tokens") if isinstance(feats, dict) else feats
-                if t is None and isinstance(feats, dict):
-                    t = max((v for v in feats.values() if isinstance(v, torch.Tensor)), key=lambda u: u.numel())
-            else:
-                # Normaliza y concatena canales como hacías
+            if layers is not None:
                 feats = _normalize_layers(layers)
                 tokens = torch.cat(feats, dim=-1)
                 return tokens[0]
+            # si no hay función compatible, cae a forward_features más abajo
     
-        # === Camino clásico: forward_features ===
+        # --- Camino clásico: forward_features (tu lógica intacta) ---
         feats = self.model.forward_features(x)
         if isinstance(feats, dict):
             t = feats.get("x") or feats.get("tokens")
@@ -220,7 +243,6 @@ class DinoV2Features:
             t = feats
     
         if t.ndim == 3:
-            # mantener tu lógica: si incluye CLS coincide con expected, si no, drop CLS
             if t.shape[1] == self._expected_tokens(t.shape[1]):
                 tokens = t
             else:
