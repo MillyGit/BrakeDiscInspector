@@ -6,8 +6,10 @@ namespace BrakeDiscInspector_GUI_ROI
     public class MasterLayout
     {
         public RoiModel? Master1Pattern { get; set; }
+        public string? Master1PatternImagePath { get; set; }
         public RoiModel? Master1Search { get; set; }
         public RoiModel? Master2Pattern { get; set; }
+        public string? Master2PatternImagePath { get; set; }
         public RoiModel? Master2Search { get; set; }
         public RoiModel? Inspection { get; set; }
         public RoiModel? InspectionBaseline { get; set; }
