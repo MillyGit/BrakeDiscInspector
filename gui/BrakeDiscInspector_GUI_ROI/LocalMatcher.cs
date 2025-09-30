@@ -1,268 +1,320 @@
-﻿// LocalMatcher.cs
 using System;
 using System.Linq;
-
-// Alias OpenCvSharp: evita choques con System.Windows.Window / WPF
-using Cv = OpenCvSharp;
-using CvPoint2f = OpenCvSharp.Point2f;
-using CvPoint2d = OpenCvSharp.Point2d;
-using CvRect = OpenCvSharp.Rect;
-using CvMat = OpenCvSharp.Mat;
-using CvVec2f = OpenCvSharp.Vec2f;
+using OpenCvSharp;
 
 namespace BrakeDiscInspector_GUI_ROI
 {
     public static class LocalMatcher
     {
-        // Correlación->0..100
-        private static int ToScore(double corr) => (int)Math.Round(Math.Clamp(corr, 0, 1) * 100);
-
-        /// <summary>
-        /// Template matching con rotación (escala fija=1.0 por rendimiento).
-        /// </summary>
-        public static (CvPoint2d? center, int score) MatchTemplateRot(CvMat imageGray, CvMat patternGray, int rotRangeDeg, double scaleMin, double scaleMax)
+        private static void Log(Action<string>? log, string message)
         {
-            double best = -1;
-            CvPoint2d? bestPt = null;
-
-            for (int ang = -rotRangeDeg; ang <= rotRangeDeg; ang += 2)
-            {
-                double scale = 1.0; // si quieres multi-escala, muestrea entre [scaleMin, scaleMax]
-                using var rotPat = RotateAndScale(patternGray, ang, scale);
-                if (rotPat.Width > imageGray.Width || rotPat.Height > imageGray.Height)
-                    continue;
-
-                using var res = new CvMat();
-                Cv.Cv2.MatchTemplate(imageGray, rotPat, res, Cv.TemplateMatchModes.CCoeffNormed);
-                Cv.Cv2.MinMaxLoc(res, out _, out double maxVal, out _, out OpenCvSharp.Point maxLoc);
-
-                if (maxVal > best)
-                {
-                    best = maxVal;
-                    bestPt = new CvPoint2d(maxLoc.X + rotPat.Width / 2.0, maxLoc.Y + rotPat.Height / 2.0);
-                }
-            }
-            return (bestPt, ToScore(best));
+            log?.Invoke(message);
         }
 
-        /// <summary>
-        /// Matching por características: ORB (si piden "sift" o "auto", también usamos ORB para asegurar disponibilidad).
-        /// </summary>
-        public static (CvPoint2d? center, int score) MatchFeatures(CvMat imageGray, CvMat patternGray, string feature, int rotRangeDeg, double scaleMin, double scaleMax)
+        private static Mat PackPoints(Point2f[] pts)
         {
-            // En tu build SIFT no está disponible; forzamos ORB (robusto y rápido)
-            Cv.Feature2D f2d = Cv.ORB.Create(nFeatures: 1000);
-
-            using var bf = new Cv.BFMatcher(normType: Cv.NormTypes.Hamming, crossCheck: true);
-
-            // Detectar + describir
-            var kpsImg = f2d.Detect(imageGray);
-            using var desImg = new CvMat();
-            f2d.Compute(imageGray, ref kpsImg, desImg);
-
-            var kpsPat = f2d.Detect(patternGray);
-            using var desPat = new CvMat();
-            f2d.Compute(patternGray, ref kpsPat, desPat);
-
-            if (desImg.Empty() || desPat.Empty() || kpsImg.Length == 0 || kpsPat.Length == 0)
-                return (null, 0);
-
-            var matches = bf.Match(desPat, desImg)
-                            .OrderBy(m => m.Distance)
-                            .Take(50)
-                            .ToArray();
-
-            if (matches.Length < 6)
-                return (null, 0);
-
-            // Puntos emparejados -> Mat CV_32FC2 (Nx1x2)
-            var src = matches.Select(m => new CvPoint2f(kpsPat[m.QueryIdx].Pt.X, kpsPat[m.QueryIdx].Pt.Y)).ToArray();
-            var dst = matches.Select(m => new CvPoint2f(kpsImg[m.TrainIdx].Pt.X, kpsImg[m.TrainIdx].Pt.Y)).ToArray();
-
-            using var srcMat = PackPoints(src);
-            using var dstMat = PackPoints(dst);
-
-            using var H = Cv.Cv2.FindHomography(srcMat, dstMat, Cv.HomographyMethods.Ransac, 3.0, mask: null);
-            if (H.Empty())
-                return (null, 0);
-
-            // Proyecta el rectángulo del patrón y toma su centro
-            var rect = new[]
-            {
-                new CvPoint2f(0, 0),
-                new CvPoint2f(patternGray.Cols, 0),
-                new CvPoint2f(patternGray.Cols, patternGray.Rows),
-                new CvPoint2f(0, patternGray.Rows)
-            };
-            using var rectMat = PackPoints(rect);
-            using var rectOut = new CvMat();
-            Cv.Cv2.PerspectiveTransform(rectMat, rectOut, H);
-            var rectTr = UnpackPoints(rectOut);
-
-            var cx = rectTr.Average(p => p.X);
-            var cy = rectTr.Average(p => p.Y);
-
-            // Score heurístico: inverso de la distancia media
-            double avgDist = matches.Average(m => m.Distance);
-            int score = (int)Math.Clamp(100 - avgDist, 0, 100);
-
-            return (new CvPoint2d(cx, cy), score);
-        }
-
-        /// <summary>
-        /// Empaqueta Point2f[] en Mat Nx1 de tipo CV_32FC2 (compatible con FindHomography/PerspectiveTransform).
-        /// </summary>
-        private static CvMat PackPoints(CvPoint2f[] pts)
-        {
-            var mat = new CvMat(pts.Length, 1, Cv.MatType.CV_32FC2);
+            var mat = new Mat(pts.Length, 1, MatType.CV_32FC2);
             for (int i = 0; i < pts.Length; i++)
-                mat.Set(i, 0, new CvVec2f(pts[i].X, pts[i].Y));
+            {
+                mat.Set(i, 0, pts[i]);
+            }
+
             return mat;
         }
 
-        /// <summary>
-        /// Desempaqueta Mat Nx1 (CV_32FC2) a Point2f[].
-        /// </summary>
-        private static CvPoint2f[] UnpackPoints(CvMat mat)
+        private static Point2f[] UnpackPoints(Mat mat)
         {
-            var n = mat.Rows;
-            var arr = new CvPoint2f[n];
-            for (int i = 0; i < n; i++)
+            var pts = new Point2f[mat.Rows];
+            for (int i = 0; i < mat.Rows; i++)
             {
-                var v = mat.Get<CvVec2f>(i, 0);
-                arr[i] = new CvPoint2f(v.Item0, v.Item1);
+                pts[i] = mat.Get<Point2f>(i);
             }
-            return arr;
+
+            return pts;
         }
 
-        private static CvMat RotateAndScale(CvMat srcGray, double angleDeg, double scale)
+        private static int ToScore(double value)
         {
-            var ctr = new CvPoint2f(srcGray.Cols / 2f, srcGray.Rows / 2f);
-            using var M = Cv.Cv2.GetRotationMatrix2D(ctr, angleDeg, scale);
-            var bbox = new Cv.RotatedRect(ctr, new OpenCvSharp.Size2f(srcGray.Cols, srcGray.Rows), (float)angleDeg).BoundingRect(); // ángulo float
-            var dst = new CvMat();
-            Cv.Cv2.WarpAffine(srcGray, dst, M, bbox.Size, Cv.InterpolationFlags.Linear, Cv.BorderTypes.Constant);
+            return (int)Math.Round(100.0 * Math.Clamp(value, 0.0, 1.0));
+        }
+
+        private static Mat ToGray(Mat src)
+        {
+            if (src.Channels() == 1)
+            {
+                return src.Clone();
+            }
+
+            var dst = new Mat();
+            if (src.Channels() == 3)
+            {
+                Cv2.CvtColor(src, dst, ColorConversionCodes.BGR2GRAY);
+            }
+            else
+            {
+                Cv2.CvtColor(src, dst, ColorConversionCodes.BGRA2GRAY);
+            }
+
             return dst;
         }
 
-        /// <summary>
-        /// Ejecuta matching dentro de la ROI de búsqueda y devuelve centro en coords globales.
-        /// </summary>
-        public static (CvPoint2d? center, int score) MatchInSearchROI(CvMat fullImageBgr, RoiModel patternRoi, RoiModel searchRoi,
-            string feature, int thr, int rotRange, double scaleMin, double scaleMax, CvMat? patternOverride = null)
+        private static Mat RotateAndScale(Mat srcGray, double angleDeg, double scale)
         {
-            // Recortes
+            var center = new Point2f(srcGray.Cols / 2f, srcGray.Rows / 2f);
+            using var matrix = Cv2.GetRotationMatrix2D(center, angleDeg, scale);
+            var dst = new Mat(srcGray.Size(), srcGray.Type());
+            Cv2.WarpAffine(srcGray, dst, matrix, srcGray.Size(), InterpolationFlags.Linear, BorderTypes.Reflect101);
+            return dst;
+        }
+
+        private static (Point2d? center, int score, string? failure) MatchTemplateRot(
+            Mat imageGray,
+            Mat patternGray,
+            int rotRangeDeg,
+            double scaleMin,
+            double scaleMax,
+            Action<string>? log)
+        {
+            double best = -1.0;
+            Point2d? bestPoint = null;
+
+            var minScale = Math.Min(scaleMin, scaleMax);
+            var maxScale = Math.Max(scaleMin, scaleMax);
+            int steps = 5;
+            var scales = Enumerable.Range(0, steps + 1)
+                                    .Select(i => minScale + i * (maxScale - minScale) / Math.Max(steps, 1))
+                                    .Distinct();
+
+            foreach (var scale in scales)
+            {
+                for (int angle = -rotRangeDeg; angle <= rotRangeDeg; angle += 2)
+                {
+                    using var rotated = RotateAndScale(patternGray, angle, scale);
+                    if (rotated.Width > imageGray.Width || rotated.Height > imageGray.Height)
+                    {
+                        Log(log, $"[TM] skip: rotPat({rotated.Width}x{rotated.Height}) > img({imageGray.Width}x{imageGray.Height}) @ang={angle},scale={scale:F3}");
+                        continue;
+                    }
+
+                    using var response = new Mat();
+                    Cv2.MatchTemplate(imageGray, rotated, response, TemplateMatchModes.CCoeffNormed);
+                    Cv2.MinMaxLoc(response, out _, out double maxVal, out _, out Point maxLoc);
+                    Log(log, $"[TM] ang={angle,3} scale={scale:F3} max={maxVal:F4} loc=({maxLoc.X},{maxLoc.Y})");
+
+                    if (maxVal > best)
+                    {
+                        best = maxVal;
+                        bestPoint = new Point2d(maxLoc.X + rotated.Width / 2.0, maxLoc.Y + rotated.Height / 2.0);
+                    }
+                }
+            }
+
+            string? failure = bestPoint == null
+                ? "sin correlación"
+                : $"maxCorr={Math.Max(best, 0):F4}";
+
+            return (bestPoint, ToScore(best), failure);
+        }
+
+        private static (Point2d? center, int score, string? failure) MatchFeatures(
+            Mat imageGray,
+            Mat patternGray,
+            Action<string>? log)
+        {
+            using var orb = ORB.Create(nFeatures: 1200);
+            var imgKp = orb.Detect(imageGray);
+            var patKp = orb.Detect(patternGray);
+
+            using var imgDesc = new Mat();
+            using var patDesc = new Mat();
+            orb.Compute(imageGray, ref imgKp, imgDesc);
+            orb.Compute(patternGray, ref patKp, patDesc);
+
+            if (imgDesc.Empty() || patDesc.Empty() || imgKp.Length < 8 || patKp.Length < 8)
+            {
+                Log(log, "[FEATURE] sin descriptores suficientes");
+                return (null, 0, "sin descriptores suficientes");
+            }
+
+            using var matcher = new BFMatcher(NormTypes.Hamming, crossCheck: false);
+            var knnMatches = matcher.KnnMatch(patDesc, imgDesc, k: 2);
+            var good = knnMatches
+                .Where(m => m.Length == 2 && m[0].Distance < 0.75 * m[1].Distance)
+                .Select(m => m[0])
+                .ToArray();
+
+            Log(log, $"[FEATURE] kps(pattern,img)=({patKp.Length},{imgKp.Length}) good={good.Length}");
+
+            if (good.Length < 8)
+            {
+                Log(log, "[FEATURE] pocos good matches");
+                return (null, 0, "pocos good matches");
+            }
+
+            var srcPts = good.Select(match => patKp[match.QueryIdx].Pt).ToArray();
+            var dstPts = good.Select(match => imgKp[match.TrainIdx].Pt).ToArray();
+
+            using var srcMat = PackPoints(srcPts);
+            using var dstMat = PackPoints(dstPts);
+            using var mask = new Mat();
+            using var homography = Cv2.FindHomography(srcMat, dstMat, HomographyMethods.Ransac, 3.0, mask);
+            if (homography.Empty())
+            {
+                Log(log, "[FEATURE] homografía vacía");
+                return (null, 0, "homografía vacía");
+            }
+
+            int inliers = Cv2.CountNonZero(mask);
+            int scoreInliers = ToScore((double)inliers / Math.Max(good.Length, 1));
+            double avgDist = good.Average(match => match.Distance);
+            int scoreDistance = ToScore(1.0 - Math.Clamp(avgDist / 256.0, 0.0, 1.0));
+            int score = (int)Math.Round(0.7 * scoreInliers + 0.3 * scoreDistance);
+
+            var rect = new[]
+            {
+                new Point2f(0, 0),
+                new Point2f(patternGray.Cols, 0),
+                new Point2f(patternGray.Cols, patternGray.Rows),
+                new Point2f(0, patternGray.Rows)
+            };
+
+            using var rectMat = PackPoints(rect);
+            using var rectOut = new Mat();
+            Cv2.PerspectiveTransform(rectMat, rectOut, homography);
+            var transformed = UnpackPoints(rectOut);
+            double cx = transformed.Average(p => p.X);
+            double cy = transformed.Average(p => p.Y);
+
+            Log(log, $"[FEATURE] inliers={inliers}/{good.Length} avgDist={avgDist:F1} score={score}");
+            return (new Point2d(cx, cy), score, null);
+        }
+
+        public static (Point2d? center, int score) MatchInSearchROI(
+            Mat fullImageBgr,
+            RoiModel patternRoi,
+            RoiModel searchRoi,
+            string feature,
+            int threshold,
+            int rotRange,
+            double scaleMin,
+            double scaleMax,
+            Mat? patternOverride = null,
+            Action<string>? log = null)
+        {
+            if (fullImageBgr == null)
+                throw new ArgumentNullException(nameof(fullImageBgr));
+            if (searchRoi == null)
+                throw new ArgumentNullException(nameof(searchRoi));
+
             var searchRect = RectFromRoi(fullImageBgr, searchRoi);
             if (searchRect.Width < 5 || searchRect.Height < 5)
+            {
+                Log(log, "[INPUT] search ROI demasiado pequeño");
                 return (null, 0);
+            }
 
-            using var searchBgr = new CvMat(fullImageBgr, searchRect);
-            using var imgGray = ToGray(searchBgr);
+            using var searchRegion = new Mat(fullImageBgr, searchRect);
+            using var searchGray = ToGray(searchRegion);
 
-            CvMat? patGray = null;
-            CvMat? patRegion = null;
+            Mat? patternRegion = null;
+            Mat? patternGray = null;
+
             try
             {
                 if (patternOverride != null)
                 {
-                    if (patternOverride.Empty() || patternOverride.Width < 1 || patternOverride.Height < 1)
+                    if (patternOverride.Empty() || patternOverride.Width < 3 || patternOverride.Height < 3)
+                    {
+                        Log(log, "[INPUT] patrón override vacío/pequeño");
                         return (null, 0);
+                    }
 
-                    patGray = ToGray(patternOverride);
+                    patternGray = ToGray(patternOverride);
                 }
                 else
                 {
-                    var patRect = RectFromRoi(fullImageBgr, patternRoi);
-                    if (patRect.Width < 1 || patRect.Height < 1)
+                    if (patternRoi == null)
+                    {
+                        Log(log, "[INPUT] patrón ROI null");
                         return (null, 0);
+                    }
 
-                    patRegion = new CvMat(fullImageBgr, patRect);
-                    patGray = ToGray(patRegion);
+                    var patternRect = RectFromRoi(fullImageBgr, patternRoi);
+                    if (patternRect.Width < 3 || patternRect.Height < 3)
+                    {
+                        Log(log, "[INPUT] patrón demasiado pequeño");
+                        return (null, 0);
+                    }
+
+                    patternRegion = new Mat(fullImageBgr, patternRect);
+                    patternGray = ToGray(patternRegion);
                 }
 
-                if (patGray == null || patGray.Empty())
+                if (patternGray == null || patternGray.Empty())
+                {
+                    Log(log, "[INPUT] patrón vacío/pequeño");
                     return (null, 0);
+                }
 
-                (CvPoint2d? center, int score) res =
-                    string.Equals(feature, "tm_rot", StringComparison.OrdinalIgnoreCase)
-                    ? MatchTemplateRot(imgGray, patGray, rotRange, scaleMin, scaleMax)
-                    : MatchFeatures(imgGray, patGray, feature, rotRange, scaleMin, scaleMax);
+                Log(log, $"[INPUT] feature={feature} thr={threshold} search={searchRect.Width}x{searchRect.Height} pattern={patternGray.Width}x{patternGray.Height}");
 
-                if (res.center is null || res.score < thr)
-                    return (null, res.score);
+                string featureMode = feature?.Trim().ToLowerInvariant() ?? string.Empty;
+                (Point2d? center, int score, string? cause) result = featureMode switch
+                {
+                    "tm" or "tm_rot" => MatchTemplateRot(searchGray, patternGray, rotRange, scaleMin, scaleMax, log),
+                    _ => MatchFeatures(searchGray, patternGray, log)
+                };
 
-                // Convertir a coords globales sumando el desplazamiento del recorte searchRect
-                var global = new CvPoint2d(res.center.Value.X + searchRect.X, res.center.Value.Y + searchRect.Y);
-                return (global, res.score);
+                if (result.center is null || result.score < threshold)
+                {
+                    var reason = result.cause ?? (result.center is null ? "sin coincidencias" : $"score={result.score}");
+                    Log(log, $"[RESULT] no-hit score={result.score} (<{threshold}) cause={reason}");
+                    return (null, result.score);
+                }
+
+                var global = new Point2d(searchRect.X + result.center.Value.X, searchRect.Y + result.center.Value.Y);
+                Log(log, $"[RESULT] HIT center=({global.X:F1},{global.Y:F1}) score={result.score}");
+                return (global, result.score);
             }
             finally
             {
-                patGray?.Dispose();
-                patRegion?.Dispose();
+                patternGray?.Dispose();
+                patternRegion?.Dispose();
             }
         }
 
-        private static CvMat ToGray(CvMat src)
+        private static Rect RectFromRoi(Mat img, RoiModel roi)
         {
-            if (src.Channels() == 1)
-                return src.Clone();
-
-            var dst = new CvMat();
-            var channels = src.Channels();
-            if (channels == 3)
+            double left, top, right, bottom;
+            if (roi.Shape == RoiShape.Rectangle)
             {
-                Cv.Cv2.CvtColor(src, dst, Cv.ColorConversionCodes.BGR2GRAY);
-            }
-            else if (channels == 4)
-            {
-                Cv.Cv2.CvtColor(src, dst, Cv.ColorConversionCodes.BGRA2GRAY);
+                left = roi.Left;
+                top = roi.Top;
+                right = left + roi.Width;
+                bottom = top + roi.Height;
             }
             else
             {
-                Cv.Cv2.CvtColor(src, dst, Cv.ColorConversionCodes.BGRA2GRAY);
+                left = roi.CX - roi.R;
+                top = roi.CY - roi.R;
+                right = roi.CX + roi.R;
+                bottom = roi.CY + roi.R;
             }
-            return dst;
-        }
 
-        /// <summary>
-        /// Convierte RoiModel a OpenCvSharp.Rect con clipping seguro al tamaño de la imagen.
-        /// </summary>
-        private static CvRect RectFromRoi(CvMat img, RoiModel r)
-        {
-            if (r.Shape == RoiShape.Rectangle)
-            {
-                double left = r.Left;
-                double top = r.Top;
-                double right = left + r.Width;
-                double bottom = top + r.Height;
+            int x = (int)Math.Floor(left);
+            int y = (int)Math.Floor(top);
+            int w = (int)Math.Ceiling(right - x);
+            int h = (int)Math.Ceiling(bottom - y);
 
-                int x = (int)Math.Floor(left);
-                int y = (int)Math.Floor(top);
-                int w = (int)Math.Ceiling(right - x);
-                int h = (int)Math.Ceiling(bottom - y);
-                x = Math.Clamp(x, 0, img.Width - 1);
-                y = Math.Clamp(y, 0, img.Height - 1);
-                w = Math.Clamp(w, 1, img.Width - x);
-                h = Math.Clamp(h, 1, img.Height - y);
-                return new CvRect(x, y, w, h);
-            }
-            else
-            {
-                double left = r.CX - r.R;
-                double top = r.CY - r.R;
-                double right = r.CX + r.R;
-                double bottom = r.CY + r.R;
+            int maxWidth = Math.Max(img.Width - 1, 0);
+            int maxHeight = Math.Max(img.Height - 1, 0);
 
-                int x = (int)Math.Floor(left);
-                int y = (int)Math.Floor(top);
-                int w = (int)Math.Ceiling(right - x);
-                int h = (int)Math.Ceiling(bottom - y);
-                x = Math.Clamp(x, 0, img.Width - 1);
-                y = Math.Clamp(y, 0, img.Height - 1);
-                w = Math.Clamp(w, 1, img.Width - x);
-                h = Math.Clamp(h, 1, img.Height - y);
-                return new CvRect(x, y, w, h);
-            }
+            x = Math.Clamp(x, 0, maxWidth);
+            y = Math.Clamp(y, 0, maxHeight);
+            w = Math.Clamp(w, 1, Math.Max(img.Width - x, 1));
+            h = Math.Clamp(h, 1, Math.Max(img.Height - y, 1));
+
+            return new Rect(x, y, w, h);
         }
     }
 }
