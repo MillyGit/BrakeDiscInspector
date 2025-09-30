@@ -51,13 +51,8 @@ namespace BrakeDiscInspector_GUI_ROI
             return dst;
         }
 
-        /// <summary>
-        /// Pequeño refuerzo de contraste con CLAHE para parches poco texturizados.
-        /// Solo se aplica si el ROI es pequeño o si hay muy pocas kps detectadas.
-        /// </summary>
         private static Mat MaybeClahe(Mat gray, int currentKpCount, int kpThreshold = 10)
         {
-            // Consideramos "pequeño" un patrón menor a 64x64
             bool small = gray.Width * gray.Height <= 64 * 64;
             if (!small && currentKpCount >= kpThreshold) return gray;
 
@@ -130,23 +125,21 @@ namespace BrakeDiscInspector_GUI_ROI
             Mat patternGray,
             Action<string>? log)
         {
-            // ORB más sensible en ROIs pequeños
             using var orb = ORB.Create(
-                nFeatures: 2000,          // antes 1200
+                nFeatures: 2000,
                 scaleFactor: 1.2f,
                 nLevels: 8,
-                edgeThreshold: 15,        // más bajo para detectar cerca del borde
+                edgeThreshold: 15,
                 firstLevel: 0,
                 WTA_K: 2,
-                scoreType: ORBScoreType.HarrisScore,
+                scoreType: ORBScoreType.Harris,   // <-- corregido
                 patchSize: 31,
-                fastThreshold: 10         // más sensible que 20
+                fastThreshold: 10
             );
 
             var imgKp = orb.Detect(imageGray);
             var patKp = orb.Detect(patternGray);
 
-            // Si detectamos muy pocas, intentamos CLAHE rápido para mejorar textura
             if (imgKp.Length < 10)
             {
                 using var imgClahe = MaybeClahe(imageGray, imgKp.Length, kpThreshold: 10);
@@ -176,7 +169,6 @@ namespace BrakeDiscInspector_GUI_ROI
             using var matcher = new BFMatcher(NormTypes.Hamming, crossCheck: false);
             var knnMatches = matcher.KnnMatch(patDesc, imgDesc, k: 2);
 
-            // Ratio de Lowe adaptativo: empezamos en 0.75, si quedan pocos, relajamos hasta 0.9
             double[] ratios = new[] { 0.75, 0.80, 0.85, 0.90 };
             DMatch[] good = Array.Empty<DMatch>();
             foreach (var r in ratios)
@@ -324,7 +316,6 @@ namespace BrakeDiscInspector_GUI_ROI
 
         private static Rect RectFromRoi(Mat img, RoiModel roi)
         {
-            // *** SE MANTIENE EL MISMO CÓDIGO QUE EN TU VERSIÓN ANTERIOR ***
             double left, top, right, bottom;
             if (roi.Shape == RoiShape.Rectangle)
             {
