@@ -1,5 +1,7 @@
+
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Net.Http;
 using System.Net.Http.Json;
@@ -9,6 +11,10 @@ using System.Threading.Tasks;
 
 namespace BrakeDiscInspector_GUI_ROI.Workflow
 {
+    /// <summary>
+    /// BackendClient revisado: mantiene la API pública original (métodos, firmas y DTOs)
+    /// y añade robustez (tipos MIME correctos, InvariantCulture, errores con cuerpo).
+    /// </summary>
     public sealed class BackendClient
     {
         private readonly HttpClient _httpClient;
@@ -70,6 +76,10 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
             return defaultUrl;
         }
 
+        // =========================
+        //  Endpoints
+        // =========================
+
         public async Task<FitOkResult> FitOkAsync(string roleId, string roiId, double mmPerPx, IEnumerable<string> okImagePaths)
         {
             if (string.IsNullOrWhiteSpace(roleId)) throw new ArgumentException("Role id required", nameof(roleId));
@@ -78,7 +88,7 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
             using var form = new MultipartFormDataContent();
             form.Add(new StringContent(roleId), "role_id");
             form.Add(new StringContent(roiId), "roi_id");
-            form.Add(new StringContent(mmPerPx.ToString(System.Globalization.CultureInfo.InvariantCulture)), "mm_per_px");
+            form.Add(new StringContent(mmPerPx.ToString(CultureInfo.InvariantCulture)), "mm_per_px");
 
             bool hasImage = false;
             foreach (var path in okImagePaths)
@@ -88,8 +98,10 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
                     continue;
                 }
 
-                var content = new StreamContent(File.OpenRead(path));
-                content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("image/png");
+                var stream = File.OpenRead(path);
+                var content = new StreamContent(stream);
+                content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(GuessMediaType(path));
+                // Importante: mismo nombre de campo para cada imagen -> "images"
                 form.Add(content, "images", Path.GetFileName(path));
                 hasImage = true;
             }
@@ -100,13 +112,15 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
             }
 
             using var response = await _httpClient.PostAsync("fit_ok", form).ConfigureAwait(false);
-            response.EnsureSuccessStatusCode();
+            var body = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+            if (!response.IsSuccessStatusCode)
+                throw new HttpRequestException($"/fit_ok {response.StatusCode}: {body}");
 
-            await using var stream = await response.Content.ReadAsStreamAsync().ConfigureAwait(false);
-            var payload = await JsonSerializer.DeserializeAsync<FitOkResult>(stream, JsonOptions).ConfigureAwait(false);
+            using var streamResp = new MemoryStream(Encoding.UTF8.GetBytes(body));
+            var payload = await JsonSerializer.DeserializeAsync<FitOkResult>(streamResp, JsonOptions).ConfigureAwait(false);
             if (payload == null)
             {
-                throw new InvalidOperationException("Empty response from fit_ok endpoint.");
+                throw new InvalidOperationException("Empty or invalid JSON from fit_ok endpoint.");
             }
 
             return payload;
@@ -134,13 +148,15 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
 
             using var content = JsonContent.Create(body, options: JsonOptions);
             using var response = await _httpClient.PostAsync("calibrate_ng", content).ConfigureAwait(false);
-            response.EnsureSuccessStatusCode();
+            var raw = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+            if (!response.IsSuccessStatusCode)
+                throw new HttpRequestException($"/calibrate_ng {response.StatusCode}: {raw}");
 
-            await using var stream = await response.Content.ReadAsStreamAsync().ConfigureAwait(false);
+            using var stream = new MemoryStream(Encoding.UTF8.GetBytes(raw));
             var payload = await JsonSerializer.DeserializeAsync<CalibResult>(stream, JsonOptions).ConfigureAwait(false);
             if (payload == null)
             {
-                throw new InvalidOperationException("Empty response from calibrate_ng endpoint.");
+                throw new InvalidOperationException("Empty or invalid JSON from calibrate_ng endpoint.");
             }
 
             return payload;
@@ -161,25 +177,28 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
             using var form = new MultipartFormDataContent();
             form.Add(new StringContent(roleId), "role_id");
             form.Add(new StringContent(roiId), "roi_id");
-            form.Add(new StringContent(mmPerPx.ToString(System.Globalization.CultureInfo.InvariantCulture)), "mm_per_px");
+            form.Add(new StringContent(mmPerPx.ToString(CultureInfo.InvariantCulture)), "mm_per_px");
 
             var content = new StreamContent(File.OpenRead(imagePath));
-            content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("image/png");
+            content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(GuessMediaType(imagePath));
             form.Add(content, "image", Path.GetFileName(imagePath));
 
             if (!string.IsNullOrWhiteSpace(shapeJson))
             {
+                // Importante: enviar como texto plano (sin application/json) para FastAPI Form(str)
                 form.Add(new StringContent(shapeJson, Encoding.UTF8), "shape");
             }
 
             using var response = await _httpClient.PostAsync("infer", form).ConfigureAwait(false);
-            response.EnsureSuccessStatusCode();
+            var raw = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+            if (!response.IsSuccessStatusCode)
+                throw new HttpRequestException($"/infer {response.StatusCode}: {raw}");
 
-            await using var stream = await response.Content.ReadAsStreamAsync().ConfigureAwait(false);
+            using var stream = new MemoryStream(Encoding.UTF8.GetBytes(raw));
             var payload = await JsonSerializer.DeserializeAsync<InferResult>(stream, JsonOptions).ConfigureAwait(false);
             if (payload == null)
             {
-                throw new InvalidOperationException("Empty response from infer endpoint.");
+                throw new InvalidOperationException("Empty or invalid JSON from infer endpoint.");
             }
 
             return payload;
@@ -194,20 +213,16 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
             string? shapeJson = null)
         {
             if (imageStream == null) throw new ArgumentNullException(nameof(imageStream));
-
-            if (imageStream.CanSeek)
-            {
-                imageStream.Seek(0, SeekOrigin.Begin);
-            }
+            if (imageStream.CanSeek) imageStream.Seek(0, SeekOrigin.Begin);
 
             using var form = new MultipartFormDataContent();
             form.Add(new StringContent(roleId), "role_id");
             form.Add(new StringContent(roiId), "roi_id");
-            form.Add(new StringContent(mmPerPx.ToString(System.Globalization.CultureInfo.InvariantCulture)), "mm_per_px");
+            form.Add(new StringContent(mmPerPx.ToString(CultureInfo.InvariantCulture)), "mm_per_px");
 
             var content = new StreamContent(imageStream);
-            content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("image/png");
-            form.Add(content, "image", string.IsNullOrWhiteSpace(fileName) ? "roi.png" : fileName);
+            content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(GuessMediaType(fileName));
+            form.Add(content, "image", string.IsNullOrWhiteSpace(fileName) ? "roi" : fileName);
 
             if (!string.IsNullOrWhiteSpace(shapeJson))
             {
@@ -215,13 +230,15 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
             }
 
             using var response = await _httpClient.PostAsync("infer", form).ConfigureAwait(false);
-            response.EnsureSuccessStatusCode();
+            var raw = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+            if (!response.IsSuccessStatusCode)
+                throw new HttpRequestException($"/infer {response.StatusCode}: {raw}");
 
-            await using var stream = await response.Content.ReadAsStreamAsync().ConfigureAwait(false);
+            using var stream = new MemoryStream(Encoding.UTF8.GetBytes(raw));
             var payload = await JsonSerializer.DeserializeAsync<InferResult>(stream, JsonOptions).ConfigureAwait(false);
             if (payload == null)
             {
-                throw new InvalidOperationException("Empty response from infer endpoint.");
+                throw new InvalidOperationException("Empty or invalid JSON from infer endpoint.");
             }
 
             return payload;
@@ -249,12 +266,10 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
             try
             {
                 using var response = await _httpClient.GetAsync("health").ConfigureAwait(false);
-                if (!response.IsSuccessStatusCode)
-                {
-                    return null;
-                }
+                if (!response.IsSuccessStatusCode) return null;
 
-                await using var stream = await response.Content.ReadAsStreamAsync().ConfigureAwait(false);
+                var raw = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+                using var stream = new MemoryStream(Encoding.UTF8.GetBytes(raw));
                 return await JsonSerializer.DeserializeAsync<HealthInfo>(stream, JsonOptions).ConfigureAwait(false);
             }
             catch
@@ -263,11 +278,26 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
             }
         }
 
+        private static string GuessMediaType(string pathOrName)
+        {
+            string ext = Path.GetExtension(pathOrName)?.ToLowerInvariant() ?? "";
+            return ext switch
+            {
+                ".png" => "image/png",
+                ".jpg" or ".jpeg" => "image/jpeg",
+                ".bmp" => "image/bmp",
+                ".tif" or ".tiff" => "image/tiff",
+                _ => "application/octet-stream"
+            };
+        }
+
         private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
         {
             PropertyNameCaseInsensitive = true
         };
     }
+
+    // ============ DTOs (sin cambios de nombres/campos) ============
 
     public sealed class FitOkResult
     {
