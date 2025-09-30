@@ -149,7 +149,7 @@ namespace BrakeDiscInspector_GUI_ROI
         /// Ejecuta matching dentro de la ROI de búsqueda y devuelve centro en coords globales.
         /// </summary>
         public static (CvPoint2d? center, int score) MatchInSearchROI(CvMat fullImageBgr, RoiModel patternRoi, RoiModel searchRoi,
-            string feature, int thr, int rotRange, double scaleMin, double scaleMax)
+            string feature, int thr, int rotRange, double scaleMin, double scaleMax, CvMat? patternOverride = null)
         {
             // Recortes
             var searchRect = RectFromRoi(fullImageBgr, searchRoi);
@@ -157,25 +157,71 @@ namespace BrakeDiscInspector_GUI_ROI
                 return (null, 0);
 
             using var searchBgr = new CvMat(fullImageBgr, searchRect);
-            using var imgGray = new CvMat();
-            Cv.Cv2.CvtColor(searchBgr, imgGray, Cv.ColorConversionCodes.BGR2GRAY);
+            using var imgGray = ToGray(searchBgr);
 
-            var patRect = RectFromRoi(fullImageBgr, patternRoi);
-            using var patBgr = new CvMat(fullImageBgr, patRect);
-            using var patGray = new CvMat();
-            Cv.Cv2.CvtColor(patBgr, patGray, Cv.ColorConversionCodes.BGR2GRAY);
+            CvMat? patGray = null;
+            CvMat? patRegion = null;
+            try
+            {
+                if (patternOverride != null)
+                {
+                    if (patternOverride.Empty() || patternOverride.Width < 1 || patternOverride.Height < 1)
+                        return (null, 0);
 
-            (CvPoint2d? center, int score) res =
-                string.Equals(feature, "tm_rot", StringComparison.OrdinalIgnoreCase)
-                ? MatchTemplateRot(imgGray, patGray, rotRange, scaleMin, scaleMax)
-                : MatchFeatures(imgGray, patGray, feature, rotRange, scaleMin, scaleMax);
+                    patGray = ToGray(patternOverride);
+                }
+                else
+                {
+                    var patRect = RectFromRoi(fullImageBgr, patternRoi);
+                    if (patRect.Width < 1 || patRect.Height < 1)
+                        return (null, 0);
 
-            if (res.center is null || res.score < thr)
-                return (null, res.score);
+                    patRegion = new CvMat(fullImageBgr, patRect);
+                    patGray = ToGray(patRegion);
+                }
 
-            // Convertir a coords globales sumando el desplazamiento del recorte searchRect
-            var global = new CvPoint2d(res.center.Value.X + searchRect.X, res.center.Value.Y + searchRect.Y);
-            return (global, res.score);
+                if (patGray == null || patGray.Empty())
+                    return (null, 0);
+
+                (CvPoint2d? center, int score) res =
+                    string.Equals(feature, "tm_rot", StringComparison.OrdinalIgnoreCase)
+                    ? MatchTemplateRot(imgGray, patGray, rotRange, scaleMin, scaleMax)
+                    : MatchFeatures(imgGray, patGray, feature, rotRange, scaleMin, scaleMax);
+
+                if (res.center is null || res.score < thr)
+                    return (null, res.score);
+
+                // Convertir a coords globales sumando el desplazamiento del recorte searchRect
+                var global = new CvPoint2d(res.center.Value.X + searchRect.X, res.center.Value.Y + searchRect.Y);
+                return (global, res.score);
+            }
+            finally
+            {
+                patGray?.Dispose();
+                patRegion?.Dispose();
+            }
+        }
+
+        private static CvMat ToGray(CvMat src)
+        {
+            if (src.Channels() == 1)
+                return src.Clone();
+
+            var dst = new CvMat();
+            var channels = src.Channels();
+            if (channels == 3)
+            {
+                Cv.Cv2.CvtColor(src, dst, Cv.ColorConversionCodes.BGR2GRAY);
+            }
+            else if (channels == 4)
+            {
+                Cv.Cv2.CvtColor(src, dst, Cv.ColorConversionCodes.BGRA2GRAY);
+            }
+            else
+            {
+                Cv.Cv2.CvtColor(src, dst, Cv.ColorConversionCodes.BGRA2GRAY);
+            }
+            return dst;
         }
 
         /// <summary>

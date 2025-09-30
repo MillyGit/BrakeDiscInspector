@@ -309,6 +309,7 @@ namespace BrakeDiscInspector_GUI_ROI
                     if (_layout.Master1Pattern != null)
                     {
                         _layout.Master1Pattern = null;
+                        _layout.Master1PatternImagePath = null;
                         return true;
                     }
                     break;
@@ -325,6 +326,7 @@ namespace BrakeDiscInspector_GUI_ROI
                     if (_layout.Master2Pattern != null)
                     {
                         _layout.Master2Pattern = null;
+                        _layout.Master2PatternImagePath = null;
                         return true;
                     }
                     break;
@@ -1652,6 +1654,7 @@ namespace BrakeDiscInspector_GUI_ROI
                         AppendLog($"[save] ROI image : {savedRoi}");
                     }
                     SaveRoiCropPreview(_layout.Master1Pattern, "M1_pattern");
+                    _layout.Master1PatternImagePath = SaveMasterPatternCanonical(_layout.Master1Pattern, "master1_pattern");
 
                     _tmpBuffer = null;
                     _state = MasterState.DrawM1_Search;
@@ -1682,6 +1685,7 @@ namespace BrakeDiscInspector_GUI_ROI
                     _layout.Master2Pattern = _tmpBuffer.Clone();
                     savedRoi = _layout.Master2Pattern;
                     SaveRoiCropPreview(_layout.Master2Pattern, "M2_pattern");
+                    _layout.Master2PatternImagePath = SaveMasterPatternCanonical(_layout.Master2Pattern, "master2_pattern");
 
                     _tmpBuffer = null;
                     _state = MasterState.DrawM2_Search;
@@ -1867,26 +1871,40 @@ namespace BrakeDiscInspector_GUI_ROI
             // 1) Intento local primero (opcional)
             if (ChkUseLocalMatcher.IsChecked == true)
             {
-                AppendLog("[ANALYZE] Using local matcher first...");
-                try
-                {
-                    AppendLog("[FLOW] Usando matcher local");
-                    using var img = Cv.Cv2.ImRead(_currentImagePathWin);
+                    AppendLog("[ANALYZE] Using local matcher first...");
+                    try
+                    {
+                        AppendLog("[FLOW] Usando matcher local");
+                        using var img = Cv.Cv2.ImRead(_currentImagePathWin);
+                        Mat? m1Override = null;
+                        Mat? m2Override = null;
+                        try
+                        {
+                            if (_layout.Master1Pattern != null)
+                                m1Override = TryLoadMasterPatternOverride(_layout.Master1PatternImagePath, "M1");
+                            if (_layout.Master2Pattern != null)
+                                m2Override = TryLoadMasterPatternOverride(_layout.Master2PatternImagePath, "M2");
 
-                    var res1 = LocalMatcher.MatchInSearchROI(img, _layout.Master1Pattern, _layout.Master1Search,
-                        _preset.Feature, _preset.MatchThr, _preset.RotRange, _preset.ScaleMin, _preset.ScaleMax);
-                    if (res1.center.HasValue) { c1 = new WPoint(res1.center.Value.X, res1.center.Value.Y); s1 = res1.score; }
-                    else AppendLog("[LOCAL] M1 no encontrado");
+                            var res1 = LocalMatcher.MatchInSearchROI(img, _layout.Master1Pattern, _layout.Master1Search,
+                                _preset.Feature, _preset.MatchThr, _preset.RotRange, _preset.ScaleMin, _preset.ScaleMax, m1Override);
+                            if (res1.center.HasValue) { c1 = new WPoint(res1.center.Value.X, res1.center.Value.Y); s1 = res1.score; }
+                            else AppendLog("[LOCAL] M1 no encontrado");
 
-                    var res2 = LocalMatcher.MatchInSearchROI(img, _layout.Master2Pattern, _layout.Master2Search,
-                        _preset.Feature, _preset.MatchThr, _preset.RotRange, _preset.ScaleMin, _preset.ScaleMax);
-                    if (res2.center.HasValue) { c2 = new WPoint(res2.center.Value.X, res2.center.Value.Y); s2 = res2.score; }
-                    else AppendLog("[LOCAL] M2 no encontrado");
-                }
-                catch (DllNotFoundException ex)
-                {
-                    AppendLog("[OpenCV] DllNotFound: " + ex.Message);
-                    Snack("OpenCvSharp no está disponible. Desactivo 'matcher local'.");
+                            var res2 = LocalMatcher.MatchInSearchROI(img, _layout.Master2Pattern, _layout.Master2Search,
+                                _preset.Feature, _preset.MatchThr, _preset.RotRange, _preset.ScaleMin, _preset.ScaleMax, m2Override);
+                            if (res2.center.HasValue) { c2 = new WPoint(res2.center.Value.X, res2.center.Value.Y); s2 = res2.score; }
+                            else AppendLog("[LOCAL] M2 no encontrado");
+                        }
+                        finally
+                        {
+                            m1Override?.Dispose();
+                            m2Override?.Dispose();
+                        }
+                    }
+                    catch (DllNotFoundException ex)
+                    {
+                        AppendLog("[OpenCV] DllNotFound: " + ex.Message);
+                        Snack("OpenCvSharp no está disponible. Desactivo 'matcher local'.");
                     ChkUseLocalMatcher.IsChecked = false;
                 }
                 catch (Exception ex)
@@ -2282,14 +2300,30 @@ namespace BrakeDiscInspector_GUI_ROI
             return previewDir;
         }
 
-        private void SaveRoiCropPreview(RoiModel roi, string tag)
+        private string EnsureAndGetMasterPatternDir()
         {
+            var layoutPath = MasterLayoutManager.GetDefaultPath(_preset);
+            var layoutDir = Path.GetDirectoryName(layoutPath);
+            if (string.IsNullOrEmpty(layoutDir))
+                layoutDir = _preset.Home;
+            var masterDir = Path.Combine(layoutDir!, "master_patterns");
+            Directory.CreateDirectory(masterDir);
+            return masterDir;
+        }
+
+        private bool TryBuildRoiCrop(RoiModel roi, string logTag, out Mat? cropWithAlpha,
+            out RoiCropInfo cropInfo, out Rect cropRect)
+        {
+            cropWithAlpha = null;
+            cropInfo = default;
+            cropRect = default;
+
             try
             {
                 if (roi == null)
                 {
-                    AppendLog("[preview] ROI == null");
-                    return;
+                    AppendLog($"[{logTag}] ROI == null");
+                    return false;
                 }
 
                 var roiImage = LooksLikeCanvasCoords(roi) ? CanvasToImage(roi) : roi.Clone();
@@ -2297,36 +2331,29 @@ namespace BrakeDiscInspector_GUI_ROI
                 using var src = GetUiMatOrReadFromDisk();
                 if (src.Empty())
                 {
-                    AppendLog("[preview] Imagen fuente vacía.");
-                    return;
+                    AppendLog($"[{logTag}] Imagen fuente vacía.");
+                    return false;
                 }
 
-                if (!RoiCropUtils.TryBuildRoiCropInfo(roiImage, out var cropInfo))
+                if (!RoiCropUtils.TryBuildRoiCropInfo(roiImage, out cropInfo))
                 {
-                    AppendLog("[preview] ROI no soportado para recorte.");
-                    return;
+                    AppendLog($"[{logTag}] ROI no soportado para recorte.");
+                    return false;
                 }
 
-                if (!RoiCropUtils.TryGetRotatedCrop(src, cropInfo, roiImage.AngleDeg, out var cropMat, out var cropRect))
+                if (!RoiCropUtils.TryGetRotatedCrop(src, cropInfo, roiImage.AngleDeg, out var cropMat, out var cropRectLocal))
                 {
-                    AppendLog("[preview] No se pudo obtener el recorte rotado.");
-                    return;
+                    AppendLog($"[{logTag}] No se pudo obtener el recorte rotado.");
+                    return false;
                 }
 
                 Mat? alphaMask = null;
                 try
                 {
-                    alphaMask = RoiCropUtils.BuildRoiMask(cropInfo, cropRect);
-                    using var cropWithAlpha = RoiCropUtils.ConvertCropToBgra(cropMat, alphaMask);
-
-                    var outDir = EnsureAndGetPreviewDir();
-                    string ts = DateTime.Now.ToString("yyyyMMdd_HHmmssfff");
-                    string fname = $"{tag}_{ts}.png";
-                    var outPath = Path.Combine(outDir, fname);
-
-                    Cv2.ImWrite(outPath, cropWithAlpha);
-                    AppendLog($"[preview] Guardado {fname} ROI=({cropInfo.Left:0.#},{cropInfo.Top:0.#},{cropInfo.Width:0.#},{cropInfo.Height:0.#}) " +
-                              $"crop=({cropRect.X},{cropRect.Y},{cropRect.Width},{cropRect.Height}) ang={roiImage.AngleDeg:0.##}");
+                    alphaMask = RoiCropUtils.BuildRoiMask(cropInfo, cropRectLocal);
+                    cropWithAlpha = RoiCropUtils.ConvertCropToBgra(cropMat, alphaMask);
+                    cropRect = cropRectLocal;
+                    return true;
                 }
                 finally
                 {
@@ -2336,7 +2363,73 @@ namespace BrakeDiscInspector_GUI_ROI
             }
             catch (Exception ex)
             {
-                AppendLog("[preview] error: " + ex.Message);
+                AppendLog($"[{logTag}] error: " + ex.Message);
+                return false;
+            }
+        }
+
+        private void SaveRoiCropPreview(RoiModel roi, string tag)
+        {
+            if (!TryBuildRoiCrop(roi, "preview", out var cropWithAlpha, out var cropInfo, out var cropRect))
+                return;
+
+            using (cropWithAlpha)
+            {
+                var outDir = EnsureAndGetPreviewDir();
+                string ts = DateTime.Now.ToString("yyyyMMdd_HHmmssfff");
+                string fname = $"{tag}_{ts}.png";
+                var outPath = Path.Combine(outDir, fname);
+
+                Cv2.ImWrite(outPath, cropWithAlpha);
+                AppendLog($"[preview] Guardado {fname} ROI=({cropInfo.Left:0.#},{cropInfo.Top:0.#},{cropInfo.Width:0.#},{cropInfo.Height:0.#}) " +
+                          $"crop=({cropRect.X},{cropRect.Y},{cropRect.Width},{cropRect.Height}) ang={roi.AngleDeg:0.##}");
+            }
+        }
+
+        private string? SaveMasterPatternCanonical(RoiModel roi, string fileNameBase)
+        {
+            if (!TryBuildRoiCrop(roi, "master", out var cropWithAlpha, out var cropInfo, out var cropRect))
+                return null;
+
+            using (cropWithAlpha)
+            {
+                var dir = EnsureAndGetMasterPatternDir();
+                var fileName = fileNameBase + ".png";
+                var outPath = Path.Combine(dir, fileName);
+                Cv2.ImWrite(outPath, cropWithAlpha);
+                AppendLog($"[master] Guardado {fileName} ROI=({cropInfo.Left:0.#},{cropInfo.Top:0.#},{cropInfo.Width:0.#},{cropInfo.Height:0.#}) " +
+                          $"crop=({cropRect.X},{cropRect.Y},{cropRect.Width},{cropRect.Height}) ang={roi.AngleDeg:0.##}");
+                return outPath;
+            }
+        }
+
+        private Mat? TryLoadMasterPatternOverride(string? path, string tag)
+        {
+            if (string.IsNullOrWhiteSpace(path))
+                return null;
+
+            try
+            {
+                if (!File.Exists(path))
+                {
+                    AppendLog($"[master] PNG de patrón {tag} no encontrado: {path}");
+                    return null;
+                }
+
+                var mat = Cv2.ImRead(path, ImreadModes.Unchanged);
+                if (mat.Empty())
+                {
+                    mat.Dispose();
+                    AppendLog($"[master] PNG de patrón {tag} vacío: {path}");
+                    return null;
+                }
+
+                return mat;
+            }
+            catch (Exception ex)
+            {
+                AppendLog($"[master] Error cargando patrón {tag}: {ex.Message}");
+                return null;
             }
         }
 
