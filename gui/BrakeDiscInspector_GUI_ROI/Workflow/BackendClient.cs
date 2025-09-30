@@ -80,7 +80,7 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
             form.Add(new StringContent(roiId), "roi_id");
             form.Add(new StringContent(mmPerPx.ToString(System.Globalization.CultureInfo.InvariantCulture)), "mm_per_px");
 
-            int index = 0;
+            bool hasImage = false;
             foreach (var path in okImagePaths)
             {
                 if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
@@ -90,11 +90,11 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
 
                 var content = new StreamContent(File.OpenRead(path));
                 content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("image/png");
-                form.Add(content, $"images[{index}]", Path.GetFileName(path));
-                index++;
+                form.Add(content, "images", Path.GetFileName(path));
+                hasImage = true;
             }
 
-            if (index == 0)
+            if (!hasImage)
             {
                 throw new InvalidOperationException("No OK images were provided for training.");
             }
@@ -169,7 +169,7 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
 
             if (!string.IsNullOrWhiteSpace(shapeJson))
             {
-                form.Add(new StringContent(shapeJson, Encoding.UTF8, "application/json"), "shape");
+                form.Add(new StringContent(shapeJson, Encoding.UTF8), "shape");
             }
 
             using var response = await _httpClient.PostAsync("infer", form).ConfigureAwait(false);
@@ -183,6 +183,65 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
             }
 
             return payload;
+        }
+
+        public async Task<InferResult> InferAsync(
+            string roleId,
+            string roiId,
+            double mmPerPx,
+            Stream imageStream,
+            string fileName,
+            string? shapeJson = null)
+        {
+            if (imageStream == null) throw new ArgumentNullException(nameof(imageStream));
+
+            if (imageStream.CanSeek)
+            {
+                imageStream.Seek(0, SeekOrigin.Begin);
+            }
+
+            using var form = new MultipartFormDataContent();
+            form.Add(new StringContent(roleId), "role_id");
+            form.Add(new StringContent(roiId), "roi_id");
+            form.Add(new StringContent(mmPerPx.ToString(System.Globalization.CultureInfo.InvariantCulture)), "mm_per_px");
+
+            var content = new StreamContent(imageStream);
+            content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("image/png");
+            form.Add(content, "image", string.IsNullOrWhiteSpace(fileName) ? "roi.png" : fileName);
+
+            if (!string.IsNullOrWhiteSpace(shapeJson))
+            {
+                form.Add(new StringContent(shapeJson, Encoding.UTF8), "shape");
+            }
+
+            using var response = await _httpClient.PostAsync("infer", form).ConfigureAwait(false);
+            response.EnsureSuccessStatusCode();
+
+            await using var stream = await response.Content.ReadAsStreamAsync().ConfigureAwait(false);
+            var payload = await JsonSerializer.DeserializeAsync<InferResult>(stream, JsonOptions).ConfigureAwait(false);
+            if (payload == null)
+            {
+                throw new InvalidOperationException("Empty response from infer endpoint.");
+            }
+
+            return payload;
+        }
+
+        public async Task<InferResult> InferAsync(
+            string roleId,
+            string roiId,
+            double mmPerPx,
+            byte[] imageBytes,
+            string fileName,
+            string? shapeJson = null)
+        {
+            if (imageBytes == null || imageBytes.Length == 0)
+            {
+                throw new ArgumentException("Image bytes are required", nameof(imageBytes));
+            }
+
+            await using var ms = new MemoryStream(imageBytes, writable: false);
+            return await InferAsync(roleId, roiId, mmPerPx, ms, fileName, shapeJson).ConfigureAwait(false);
         }
 
         public async Task<HealthInfo?> GetHealthAsync()

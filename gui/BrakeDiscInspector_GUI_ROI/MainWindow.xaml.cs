@@ -79,8 +79,6 @@ namespace BrakeDiscInspector_GUI_ROI
         private const double DragLogMovementThreshold = 5.0; // px (canvas)
         private const double DragLogAngleThreshold = 1.0;    // grados
 
-        private Action<string>? _uiLog;
-
         private const double AnnulusLogThreshold = 0.5;
         private double _lastLoggedAnnulusOuterRadius = double.NaN;
         private double _lastLoggedAnnulusInnerProposed = double.NaN;
@@ -97,8 +95,10 @@ namespace BrakeDiscInspector_GUI_ROI
 
 
         // === File Logger ===
-        private static readonly object _fileLogLock = new object();
-        private static string _fileLogPath = string.Empty;
+        private readonly object _fileLogLock = new object();
+        private readonly string _fileLogPath = System.IO.Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
+            "brakedisc_localmatcher.log");
         // Si tu overlay se llama distinto, ajusta esta propiedad (o referencia directa en los métodos).
         // Por ejemplo, si en XAML tienes <Canvas x:Name="Overlay"> usa ese nombre aquí.
         private Canvas OverlayCanvas => CanvasROI;
@@ -137,13 +137,6 @@ namespace BrakeDiscInspector_GUI_ROI
         {
             InitializeComponent();
             _preset = PresetManager.LoadOrDefault(_preset);
-            _uiLog = s => Dispatcher.BeginInvoke(new Action(() => AppendLog(s)));
-
-            // start file logger early
-            InitFileLogger();
-            AppendLog($"[LOG] File initialized at '{_fileLogPath}'");
-
-
 
             InitUI();
             InitTrainPollingTimer();
@@ -1886,12 +1879,14 @@ namespace BrakeDiscInspector_GUI_ROI
                                 m2Override = TryLoadMasterPatternOverride(_layout.Master2PatternImagePath, "M2");
 
                             var res1 = LocalMatcher.MatchInSearchROI(img, _layout.Master1Pattern, _layout.Master1Search,
-                                _preset.Feature, _preset.MatchThr, _preset.RotRange, _preset.ScaleMin, _preset.ScaleMax, m1Override);
+                                _preset.Feature, _preset.MatchThr, _preset.RotRange, _preset.ScaleMin, _preset.ScaleMax, m1Override,
+                                LogToFileAndUI);
                             if (res1.center.HasValue) { c1 = new WPoint(res1.center.Value.X, res1.center.Value.Y); s1 = res1.score; }
                             else AppendLog("[LOCAL] M1 no encontrado");
 
                             var res2 = LocalMatcher.MatchInSearchROI(img, _layout.Master2Pattern, _layout.Master2Search,
-                                _preset.Feature, _preset.MatchThr, _preset.RotRange, _preset.ScaleMin, _preset.ScaleMax, m2Override);
+                                _preset.Feature, _preset.MatchThr, _preset.RotRange, _preset.ScaleMin, _preset.ScaleMax, m2Override,
+                                LogToFileAndUI);
                             if (res2.center.HasValue) { c2 = new WPoint(res2.center.Value.X, res2.center.Value.Y); s2 = res2.score; }
                             else AppendLog("[LOCAL] M2 no encontrado");
                         }
@@ -2018,92 +2013,66 @@ namespace BrakeDiscInspector_GUI_ROI
 
 
 
-        // Ajuste de AppendLog como método, no como delegado inválido
-        // Siempre escribe en el hilo de UI
         // Log seguro desde cualquier hilo
         private void AppendLog(string line)
         {
-            AppendLogBulk(new[] { line });
-            try
-            {
-                // Mirror the exact text shown in UI into the file
-                WriteFileLog($"[{DateTime.Now:HH:mm:ss.fff}] " + line);
-            }
-            catch { /* noop */ }
-
+            LogToFileAndUI(line);
         }
 
         private void AppendLogBulk(IEnumerable<string> lines)
         {
-            if (TrainLogText == null) return;
+            foreach (var entry in lines)
+            {
+                LogToFileAndUI(entry);
+            }
+        }
+
+        private void LogToFileAndUI(string message)
+        {
+            var stamped = $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}] {message}";
+
+            try
+            {
+                lock (_fileLogLock)
+                {
+                    var directory = System.IO.Path.GetDirectoryName(_fileLogPath);
+                    if (!string.IsNullOrEmpty(directory) && !Directory.Exists(directory))
+                    {
+                        Directory.CreateDirectory(directory);
+                    }
+
+                    System.IO.File.AppendAllText(_fileLogPath, stamped + Environment.NewLine, Encoding.UTF8);
+                }
+            }
+            catch
+            {
+                // ignore file logging errors
+            }
+
+            if (TrainLogText == null)
+            {
+                return;
+            }
 
             if (!Dispatcher.CheckAccess())
             {
-                var copy = lines.ToList();
-                Dispatcher.Invoke(() => AppendLogBulk(copy));
+                var copy = stamped;
+                Dispatcher.BeginInvoke(new Action(() => AppendLogLine(copy)));
                 return;
             }
 
-            var list = lines as IList<string> ?? lines.ToList();
-            if (list.Count == 0)
-                return;
+            AppendLogLine(stamped);
+        }
 
-            var sb = new StringBuilder();
-            foreach (var entry in list)
+        private void AppendLogLine(string line)
+        {
+            if (TrainLogText == null)
             {
-                var stamp = DateTime.Now.ToString("HH:mm:ss.fff");
-                sb.Append('[').Append(stamp).Append("] ").Append(entry).AppendLine();
+                return;
             }
 
-            TrainLogText.AppendText(sb.ToString());
+            TrainLogText.AppendText(line + Environment.NewLine);
             TrainLogText.ScrollToEnd();
-        }
-
-
-
-
-        // Initialize file logger; creates logs\ui_*.log under the app base directory
-        private void InitFileLogger()
-        {
-            try
-            {
-                var baseDir = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "logs");
-                System.IO.Directory.CreateDirectory(baseDir);
-                _fileLogPath = System.IO.Path.Combine(baseDir, $"ui_{DateTime.Now:yyyyMMdd_HHmmss}.log");
-                var header = $"[{DateTime.Now:HH:mm:ss.fff}] === UI LOG START ==={Environment.NewLine}";
-                lock (_fileLogLock)
-                {
-                    System.IO.File.AppendAllText(_fileLogPath, header);
-                }
-                try { System.Diagnostics.Debug.WriteLine("[LOG] File: " + _fileLogPath); } catch { /* noop */ }
-            }
-            catch { /* ignore */ }
-        }
-
-
-        // Write a single line to the file log (thread-safe). Adds newline automatically.
-        private void WriteFileLog(string line)
-        {
-            try
-            {
-                if (string.IsNullOrEmpty(_fileLogPath)) return;
-                lock (_fileLogLock)
-                {
-                    System.IO.File.AppendAllText(_fileLogPath, line + System.Environment.NewLine);
-                }
-            }
-            catch { /* noop */ }
-        }
-
-        private void NetLog(string line)
-        {
-            try { AppendLog("[NET] " + line); } catch { /* noop */ }
-            try
-            {
-                WriteFileLog("[NET] " + line);
-            }
-            catch { /* noop */ }
-
         }
 
         // --------- AppendLog (para evitar CS0119 en invocaciones) ---------

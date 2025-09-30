@@ -2,12 +2,12 @@ using System;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
-using System.Net.Http;
-using System.Net.Http.Headers;
+using System.Linq;
 using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
 using OpenCvSharp;
+using BrakeDiscInspector_GUI_ROI.Workflow;
 
 namespace BrakeDiscInspector_GUI_ROI
 {
@@ -81,13 +81,14 @@ namespace BrakeDiscInspector_GUI_ROI
         public int Height { get; }
     }
 
+    [Obsolete("Use Workflow.BackendClient en su lugar.")]
     public static class BackendAPI
     {
         public static string BaseUrl { get; private set; } = "http://127.0.0.1:8000";
         public const string InferEndpoint = "infer";
-        public const string TrainStatusEndpoint = "train_status";
+        public const string TrainStatusEndpoint = "health";
 
-        private static readonly HttpClient http = new HttpClient { Timeout = TimeSpan.FromSeconds(100) };
+        private static readonly BackendClient s_client = new BackendClient();
         private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
         {
             PropertyNameCaseInsensitive = true
@@ -106,7 +107,7 @@ namespace BrakeDiscInspector_GUI_ROI
 
                 if (!string.IsNullOrWhiteSpace(envBaseUrl))
                 {
-                    BaseUrl = NormalizeBaseUrl(envBaseUrl);
+                    ApplyBaseUrl(NormalizeBaseUrl(envBaseUrl));
                 }
                 else
                 {
@@ -119,7 +120,7 @@ namespace BrakeDiscInspector_GUI_ROI
                     {
                         host = string.IsNullOrWhiteSpace(host) ? "127.0.0.1" : host.Trim();
                         port = string.IsNullOrWhiteSpace(port) ? "8000" : port.Trim();
-                        BaseUrl = NormalizeBaseUrl($"{host}:{port}");
+                        ApplyBaseUrl(NormalizeBaseUrl($"{host}:{port}"));
                     }
                 }
 
@@ -134,7 +135,7 @@ namespace BrakeDiscInspector_GUI_ROI
                         var fileUrl = baseUrlEl.GetString();
                         if (!string.IsNullOrWhiteSpace(fileUrl))
                         {
-                            BaseUrl = NormalizeBaseUrl(fileUrl);
+                            ApplyBaseUrl(NormalizeBaseUrl(fileUrl));
                         }
                     }
 
@@ -160,7 +161,25 @@ namespace BrakeDiscInspector_GUI_ROI
                 /* fallback */
             }
 
-            http.BaseAddress = new Uri(BaseUrl.EndsWith("/") ? BaseUrl : BaseUrl + "/");
+            ApplyBaseUrl(BaseUrl);
+        }
+
+        private static void ApplyBaseUrl(string url)
+        {
+            if (string.IsNullOrWhiteSpace(url))
+            {
+                return;
+            }
+
+            BaseUrl = url.TrimEnd('/');
+            try
+            {
+                s_client.BaseUrl = BaseUrl;
+            }
+            catch
+            {
+                // ignore invalid uri errors; BaseUrl still exposed for legacy usage
+            }
         }
 
         private static string NormalizeBaseUrl(string value)
@@ -247,39 +266,51 @@ namespace BrakeDiscInspector_GUI_ROI
         {
             if (request == null) throw new ArgumentNullException(nameof(request));
 
-            using var form = new MultipartFormDataContent();
-            form.Add(new StringContent(request.RoleId), "role_id");
-            form.Add(new StringContent(request.RoiId), "roi_id");
-            form.Add(new StringContent(request.MmPerPx.ToString(CultureInfo.InvariantCulture)), "mm_per_px");
-
-            var imgContent = new ByteArrayContent(request.ImageBytes);
-            imgContent.Headers.ContentType = MediaTypeHeaderValue.Parse("image/png");
-            form.Add(imgContent, "image", string.IsNullOrWhiteSpace(request.FileName) ? "roi.png" : request.FileName);
-
-            if (!string.IsNullOrWhiteSpace(request.ShapeJson))
-            {
-                form.Add(new StringContent(request.ShapeJson, Encoding.UTF8, "application/json"), "shape");
-            }
-
             var sw = Stopwatch.StartNew();
-            using var response = await http.PostAsync(InferEndpoint, form).ConfigureAwait(false);
-            var payload = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
-
-            if (!response.IsSuccessStatusCode)
+            try
             {
-                log?.Invoke($"[infer] HTTP {(int)response.StatusCode} {response.ReasonPhrase}: {payload}");
-                response.EnsureSuccessStatusCode();
-            }
+                var backendResult = await s_client
+                    .InferAsync(
+                        request.RoleId,
+                        request.RoiId,
+                        request.MmPerPx,
+                        request.ImageBytes,
+                        string.IsNullOrWhiteSpace(request.FileName) ? "roi.png" : request.FileName,
+                        request.ShapeJson)
+                    .ConfigureAwait(false);
 
-            var result = JsonSerializer.Deserialize<InferResult>(payload, JsonOptions);
-            if (result == null)
+                sw.Stop();
+
+                var result = new InferResult
+                {
+                    score = backendResult.score,
+                    threshold = backendResult.threshold,
+                    heatmap_png_base64 = backendResult.heatmap_png_base64,
+                    regions = backendResult.regions?.Select(r => new InferRegion
+                    {
+                        x = r.x,
+                        y = r.y,
+                        w = r.w,
+                        h = r.h,
+                        area_px = r.area_px,
+                        area_mm2 = r.area_mm2,
+                        bbox = null
+                    }).ToArray(),
+                    token_shape = null,
+                    @params = null,
+                    role_id = request.RoleId,
+                    roi_id = request.RoiId
+                };
+
+                log?.Invoke($"[infer] role={request.RoleId} roi={request.RoiId} score={result.score:0.###} thr={(result.threshold ?? 0):0.###} regions={(result.regions?.Length ?? 0)} dt={sw.ElapsedMilliseconds}ms");
+                return result;
+            }
+            catch (Exception ex)
             {
-                throw new InvalidOperationException("Empty response from /infer");
+                sw.Stop();
+                log?.Invoke($"[infer] EX: {ex.Message}");
+                throw;
             }
-
-            sw.Stop();
-            log?.Invoke($"[infer] role={request.RoleId} roi={request.RoiId} score={result.score:0.###} thr={(result.threshold ?? 0):0.###} regions={(result.regions?.Length ?? 0)} dt={sw.ElapsedMilliseconds}ms");
-            return result;
         }
 
         public static async Task<(bool ok, InferResult? result, string? error)> InferAsync(
@@ -494,9 +525,13 @@ namespace BrakeDiscInspector_GUI_ROI
 
         public static async Task<string> TrainStatusAsync()
         {
-            using var resp = await http.GetAsync(TrainStatusEndpoint).ConfigureAwait(false);
-            resp.EnsureSuccessStatusCode();
-            return await resp.Content.ReadAsStringAsync().ConfigureAwait(false);
+            var info = await s_client.GetHealthAsync().ConfigureAwait(false);
+            if (info == null)
+            {
+                return "{\"status\":\"offline\"}";
+            }
+
+            return JsonSerializer.Serialize(info, JsonOptions);
         }
     }
 }
