@@ -1,4 +1,3 @@
-
 using System;
 using System.Globalization;
 using System.Linq;
@@ -28,6 +27,7 @@ namespace BrakeDiscInspector_GUI_ROI
 
         private static Mat ToGray(Mat src)
         {
+            if (src is null || src.Empty()) return new Mat();
             if (src.Channels() == 1) return src.Clone();
             var dst = new Mat();
             if (src.Channels() == 3) Cv2.CvtColor(src, dst, ColorConversionCodes.BGR2GRAY);
@@ -56,6 +56,9 @@ namespace BrakeDiscInspector_GUI_ROI
         private static (Point2d? center, int score, string? failure, double bestCorr) MatchTemplateRot(
             Mat imageGray, Mat patternGray, int rotRangeDeg, double scaleMin, double scaleMax, Action<string>? log)
         {
+            if (imageGray.Empty() || patternGray.Empty())
+                return (null, 0, "imgs vacías", 0);
+
             double best = -1.0;
             Point2d? bestPoint = null;
 
@@ -95,8 +98,18 @@ namespace BrakeDiscInspector_GUI_ROI
         }
 
         private static (Point2d? center, int score, string? failure, int imgKps, int patKps, int goodCount, int inliers, double avgDist) MatchFeatures(
-            Mat imageGray, Mat patternGray, Action<string>? log)
+            Mat imageGrayIn, Mat patternGrayIn, Action<string>? log)
         {
+            // Trabajar sobre clones: NUNCA liberar ni reasignar Mats del caller
+            using var imageGray = imageGrayIn.Clone();
+            using var patternGray = patternGrayIn.Clone();
+
+            if (imageGray.Empty() || patternGray.Empty())
+            {
+                Log(log, "[FEATURE] entradas vacías");
+                return (null, 0, "imgs vacías", 0, 0, 0, 0, 256);
+            }
+
             using var orb = ORB.Create(
                 2000,   // nFeatures
                 1.2f,   // scaleFactor
@@ -117,17 +130,15 @@ namespace BrakeDiscInspector_GUI_ROI
 
             if (imgKp.Length < 12 || imgSmall)
             {
-                var boosted = ClaheBoost(imageGray);
-                imageGray.Dispose();
-                imageGray = boosted;
+                using var boosted = ClaheBoost(imageGray);
+                boosted.CopyTo(imageGray); // ✅ sin Dispose del caller
                 imgKp = orb.Detect(imageGray);
                 Log(log, $"[FEATURE] CLAHE imagen -> kps={imgKp.Length}");
             }
             if (patKp.Length < 12 || patSmall)
             {
-                var boosted = ClaheBoost(patternGray);
-                patternGray.Dispose();
-                patternGray = boosted;
+                using var boosted = ClaheBoost(patternGray);
+                boosted.CopyTo(patternGray); // ✅ sin Dispose del caller
                 patKp = orb.Detect(patternGray);
                 Log(log, $"[FEATURE] CLAHE patrón -> kps={patKp.Length}");
             }
@@ -153,8 +164,7 @@ namespace BrakeDiscInspector_GUI_ROI
             {
                 var cand = knnMatches.Where(m => m.Length == 2 && m[0].Distance < r * m[1].Distance).Select(m => m[0]).ToArray();
                 if (cand.Length >= 8) { good = cand; usedRatio = r; break; }
-                good = cand;
-                usedRatio = r;
+                good = cand; usedRatio = r;
             }
 
             Log(log, $"[FEATURE] kps(pattern,img)=({patKp.Length},{imgKp.Length}) good={good.Length} ratio={usedRatio:F2}");
@@ -217,11 +227,11 @@ namespace BrakeDiscInspector_GUI_ROI
             if (fullImageBgr == null) throw new ArgumentNullException(nameof(fullImageBgr));
             if (searchRoi == null) throw new ArgumentNullException(nameof(searchRoi));
 
-            // --- DBG: calcular rectángulos reales desde el full image ---
+            // --- DBG: rects reales ---
             var searchRect = RectFromRoi(fullImageBgr, searchRoi);
             var patternRect = patternOverride == null ? RectFromRoi(fullImageBgr, patternRoi) : new Rect(0,0,patternOverride.Width, patternOverride.Height);
 
-            // --- DBG: "misma imagen" => comprobar si patternRect cae dentro de searchRect ---
+            // --- DBG: “misma imagen” => ¿pattern dentro de search? ---
             bool contained = patternOverride == null &&
                              patternRect.X >= searchRect.X &&
                              patternRect.Y >= searchRect.Y &&
@@ -230,33 +240,29 @@ namespace BrakeDiscInspector_GUI_ROI
 
             Log(log, $"[DBG] searchRect={searchRect.X},{searchRect.Y},{searchRect.Width},{searchRect.Height} patternRect={patternRect.X},{patternRect.Y},{patternRect.Width},{patternRect.Height} contained={contained}");
 
-            // Grises base SIN CLAHE para diagnósticos
             using var fullGrayBase = ToGray(fullImageBgr);
             using var searchGrayBase = new Mat(fullGrayBase, searchRect);
-            Mat? expectedPatch = null;
-            Rect? expectedLocalRect = null;
             if (contained)
             {
-                expectedLocalRect = new Rect(patternRect.X - searchRect.X, patternRect.Y - searchRect.Y, patternRect.Width, patternRect.Height);
-                expectedPatch = new Mat(searchGrayBase, expectedLocalRect.Value);
+                var expectedLocalRect = new Rect(patternRect.X - searchRect.X, patternRect.Y - searchRect.Y, patternRect.Width, patternRect.Height);
+                using var expectedPatch = new Mat(searchGrayBase, expectedLocalRect);
                 using var patFromFull = new Mat(fullGrayBase, patternRect);
-                // Métricas de igualdad/correlación en la posición "ground-truth"
+
                 using var diff = new Mat();
                 Cv2.Absdiff(patFromFull, expectedPatch, diff);
                 Scalar sum = Cv2.Sum(diff);
                 double mad = (sum.Val0 + sum.Val1 + sum.Val2 + sum.Val3) / (patternRect.Width * patternRect.Height);
-                Log(log, $"[DBG] GT offset=({expectedLocalRect.Value.X},{expectedLocalRect.Value.Y}) MAD={mad:F4}");
+                Log(log, $"[DBG] GT offset=({expectedLocalRect.X},{expectedLocalRect.Y}) MAD={mad:F4}");
 
                 using var resp = new Mat();
                 Cv2.MatchTemplate(searchGrayBase, patFromFull, resp, TemplateMatchModes.CCoeffNormed);
                 Cv2.MinMaxLoc(resp, out _, out double maxVal, out _, out Point maxLoc);
-                Log(log, $"[DBG] TM@0deg scale=1: max={maxVal:F4} loc=({maxLoc.X},{maxLoc.Y}) vs expected=({expectedLocalRect.Value.X},{expectedLocalRect.Value.Y})");
+                Log(log, $"[DBG] TM@0deg scale=1: max={maxVal:F4} loc=({maxLoc.X},{maxLoc.Y}) vs expected=({expectedLocalRect.X},{expectedLocalRect.Y})");
             }
 
             if (searchRect.Width < 5 || searchRect.Height < 5)
             {
                 Log(log, "[INPUT] search ROI demasiado pequeño");
-                expectedPatch?.Dispose();
                 return (null, 0);
             }
 
@@ -282,7 +288,7 @@ namespace BrakeDiscInspector_GUI_ROI
                     var pr = patternRect;
                     if (pr.Width < 3 || pr.Height < 3)
                     {
-                        Log(log, "[INPUT] patrón demasiado pequeño");
+                        Log(log, "[INPUT] patrón demasiado pequeño]");
                         return (null, 0);
                     }
                     patternRegion = new Mat(fullImageBgr, pr);
@@ -332,7 +338,6 @@ namespace BrakeDiscInspector_GUI_ROI
             }
             finally
             {
-                expectedPatch?.Dispose();
                 patternGray?.Dispose();
                 patternRegion?.Dispose();
             }
@@ -355,12 +360,12 @@ namespace BrakeDiscInspector_GUI_ROI
             int w = (int)Math.Ceiling(right - x);
             int h = (int)Math.Ceiling(bottom - y);
 
-            int maxWidth = Math.Max(img.Width - 1, 0);
+            int maxWidth  = Math.Max(img.Width  - 1, 0);
             int maxHeight = Math.Max(img.Height - 1, 0);
 
             x = Math.Clamp(x, 0, maxWidth);
             y = Math.Clamp(y, 0, maxHeight);
-            w = Math.Clamp(w, 1, Math.Max(img.Width - x, 1));
+            w = Math.Clamp(w, 1, Math.Max(img.Width  - x, 1));
             h = Math.Clamp(h, 1, Math.Max(img.Height - y, 1));
 
             return new Rect(x, y, w, h);
