@@ -1,5 +1,6 @@
 
 using System;
+using System.Globalization;
 using System.Linq;
 using OpenCvSharp;
 
@@ -35,9 +36,6 @@ namespace BrakeDiscInspector_GUI_ROI
             return dst;
         }
 
-        /// <summary>
-        /// Aumenta contraste con CLAHE si el ROI es pequeño o hay pocos keypoints. Devuelve un NUEVO Mat.
-        /// </summary>
         private static Mat ClaheBoost(Mat gray)
         {
             var dst = new Mat();
@@ -55,7 +53,7 @@ namespace BrakeDiscInspector_GUI_ROI
             return dst;
         }
 
-        private static (Point2d? center, int score, string? failure) MatchTemplateRot(
+        private static (Point2d? center, int score, string? failure, double bestCorr) MatchTemplateRot(
             Mat imageGray, Mat patternGray, int rotRangeDeg, double scaleMin, double scaleMax, Action<string>? log)
         {
             double best = -1.0;
@@ -93,13 +91,12 @@ namespace BrakeDiscInspector_GUI_ROI
             }
 
             string? failure = bestPoint == null ? "sin correlación" : $"maxCorr={Math.Max(best, 0):F4}";
-            return (bestPoint, ToScore(best), failure);
+            return (bestPoint, ToScore(best), failure, best);
         }
 
-        private static (Point2d? center, int score, string? failure) MatchFeatures(
+        private static (Point2d? center, int score, string? failure, int imgKps, int patKps, int goodCount, int inliers, double avgDist) MatchFeatures(
             Mat imageGray, Mat patternGray, Action<string>? log)
         {
-            // Evitar named args para compatibilidad con más versiones
             using var orb = ORB.Create(
                 2000,   // nFeatures
                 1.2f,   // scaleFactor
@@ -107,7 +104,7 @@ namespace BrakeDiscInspector_GUI_ROI
                 15,     // edgeThreshold
                 0,      // firstLevel
                 2,      // WTA_K
-                ORBScoreType.Harris, // o HARRIS_SCORE según versión
+                ORBScoreType.Harris,
                 31,     // patchSize
                 10      // fastThreshold
             );
@@ -115,11 +112,10 @@ namespace BrakeDiscInspector_GUI_ROI
             var imgKp = orb.Detect(imageGray);
             var patKp = orb.Detect(patternGray);
 
-            // Si hay pocos kps o el patrón es pequeño, aplicar CLAHE y REDetect (sin usar 'using' para no disponer el Mat)
             bool imgSmall = imageGray.Width * imageGray.Height <= 64 * 64;
             bool patSmall = patternGray.Width * patternGray.Height <= 64 * 64;
 
-            if (imgKp.Length < 10 || imgSmall)
+            if (imgKp.Length < 12 || imgSmall)
             {
                 var boosted = ClaheBoost(imageGray);
                 imageGray.Dispose();
@@ -127,7 +123,7 @@ namespace BrakeDiscInspector_GUI_ROI
                 imgKp = orb.Detect(imageGray);
                 Log(log, $"[FEATURE] CLAHE imagen -> kps={imgKp.Length}");
             }
-            if (patKp.Length < 10 || patSmall)
+            if (patKp.Length < 12 || patSmall)
             {
                 var boosted = ClaheBoost(patternGray);
                 patternGray.Dispose();
@@ -144,25 +140,28 @@ namespace BrakeDiscInspector_GUI_ROI
             if (imgDesc.Empty() || patDesc.Empty() || imgKp.Length < 8 || patKp.Length < 8)
             {
                 Log(log, "[FEATURE] sin descriptores suficientes");
-                return (null, 0, "sin descriptores suficientes");
+                return (null, 0, "sin descriptores suficientes", imgKp.Length, patKp.Length, 0, 0, 256);
             }
 
             using var matcher = new BFMatcher(NormTypes.Hamming, crossCheck: false);
             var knnMatches = matcher.KnnMatch(patDesc, imgDesc, k: 2);
 
-            // Ratio de Lowe adaptativo
-            double[] ratios = new[] { 0.75, 0.80, 0.85, 0.90 };
+            double[] ratios = new[] { 0.75, 0.80, 0.85, 0.90, 0.95 };
             DMatch[] good = Array.Empty<DMatch>();
+            double usedRatio = ratios[0];
             foreach (var r in ratios)
             {
-                good = knnMatches.Where(m => m.Length == 2 && m[0].Distance < r * m[1].Distance)
-                                 .Select(m => m[0]).ToArray();
-                if (good.Length >= 8) { Log(log, $"[FEATURE] ratio={r:F2} good={good.Length}"); break; }
+                var cand = knnMatches.Where(m => m.Length == 2 && m[0].Distance < r * m[1].Distance).Select(m => m[0]).ToArray();
+                if (cand.Length >= 8) { good = cand; usedRatio = r; break; }
+                good = cand;
+                usedRatio = r;
             }
+
+            Log(log, $"[FEATURE] kps(pattern,img)=({patKp.Length},{imgKp.Length}) good={good.Length} ratio={usedRatio:F2}");
+
             if (good.Length < 8)
             {
-                Log(log, "[FEATURE] pocos good matches");
-                return (null, 0, "pocos good matches");
+                return (null, 0, "pocos good matches", imgKp.Length, patKp.Length, good.Length, 0, 256);
             }
 
             var srcPts = good.Select(m => patKp[m.QueryIdx].Pt).ToArray();
@@ -175,12 +174,12 @@ namespace BrakeDiscInspector_GUI_ROI
             if (H.Empty())
             {
                 Log(log, "[FEATURE] homografía vacía");
-                return (null, 0, "homografía vacía");
+                return (null, 0, "homografía vacía", imgKp.Length, patKp.Length, good.Length, 0, 256);
             }
 
             int inliers = Cv2.CountNonZero(mask);
-            int scoreInliers = ToScore((double)inliers / Math.Max(good.Length, 1));
             double avgDist = good.Average(m => m.Distance);
+            int scoreInliers = ToScore((double)inliers / Math.Max(good.Length, 1));
             int scoreDistance = ToScore(1.0 - Math.Clamp(avgDist / 256.0, 0.0, 1.0));
             int score = (int)Math.Round(0.7 * scoreInliers + 0.3 * scoreDistance);
 
@@ -200,7 +199,7 @@ namespace BrakeDiscInspector_GUI_ROI
             double cy = transformed.Average(p => p.Y);
 
             Log(log, $"[FEATURE] inliers={inliers}/{good.Length} avgDist={avgDist:F1} score={score}");
-            return (new Point2d(cx, cy), score, null);
+            return (new Point2d(cx, cy), score, null, imgKp.Length, patKp.Length, good.Length, inliers, avgDist);
         }
 
         public static (Point2d? center, int score) MatchInSearchROI(
@@ -218,10 +217,46 @@ namespace BrakeDiscInspector_GUI_ROI
             if (fullImageBgr == null) throw new ArgumentNullException(nameof(fullImageBgr));
             if (searchRoi == null) throw new ArgumentNullException(nameof(searchRoi));
 
+            // --- DBG: calcular rectángulos reales desde el full image ---
             var searchRect = RectFromRoi(fullImageBgr, searchRoi);
+            var patternRect = patternOverride == null ? RectFromRoi(fullImageBgr, patternRoi) : new Rect(0,0,patternOverride.Width, patternOverride.Height);
+
+            // --- DBG: "misma imagen" => comprobar si patternRect cae dentro de searchRect ---
+            bool contained = patternOverride == null &&
+                             patternRect.X >= searchRect.X &&
+                             patternRect.Y >= searchRect.Y &&
+                             patternRect.Right <= searchRect.Right &&
+                             patternRect.Bottom <= searchRect.Bottom;
+
+            Log(log, $"[DBG] searchRect={searchRect.X},{searchRect.Y},{searchRect.Width},{searchRect.Height} patternRect={patternRect.X},{patternRect.Y},{patternRect.Width},{patternRect.Height} contained={contained}");
+
+            // Grises base SIN CLAHE para diagnósticos
+            using var fullGrayBase = ToGray(fullImageBgr);
+            using var searchGrayBase = new Mat(fullGrayBase, searchRect);
+            Mat? expectedPatch = null;
+            Rect? expectedLocalRect = null;
+            if (contained)
+            {
+                expectedLocalRect = new Rect(patternRect.X - searchRect.X, patternRect.Y - searchRect.Y, patternRect.Width, patternRect.Height);
+                expectedPatch = new Mat(searchGrayBase, expectedLocalRect.Value);
+                using var patFromFull = new Mat(fullGrayBase, patternRect);
+                // Métricas de igualdad/correlación en la posición "ground-truth"
+                using var diff = new Mat();
+                Cv2.Absdiff(patFromFull, expectedPatch, diff);
+                Scalar sum = Cv2.Sum(diff);
+                double mad = (sum.Val0 + sum.Val1 + sum.Val2 + sum.Val3) / (patternRect.Width * patternRect.Height);
+                Log(log, $"[DBG] GT offset=({expectedLocalRect.Value.X},{expectedLocalRect.Value.Y}) MAD={mad:F4}");
+
+                using var resp = new Mat();
+                Cv2.MatchTemplate(searchGrayBase, patFromFull, resp, TemplateMatchModes.CCoeffNormed);
+                Cv2.MinMaxLoc(resp, out _, out double maxVal, out _, out Point maxLoc);
+                Log(log, $"[DBG] TM@0deg scale=1: max={maxVal:F4} loc=({maxLoc.X},{maxLoc.Y}) vs expected=({expectedLocalRect.Value.X},{expectedLocalRect.Value.Y})");
+            }
+
             if (searchRect.Width < 5 || searchRect.Height < 5)
             {
                 Log(log, "[INPUT] search ROI demasiado pequeño");
+                expectedPatch?.Dispose();
                 return (null, 0);
             }
 
@@ -244,18 +279,13 @@ namespace BrakeDiscInspector_GUI_ROI
                 }
                 else
                 {
-                    if (patternRoi == null)
-                    {
-                        Log(log, "[INPUT] patrón ROI null");
-                        return (null, 0);
-                    }
-                    var patternRect = RectFromRoi(fullImageBgr, patternRoi);
-                    if (patternRect.Width < 3 || patternRect.Height < 3)
+                    var pr = patternRect;
+                    if (pr.Width < 3 || pr.Height < 3)
                     {
                         Log(log, "[INPUT] patrón demasiado pequeño");
                         return (null, 0);
                     }
-                    patternRegion = new Mat(fullImageBgr, patternRect);
+                    patternRegion = new Mat(fullImageBgr, pr);
                     patternGray = ToGray(patternRegion);
                 }
 
@@ -267,26 +297,42 @@ namespace BrakeDiscInspector_GUI_ROI
 
                 Log(log, $"[INPUT] feature={feature} thr={threshold} search={searchRect.Width}x{searchRect.Height} pattern={patternGray.Width}x{patternGray.Height}");
 
-                (Point2d? center, int score, string? cause) result =
-                    (feature?.Trim().ToLowerInvariant()) switch
-                    {
-                        "tm" or "tm_rot" => MatchTemplateRot(searchGray, patternGray, rotRange, scaleMin, scaleMax, log),
-                        _ => MatchFeatures(searchGray, patternGray, log)
-                    };
+                var mode = (feature ?? "").Trim().ToLowerInvariant();
 
-                if (result.center is null || result.score < threshold)
+                // 1) FEATURES
+                var feat = MatchFeatures(searchGray, patternGray, log);
+
+                // 2) AUTO: fallback a TM si fallan features
+                if (mode == "auto" && (feat.center is null || feat.score < threshold))
                 {
-                    var reason = result.cause ?? (result.center is null ? "sin coincidencias" : $"score={result.score}");
-                    Log(log, $"[RESULT] no-hit score={result.score} (<{threshold}) cause={reason}");
-                    return (null, result.score);
+                    Log(log, $"[AUTO] fallback TM: causeFeat={feat.failure} kpsImg={feat.imgKps} kpsPat={feat.patKps} good={feat.goodCount} inliers={feat.inliers} avgDist={feat.avgDist:F1}");
+                    var tm = MatchTemplateRot(searchGray, patternGray, rotRange, scaleMin, scaleMax, log);
+
+                    if (tm.center is null || tm.score < threshold)
+                    {
+                        Log(log, $"[RESULT] no-hit scoreFeat={feat.score} scoreTM={tm.score} (<{threshold}) causeFeat={feat.failure} causeTM={tm.failure}");
+                        return (null, Math.Max(feat.score, tm.score));
+                    }
+
+                    var globalTM = new Point2d(searchRect.X + tm.center.Value.X, searchRect.Y + tm.center.Value.Y);
+                    Log(log, $"[RESULT] HIT (TM) center=({globalTM.X.ToString("F1", CultureInfo.InvariantCulture)},{globalTM.Y.ToString("F1", CultureInfo.InvariantCulture)}) score={tm.score} corr={tm.bestCorr:F3}");
+                    return (globalTM, tm.score);
                 }
 
-                var global = new Point2d(searchRect.X + result.center.Value.X, searchRect.Y + result.center.Value.Y);
-                Log(log, $"[RESULT] HIT center=({global.X:F1},{global.Y:F1}) score={result.score}");
-                return (global, result.score);
+                if (feat.center is null || feat.score < threshold)
+                {
+                    var reason = feat.failure ?? (feat.center is null ? "sin coincidencias" : $"score={feat.score}");
+                    Log(log, $"[RESULT] no-hit score={feat.score} (<{threshold}) cause={reason}");
+                    return (null, feat.score);
+                }
+
+                var global = new Point2d(searchRect.X + feat.center.Value.X, searchRect.Y + feat.center.Value.Y);
+                Log(log, $"[RESULT] HIT (FEATURES) center=({global.X.ToString("F1", CultureInfo.InvariantCulture)},{global.Y.ToString("F1", CultureInfo.InvariantCulture)}) score={feat.score} inliers={feat.inliers}/{Math.Max(feat.goodCount,1)}");
+                return (global, feat.score);
             }
             finally
             {
+                expectedPatch?.Dispose();
                 patternGray?.Dispose();
                 patternRegion?.Dispose();
             }
