@@ -1,3 +1,4 @@
+
 using System;
 using System.Linq;
 using OpenCvSharp;
@@ -18,7 +19,6 @@ namespace BrakeDiscInspector_GUI_ROI
             {
                 mat.Set(i, 0, pts[i]);
             }
-
             return mat;
         }
 
@@ -29,7 +29,6 @@ namespace BrakeDiscInspector_GUI_ROI
             {
                 pts[i] = mat.Get<Point2f>(i);
             }
-
             return pts;
         }
 
@@ -40,21 +39,31 @@ namespace BrakeDiscInspector_GUI_ROI
 
         private static Mat ToGray(Mat src)
         {
-            if (src.Channels() == 1)
-            {
-                return src.Clone();
-            }
+            if (src.Channels() == 1) return src.Clone();
 
             var dst = new Mat();
             if (src.Channels() == 3)
-            {
                 Cv2.CvtColor(src, dst, ColorConversionCodes.BGR2GRAY);
-            }
-            else
-            {
+            else if (src.Channels() == 4)
                 Cv2.CvtColor(src, dst, ColorConversionCodes.BGRA2GRAY);
-            }
+            else
+                dst = src.Clone();
+            return dst;
+        }
 
+        /// <summary>
+        /// Pequeño refuerzo de contraste con CLAHE para parches poco texturizados.
+        /// Solo se aplica si el ROI es pequeño o si hay muy pocas kps detectadas.
+        /// </summary>
+        private static Mat MaybeClahe(Mat gray, int currentKpCount, int kpThreshold = 10)
+        {
+            // Consideramos "pequeño" un patrón menor a 64x64
+            bool small = gray.Width * gray.Height <= 64 * 64;
+            if (!small && currentKpCount >= kpThreshold) return gray;
+
+            var dst = new Mat();
+            using var clahe = Cv2.CreateCLAHE(clipLimit: 2.0, tileGridSize: new Size(8, 8));
+            clahe.Apply(gray, dst);
             return dst;
         }
 
@@ -121,9 +130,37 @@ namespace BrakeDiscInspector_GUI_ROI
             Mat patternGray,
             Action<string>? log)
         {
-            using var orb = ORB.Create(nFeatures: 1200);
+            // ORB más sensible en ROIs pequeños
+            using var orb = ORB.Create(
+                nFeatures: 2000,          // antes 1200
+                scaleFactor: 1.2f,
+                nLevels: 8,
+                edgeThreshold: 15,        // más bajo para detectar cerca del borde
+                firstLevel: 0,
+                WTA_K: 2,
+                scoreType: ORBScoreType.HarrisScore,
+                patchSize: 31,
+                fastThreshold: 10         // más sensible que 20
+            );
+
             var imgKp = orb.Detect(imageGray);
             var patKp = orb.Detect(patternGray);
+
+            // Si detectamos muy pocas, intentamos CLAHE rápido para mejorar textura
+            if (imgKp.Length < 10)
+            {
+                using var imgClahe = MaybeClahe(imageGray, imgKp.Length, kpThreshold: 10);
+                imgKp = orb.Detect(imgClahe);
+                imageGray = imgClahe;
+                Log(log, $"[FEATURE] CLAHE aplicado a imagen -> kps={imgKp.Length}");
+            }
+            if (patKp.Length < 10)
+            {
+                using var patClahe = MaybeClahe(patternGray, patKp.Length, kpThreshold: 10);
+                patKp = orb.Detect(patClahe);
+                patternGray = patClahe;
+                Log(log, $"[FEATURE] CLAHE aplicado a patrón -> kps={patKp.Length}");
+            }
 
             using var imgDesc = new Mat();
             using var patDesc = new Mat();
@@ -138,13 +175,18 @@ namespace BrakeDiscInspector_GUI_ROI
 
             using var matcher = new BFMatcher(NormTypes.Hamming, crossCheck: false);
             var knnMatches = matcher.KnnMatch(patDesc, imgDesc, k: 2);
-            var good = knnMatches
-                .Where(m => m.Length == 2 && m[0].Distance < 0.75 * m[1].Distance)
-                .Select(m => m[0])
-                .ToArray();
 
-            Log(log, $"[FEATURE] kps(pattern,img)=({patKp.Length},{imgKp.Length}) good={good.Length}");
-
+            // Ratio de Lowe adaptativo: empezamos en 0.75, si quedan pocos, relajamos hasta 0.9
+            double[] ratios = new[] { 0.75, 0.80, 0.85, 0.90 };
+            DMatch[] good = Array.Empty<DMatch>();
+            foreach (var r in ratios)
+            {
+                good = knnMatches
+                    .Where(m => m.Length == 2 && m[0].Distance < r * m[1].Distance)
+                    .Select(m => m[0])
+                    .ToArray();
+                if (good.Length >= 8) { Log(log, $"[FEATURE] ratio={r:F2} good={good.Length}"); break; }
+            }
             if (good.Length < 8)
             {
                 Log(log, "[FEATURE] pocos good matches");
@@ -201,10 +243,8 @@ namespace BrakeDiscInspector_GUI_ROI
             Mat? patternOverride = null,
             Action<string>? log = null)
         {
-            if (fullImageBgr == null)
-                throw new ArgumentNullException(nameof(fullImageBgr));
-            if (searchRoi == null)
-                throw new ArgumentNullException(nameof(searchRoi));
+            if (fullImageBgr == null) throw new ArgumentNullException(nameof(fullImageBgr));
+            if (searchRoi == null) throw new ArgumentNullException(nameof(searchRoi));
 
             var searchRect = RectFromRoi(fullImageBgr, searchRoi);
             if (searchRect.Width < 5 || searchRect.Height < 5)
@@ -228,7 +268,6 @@ namespace BrakeDiscInspector_GUI_ROI
                         Log(log, "[INPUT] patrón override vacío/pequeño");
                         return (null, 0);
                     }
-
                     patternGray = ToGray(patternOverride);
                 }
                 else
@@ -285,6 +324,7 @@ namespace BrakeDiscInspector_GUI_ROI
 
         private static Rect RectFromRoi(Mat img, RoiModel roi)
         {
+            // *** SE MANTIENE EL MISMO CÓDIGO QUE EN TU VERSIÓN ANTERIOR ***
             double left, top, right, bottom;
             if (roi.Shape == RoiShape.Rectangle)
             {
