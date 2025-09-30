@@ -51,6 +51,9 @@ namespace BrakeDiscInspector_GUI_ROI
             return dst;
         }
 
+        /// <summary>
+        /// Refuerzo de contraste con CLAHE cuando hay pocos keypoints o el patrón es pequeño.
+        /// </summary>
         private static Mat MaybeClahe(Mat gray, int currentKpCount, int kpThreshold = 10)
         {
             bool small = gray.Width * gray.Height <= 64 * 64;
@@ -125,16 +128,17 @@ namespace BrakeDiscInspector_GUI_ROI
             Mat patternGray,
             Action<string>? log)
         {
+            // Evitamos nombres de argumentos para máxima compatibilidad entre versiones de OpenCvSharp.
             using var orb = ORB.Create(
-                nFeatures: 2000,
-                scaleFactor: 1.2f,
-                nLevels: 8,
-                edgeThreshold: 15,
-                firstLevel: 0,
-                WTA_K: 2,
-                scoreType: ORBScoreType.Harris,   // <-- corregido
-                patchSize: 31,
-                fastThreshold: 10
+                2000,   // nFeatures
+                1.2f,   // scaleFactor
+                8,      // nLevels
+                15,     // edgeThreshold
+                0,      // firstLevel
+                2,      // WTA_K
+                ORBScoreType.Harris, // scoreType (usa ORBScoreType.HARRIS_SCORE si tu versión lo requiere)
+                31,     // patchSize
+                10      // fastThreshold
             );
 
             var imgKp = orb.Detect(imageGray);
