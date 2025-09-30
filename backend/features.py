@@ -1,6 +1,7 @@
 from __future__ import annotations
 import torch
 import numpy as np
+import inspect
 from typing import Tuple, Sequence
 
 try:
@@ -79,53 +80,159 @@ class DinoV2Features:
             raise RuntimeError(f"Forma de tokens inesperada: {n}")
         return emb, (h, w)
 
+    # features.py (o donde hagas el forward)
+
+
+    def _get_intermediate_layers_compat(model, x, n=1, want_cls=True, norm=False):
+        """
+        Llama a model.get_intermediate_layers con la firma que soporte el modelo.
+        Soporta:
+          - return_class_token
+          - return_cls_token
+          - sin kwargs extra (solo 'n')
+        Si el modelo NO tiene get_intermediate_layers, cae a forward_features.
+        """
+        fn = getattr(model, "get_intermediate_layers", None)
+        if fn is None:
+            # Fallback: usar forward_features (timm) o forward (genérico)
+            if hasattr(model, "forward_features"):
+                feats = model.forward_features(x)
+            else:
+                feats = model(x)
+    
+            # Normalizamos a lista de capas para que el resto del código no cambie
+            return [feats]
+    
+        sig = inspect.signature(fn)
+        kwargs = {"n": n}
+        # escoger el kw correcto según la firma disponible
+        if "return_class_token" in sig.parameters:
+            kwargs["return_class_token"] = want_cls
+        elif "return_cls_token" in sig.parameters:
+            kwargs["return_cls_token"] = want_cls
+        if "norm" in sig.parameters:
+            kwargs["norm"] = norm
+    
+        try:
+            return fn(x, **kwargs)
+        except TypeError:
+            # último intento minimalista: solo 'n'
+            return fn(x, n=n)
+
+
     def _forward_tokens(self, x: torch.Tensor) -> torch.Tensor:
-        if self.out_indices and hasattr(self.model, "get_intermediate_layers"):
+        def _call_get_intermediate_layers_compat(model, x, out_indices, want_cls: bool, want_reshape: bool):
+            """
+            Llama a model.get_intermediate_layers con la firma compatible con la versión instalada.
+            Prueba (x, out_indices, **kwargs) y, si no cuadra, (x, len(out_indices), **kwargs).
+            Ajusta automáticamente: return_class_token / return_cls_token / reshape.
+            Devuelve la lista de capas tal cual la API nativa (tensors o tuplas).
+            """
+            fn = getattr(model, "get_intermediate_layers", None)
+            if fn is None:
+                return None  # el caller hará forward_features
+    
+            sig = inspect.signature(fn)
+            # kwargs compatibles con la versión presente
+            kwargs = {}
+            if "return_class_token" in sig.parameters:
+                kwargs["return_class_token"] = want_cls
+            elif "return_cls_token" in sig.parameters:
+                kwargs["return_cls_token"] = want_cls
+            if "reshape" in sig.parameters:
+                kwargs["reshape"] = want_reshape
+    
+            # 1) intentar con la lista de índices tal cual (como haces ahora)
             try:
-                layers = self.model.get_intermediate_layers(
-                    x,
-                    self.out_indices,
-                    reshape=True,
-                    return_class_token=False,
-                )
+                return fn(x, self.out_indices, **kwargs)
             except TypeError:
-                # Algunas implementaciones esperan un entero y devuelven las últimas `n` capas.
-                layers = self.model.get_intermediate_layers(
-                    x,
-                    len(self.out_indices),
-                    reshape=True,
-                    return_class_token=False,
-                )
+                pass
+    
+            # 2) algunas versiones esperan un entero (n = últimas n capas)
+            try:
+                n = len(self.out_indices) if self.out_indices else 1
+                return fn(x, n, **kwargs)
+            except TypeError:
+                pass
+    
+            # 3) último intento: sin kwargs (versiones antiguas)
+            try:
+                return fn(x, self.out_indices)
+            except TypeError:
+                n = len(self.out_indices) if self.out_indices else 1
+                return fn(x, n)
+    
+        def _normalize_layers(layers):
+            """
+            Convierte retornos posibles en una lista de tensores Bx(HW)xC:
+            - Acepta tensores 4D (B,H,W,C) o 3D (B,HW,C)
+            - Si la API devuelve tuplas (tokens, cls, ...), toma el primer elemento.
+            """
             feats = []
             for layer in layers:
+                # Desempaquetar tuplas tipo (tokens, cls) / (feat, cls, ...)
+                if isinstance(layer, (tuple, list)) and len(layer) > 0 and torch.is_tensor(layer[0]):
+                    layer = layer[0]
+    
+                if not torch.is_tensor(layer):
+                    raise RuntimeError(f"Tipo inesperado en capa intermedia: {type(layer)}")
+    
                 if layer.ndim == 4:
-                    # (B, H, W, C)
+                    # (B, H, W, C)  -> (B, HW, C)
                     b, h, w, c = layer.shape
                     feats.append(layer.reshape(b, h * w, c))
                 elif layer.ndim == 3:
+                    # (B, HW, C)
                     feats.append(layer)
                 else:
                     raise RuntimeError(f"Forma inesperada en capa intermedia: {layer.shape}")
-            tokens = torch.cat(feats, dim=-1)
-        else:
-            feats = self.model.forward_features(x)
-            if isinstance(feats, dict):
-                t = feats.get("x") or feats.get("tokens")
-                if t is None:
+            return feats
+    
+        if self.out_indices and hasattr(self.model, "get_intermediate_layers"):
+            # Llamada compatible con cualquier timm/dinov2
+            layers = _call_get_intermediate_layers_compat(
+                self.model,
+                x,
+                self.out_indices,
+                want_cls=False,       # conservas tu semántica original
+                want_reshape=True     # lo pides si la firma lo soporta
+            )
+    
+            if layers is None:
+                # Modelo sin get_intermediate_layers -> cae al camino de abajo
+                feats = self.model.forward_features(x)
+                t = feats.get("x") or feats.get("tokens") if isinstance(feats, dict) else feats
+                if t is None and isinstance(feats, dict):
                     t = max((v for v in feats.values() if isinstance(v, torch.Tensor)), key=lambda u: u.numel())
             else:
-                t = feats
-            if t.ndim == 3:
-                if t.shape[1] == self._expected_tokens(t.shape[1]):
-                    tokens = t
-                else:
-                    tokens = t[:, 1:, :]
-            elif t.ndim == 4:
-                b, c, h, w = t.shape
-                tokens = t.permute(0, 2, 3, 1).reshape(b, h * w, c)
+                # Normaliza y concatena canales como hacías
+                feats = _normalize_layers(layers)
+                tokens = torch.cat(feats, dim=-1)
+                return tokens[0]
+    
+        # === Camino clásico: forward_features ===
+        feats = self.model.forward_features(x)
+        if isinstance(feats, dict):
+            t = feats.get("x") or feats.get("tokens")
+            if t is None:
+                t = max((v for v in feats.values() if isinstance(v, torch.Tensor)), key=lambda u: u.numel())
+        else:
+            t = feats
+    
+        if t.ndim == 3:
+            # mantener tu lógica: si incluye CLS coincide con expected, si no, drop CLS
+            if t.shape[1] == self._expected_tokens(t.shape[1]):
+                tokens = t
             else:
-                raise RuntimeError(f"Forma inesperada de features: {t.shape}")
+                tokens = t[:, 1:, :]
+        elif t.ndim == 4:
+            b, c, h, w = t.shape
+            tokens = t.permute(0, 2, 3, 1).reshape(b, h * w, c)
+        else:
+            raise RuntimeError(f"Forma inesperada de features: {t.shape}")
+    
         return tokens[0]
+
 
     def _expected_tokens(self, n: int) -> int:
         r = int(round(n ** 0.5))
