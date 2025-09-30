@@ -29,7 +29,7 @@ namespace BrakeDiscInspector_GUI_ROI
             {
                 double scale = 1.0; // si quieres multi-escala, muestrea entre [scaleMin, scaleMax]
                 using var rotPat = RotateAndScale(patternGray, ang, scale);
-                if (rotPat.Width >= imageGray.Width || rotPat.Height >= imageGray.Height)
+                if (rotPat.Width > imageGray.Width || rotPat.Height > imageGray.Height)
                     continue;
 
                 using var res = new CvMat();
