@@ -2312,7 +2312,7 @@ namespace BrakeDiscInspector_GUI_ROI
         }
 
         private bool TryBuildRoiCrop(RoiModel roi, string logTag, out Mat? cropWithAlpha,
-            out RoiCropInfo cropInfo, out Rect cropRect)
+            out RoiCropInfo cropInfo, out Cv.Rect cropRect)
         {
             cropWithAlpha = null;
             cropInfo = default;
