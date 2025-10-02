@@ -7,6 +7,7 @@ from PIL import Image
 
 
 class DinoV2Features:
+import io
     def __init__(
         self,
         model_name: str = "vit_small_patch14_dinov2.lvd142m",
@@ -161,3 +162,53 @@ class DinoV2Features:
             return t[0]
         else:
             raise RuntimeError(f"Forma inesperada de features: {t.shape}")
+
+    def _to_pil(self, img) -> Image.Image:
+        """Acepta PIL.Image, numpy (H,W[,3]), bytes/BytesIO o ruta a archivo, y devuelve PIL RGB."""
+        if isinstance(img, Image.Image):
+            return img.convert("RGB")
+        if isinstance(img, (bytes, io.BytesIO)):
+            return Image.open(img).convert("RGB")
+        if isinstance(img, str):
+            return Image.open(img).convert("RGB")
+        if isinstance(img, np.ndarray):
+            arr = img
+            if arr.ndim == 2:
+                arr = np.stack([arr] * 3, axis=-1)
+            # asume BGR si viene de OpenCV → pásalo a RGB
+            if arr.shape[-1] == 3:
+                arr = arr[..., ::-1].copy()
+            return Image.fromarray(arr.astype(np.uint8), mode="RGB")
+        raise TypeError(f"Tipo de imagen no soportado: {type(img)}")
+    
+    def _preprocess(self, img) -> torch.Tensor:
+        """Convierte a tensor (1,3,H,W) en self.device y normaliza con self.mean/std."""
+        pil = self._to_pil(img)
+        # Tamaño “sugerido”; _prepare_input_size ajustará exactamente lo que necesite el ViT
+        if self.input_size and self.input_size > 0:
+            pil = pil.resize((self.input_size, self.input_size), Image.BICUBIC)
+    
+        arr = (np.asarray(pil).astype(np.float32) / 255.0)  # (H,W,3) [0..1]
+        x = torch.from_numpy(arr).permute(2, 0, 1).unsqueeze(0).to(self.device)  # (1,3,H,W)
+        x = x.half() if self.half else x.float()
+        x = (x - self.mean) / self.std
+        return x
+    
+    @torch.inference_mode()
+    def extract(self, img):
+        """
+        Devuelve:
+          emb: np.ndarray (C,)  -> embedding promedio de tokens
+          hw:  tuple(int,int)   -> (h_tokens, w_tokens) para heatmaps posteriores
+        """
+        x = self._preprocess(img)               # (1,3,H,W)
+        x, _ = self._prepare_input_size(self.model, x)  # ajusta a 518 o usa set_input_size
+    
+        tokens = self._forward_tokens(x)        # (HW, C) en device
+        # tamaño de la rejilla de tokens
+        H, W = x.shape[-2:]
+        h_tokens, w_tokens = H // self.patch, W // self.patch
+    
+        emb = tokens.mean(dim=0)                # (C,)
+        emb_np = emb.float().detach().cpu().numpy()
+        return emb_np, (int(h_tokens), int(w_tokens))
