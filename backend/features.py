@@ -18,11 +18,12 @@ class DinoV2Features:
     """
     Extractor ViT/DINOv2 con timm.
 
-    Parámetros clave:
-      - pool: "none" -> devuelve todos los tokens (HW, C)
-               "mean" -> devuelve media de tokens (1, C)
-
     extract(img) -> (embedding_numpy, (h_tokens, w_tokens))
+      - Si pool="none"  -> (HW, C)   (todos los tokens)  [recomendado para PatchCore/coreset]
+      - Si pool="mean"  -> (1,  C)   (media de tokens)
+
+    Nota: por defecto usamos tamaño **fijo** de entrada (dynamic_input=False) para
+          mantener TokenShape constante entre fit_ok / calibrate / infer.
     """
 
     def __init__(
@@ -30,15 +31,17 @@ class DinoV2Features:
         model_name: str = "vit_small_patch14_dinov2.lvd142m",
         input_size: int = 518,
         out_indices: Optional[Iterable[int]] = (9, 10, 11),
-        device: Optional[Union[str, torch.device]] = None,  # "auto", "cpu", "cuda[:0]", "mps", ...
+        device: Optional[Union[str, torch.device]] = None,   # "auto", "cpu", "cuda[:0]", "mps"
         half: bool = False,
         imagenet_norm: bool = True,
-        pool: str = "none",  # "none" | "mean"
+        pool: str = "none",          # "none" | "mean"
+        dynamic_input: bool = False, # False => tamaño fijo; True => permite set_input_size si cuadra
         **_,
     ) -> None:
         self.model_name = model_name
         self.input_size = int(input_size)
         self.out_indices = list(out_indices) if out_indices else []
+        self.dynamic_input = bool(dynamic_input)
 
         # --- resolver device (soporta "auto") ---
         if device is None:
@@ -85,10 +88,10 @@ class DinoV2Features:
         # normalización tipo ImageNet
         if self.imagenet_norm:
             self.mean = torch.tensor([0.485, 0.456, 0.406], device=self.device).view(1, 3, 1, 1)
-            self.std = torch.tensor([0.229, 0.224, 0.225], device=self.device).view(1, 3, 1, 1)
+            self.std  = torch.tensor([0.229, 0.224, 0.225], device=self.device).view(1, 3, 1, 1)
         else:
             self.mean = torch.zeros((1, 3, 1, 1), device=self.device)
-            self.std = torch.ones((1, 3, 1, 1), device=self.device)
+            self.std  = torch.ones((1, 3, 1, 1), device=self.device)
 
     # ---------------- imagen / preprocesado ----------------
     @staticmethod
@@ -111,6 +114,7 @@ class DinoV2Features:
 
     def _preprocess(self, img) -> torch.Tensor:
         pil = self._to_pil(img)
+        # tamaño sugerido; _prepare_input_size fijará el tamaño exacto para el ViT
         if self.input_size and self.input_size > 0:
             pil = pil.resize((self.input_size, self.input_size), Image.BICUBIC)
         arr = (np.asarray(pil).astype(np.float32) / 255.0)
@@ -121,12 +125,17 @@ class DinoV2Features:
 
     # ---------------- tamaño de entrada ----------------
     def _prepare_input_size(self, model: nn.Module, x: torch.Tensor) -> Tuple[torch.Tensor, str]:
+        """
+        Devuelve (x_preparado, modo) con modo en {"unchanged","set_input_size","resize"}.
+        Si dynamic_input=False (por defecto), siempre hace resize al img_size del ViT
+        para mantener TokenShape constante (evita mismatches en fit/val/infer).
+        """
         pe = getattr(model, "patch_embed", None)
         if pe is None:
             return x, "unchanged"
 
         H, W = x.shape[-2:]
-        ps = getattr(pe, "patch_size", (self.patch, self.patch))
+        ps = getattr(pe, "patch_size", getattr(self, "patch", 14))
         if isinstance(ps, int):
             ps = (ps, ps)
 
@@ -138,12 +147,13 @@ class DinoV2Features:
         if (H, W) == (target_h, target_w):
             return x, "unchanged"
 
-        if hasattr(pe, "set_input_size") and (H % ps[0] == 0) and (W % ps[1] == 0):
+        if self.dynamic_input and hasattr(pe, "set_input_size") and (H % ps[0] == 0) and (W % ps[1] == 0):
             pe.set_input_size((H, W))
             if hasattr(model, "img_size"):
                 model.img_size = (H, W)
             return x, "set_input_size"
 
+        # Por defecto: tamaño fijo (evita incompatibilidades 37x37 vs otros)
         x_res = F.interpolate(x, size=(target_h, target_w), mode="bilinear", align_corners=False)
         return x_res, "resize"
 
