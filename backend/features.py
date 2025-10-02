@@ -15,6 +15,16 @@ import timm
 
 
 class DinoV2Features:
+    """
+    Extractor ViT/DINOv2 con timm.
+
+    Parámetros clave:
+      - pool: "none" -> devuelve todos los tokens (HW, C)
+               "mean" -> devuelve media de tokens (1, C)
+
+    extract(img) -> (embedding_numpy, (h_tokens, w_tokens))
+    """
+
     def __init__(
         self,
         model_name: str = "vit_small_patch14_dinov2.lvd142m",
@@ -23,13 +33,14 @@ class DinoV2Features:
         device: Optional[Union[str, torch.device]] = None,  # "auto", "cpu", "cuda[:0]", "mps", ...
         half: bool = False,
         imagenet_norm: bool = True,
+        pool: str = "none",  # "none" | "mean"
         **_,
     ) -> None:
         self.model_name = model_name
         self.input_size = int(input_size)
         self.out_indices = list(out_indices) if out_indices else []
 
-        # --- Resolver 'device' de forma robusta (soporta "auto") ---
+        # --- resolver device (soporta "auto") ---
         if device is None:
             if torch.cuda.is_available():
                 self.device = torch.device("cuda")
@@ -51,22 +62,27 @@ class DinoV2Features:
         else:
             self.device = torch.device(device)
 
-        # half sólo en CUDA
         self.half = bool(half) and self.device.type == "cuda"
         self.imagenet_norm = bool(imagenet_norm)
 
-        # --- Crear modelo ---
+        # validar pool
+        pool = (pool or "none").lower()
+        if pool not in ("none", "mean"):
+            raise ValueError("pool debe ser 'none' o 'mean'")
+        self.pool = pool
+
+        # --- modelo ---
         self.model: nn.Module = timm.create_model(self.model_name, pretrained=True)
         self.model.eval().to(self.device)
         if self.half:
             self.model.half()
 
-        # Patch size
+        # patch size
         pe = getattr(self.model, "patch_embed", None)
         ps = getattr(pe, "patch_size", 14)
         self.patch = int(ps[0]) if isinstance(ps, (tuple, list)) else int(ps)
 
-        # Normalización tipo ImageNet
+        # normalización tipo ImageNet
         if self.imagenet_norm:
             self.mean = torch.tensor([0.485, 0.456, 0.406], device=self.device).view(1, 3, 1, 1)
             self.std = torch.tensor([0.229, 0.224, 0.225], device=self.device).view(1, 3, 1, 1)
@@ -74,12 +90,9 @@ class DinoV2Features:
             self.mean = torch.zeros((1, 3, 1, 1), device=self.device)
             self.std = torch.ones((1, 3, 1, 1), device=self.device)
 
-    # -------------------------------------------------------------------------
-    # Helpers de imagen y preprocesado
-    # -------------------------------------------------------------------------
+    # ---------------- imagen / preprocesado ----------------
     @staticmethod
     def _to_pil(img) -> Image.Image:
-        """Acepta PIL.Image, numpy, bytes/BytesIO o ruta; devuelve PIL RGB."""
         if isinstance(img, Image.Image):
             return img.convert("RGB")
         if isinstance(img, (bytes, io.BytesIO)):
@@ -91,15 +104,13 @@ class DinoV2Features:
             if arr.ndim == 2:
                 arr = np.stack([arr] * 3, axis=-1)
             if arr.shape[-1] == 3:
-                # Si viene de OpenCV (BGR) lo pasamos a RGB.
+                # BGR (OpenCV) -> RGB
                 arr = arr[..., ::-1].copy()
             return Image.fromarray(arr.astype(np.uint8), mode="RGB")
         raise TypeError(f"Tipo de imagen no soportado: {type(img)}")
 
     def _preprocess(self, img) -> torch.Tensor:
-        """(1,3,H,W) en self.device con normalización."""
         pil = self._to_pil(img)
-        # Tamaño sugerido; _prepare_input_size asegurará el tamaño exacto para el ViT
         if self.input_size and self.input_size > 0:
             pil = pil.resize((self.input_size, self.input_size), Image.BICUBIC)
         arr = (np.asarray(pil).astype(np.float32) / 255.0)
@@ -108,9 +119,7 @@ class DinoV2Features:
         x = (x - self.mean) / self.std
         return x
 
-    # -------------------------------------------------------------------------
-    # Ajuste de tamaño de entrada (dinámico o resize)
-    # -------------------------------------------------------------------------
+    # ---------------- tamaño de entrada ----------------
     def _prepare_input_size(self, model: nn.Module, x: torch.Tensor) -> Tuple[torch.Tensor, str]:
         pe = getattr(model, "patch_embed", None)
         if pe is None:
@@ -129,20 +138,16 @@ class DinoV2Features:
         if (H, W) == (target_h, target_w):
             return x, "unchanged"
 
-        # Activar tamaño dinámico si se puede y respeta múltiplos de patch
         if hasattr(pe, "set_input_size") and (H % ps[0] == 0) and (W % ps[1] == 0):
             pe.set_input_size((H, W))
             if hasattr(model, "img_size"):
                 model.img_size = (H, W)
             return x, "set_input_size"
 
-        # Si no, reescalar al tamaño esperado por el modelo
         x_res = F.interpolate(x, size=(target_h, target_w), mode="bilinear", align_corners=False)
         return x_res, "resize"
 
-    # -------------------------------------------------------------------------
-    # Compatibilidad con get_intermediate_layers (timm)
-    # -------------------------------------------------------------------------
+    # ---------------- compat capas intermedias ----------------
     def _call_get_intermediate_layers_compat(
         self, model: nn.Module, x: torch.Tensor, out_indices: Iterable[int], want_cls: bool, want_reshape: bool
     ):
@@ -177,7 +182,6 @@ class DinoV2Features:
 
     @staticmethod
     def _normalize_layers(layers) -> list[torch.Tensor]:
-        """Convierte posibles retornos en tensores Bx(HW)xC."""
         feats = []
         for layer in layers:
             if isinstance(layer, (tuple, list)) and len(layer) > 0 and torch.is_tensor(layer[0]):
@@ -193,9 +197,7 @@ class DinoV2Features:
                 raise RuntimeError(f"Forma inesperada en capa intermedia: {layer.shape}")
         return feats
 
-    # -------------------------------------------------------------------------
-    # Tokens robustos
-    # -------------------------------------------------------------------------
+    # ---------------- tokens ----------------
     def _forward_tokens(self, x: torch.Tensor) -> torch.Tensor:
         x, _ = self._prepare_input_size(self.model, x)
 
@@ -209,7 +211,6 @@ class DinoV2Features:
                     tokens = torch.cat(feats, dim=-1)  # (B, HW, C_total)
                     return tokens[0]  # (HW, C)
             except Exception:
-                # Si algo falla por firma rara, cae al camino estándar
                 pass
 
         feats = self.model.forward_features(x)
@@ -230,7 +231,6 @@ class DinoV2Features:
             expected = h_tokens * w_tokens
             if N == expected + 1:
                 t = t[:, 1:, :]  # quitar CLS
-            # (si N != expected y no hay CLS, seguimos tal cual)
             return t[0]
         elif t.ndim == 4:
             b, c, h, w = t.shape
@@ -238,23 +238,26 @@ class DinoV2Features:
         else:
             raise RuntimeError(f"Forma inesperada de features: {t.shape}")
 
-    # -------------------------------------------------------------------------
-    # API pública
-    # -------------------------------------------------------------------------
+    # ---------------- API pública ----------------
     @torch.inference_mode()
     def extract(self, img) -> Tuple[np.ndarray, Tuple[int, int]]:
         """
         Devuelve:
-          emb: np.ndarray (C,)  -> embedding promedio de tokens
+          emb: np.ndarray
+               - pool="none" -> (HW, C)  (todos los tokens)
+               - pool="mean" -> (1,  C)  (media de tokens)
           hw:  (h_tokens, w_tokens)
         """
-        x = self._preprocess(img)                # (1,3,H,W)
+        x = self._preprocess(img)
         x, _ = self._prepare_input_size(self.model, x)
 
-        tokens = self._forward_tokens(x)         # (HW, C)
+        tokens = self._forward_tokens(x)  # (HW, C)
         H, W = x.shape[-2:]
         h_tokens, w_tokens = H // self.patch, W // self.patch
 
-        emb = tokens.mean(dim=0)                 # (C,)
-        emb_np = emb.float().detach().cpu().numpy()
+        if self.pool == "mean":
+            emb_np = tokens.mean(dim=0, keepdim=True).float().detach().cpu().numpy()  # (1, C)
+        else:
+            emb_np = tokens.float().detach().cpu().numpy()  # (HW, C)
+
         return emb_np, (int(h_tokens), int(w_tokens))
