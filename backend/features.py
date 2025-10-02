@@ -7,19 +7,46 @@ from PIL import Image
 
 
 class DinoV2Features:
-    def __init__(self, model_name="vit_small_patch14_dinov2.lvd142m", input_size=518, out_indices=(9, 10, 11)):
+    def __init__(
+        self,
+        model_name: str = "vit_small_patch14_dinov2.lvd142m",
+        input_size: int = 518,
+        out_indices = (9, 10, 11),
+        device=None,               # <- NUEVO: para app.py
+        half: bool = False,        # <- NUEVO
+        imagenet_norm: bool = True,# <- NUEVO
+        **_                        # <- por si app pasa más kwargs
+    ):
+        import torch
+        import timm
+
         self.model_name = model_name
-        self.input_size = input_size
-        self.out_indices = out_indices
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.input_size = int(input_size)
+        self.out_indices = list(out_indices) if out_indices else []
+        # device explícito o autodetección
+        self.device = torch.device(device) if device else torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        # sólo usar half en CUDA
+        self.half = bool(half) and (self.device.type == "cuda")
+        self.imagenet_norm = bool(imagenet_norm)
 
-        # Cargar el modelo
+        # Cargar modelo
         self.model = timm.create_model(self.model_name, pretrained=True)
-        self.model.to(self.device).eval()
+        self.model.eval().to(self.device)
+        if self.half:
+            self.model.half()
 
-        # Tamaño de patch
+        # Patch size
         pe = getattr(self.model, "patch_embed", None)
-        self.patch = getattr(pe, "patch_size", 14)
+        ps = getattr(pe, "patch_size", 14)
+        self.patch = int(ps[0]) if isinstance(ps, (tuple, list)) else int(ps)
+
+        # Normalización tipo ImageNet
+        if self.imagenet_norm:
+            self.mean = torch.tensor([0.485, 0.456, 0.406], device=self.device).view(1, 3, 1, 1)
+            self.std  = torch.tensor([0.229, 0.224, 0.225], device=self.device).view(1, 3, 1, 1)
+        else:
+            self.mean = torch.zeros((1, 3, 1, 1), device=self.device)
+            self.std  = torch.ones((1, 3, 1, 1), device=self.device)
 
     # ---------- helpers ----------
 
