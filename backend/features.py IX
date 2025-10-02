@@ -12,24 +12,49 @@ class DinoV2Features:
         model_name: str = "vit_small_patch14_dinov2.lvd142m",
         input_size: int = 518,
         out_indices = (9, 10, 11),
-        device=None,               # <- NUEVO: para app.py
-        half: bool = False,        # <- NUEVO
-        imagenet_norm: bool = True,# <- NUEVO
-        **_                        # <- por si app pasa más kwargs
+        device=None,               # puede ser "auto", "cpu", "cuda", "cuda:0", "mps", etc.
+        half: bool = False,
+        imagenet_norm: bool = True,
+        **_
     ):
-        import torch
-        import timm
-
         self.model_name = model_name
         self.input_size = int(input_size)
         self.out_indices = list(out_indices) if out_indices else []
-        # device explícito o autodetección
-        self.device = torch.device(device) if device else torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        # sólo usar half en CUDA
+
+        # --- Resolver 'device' de forma robusta ---
+        resolved_device = None
+        if device is None:
+            # auto por defecto
+            if torch.cuda.is_available():
+                resolved_device = torch.device("cuda")
+            elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+                resolved_device = torch.device("mps")
+            else:
+                resolved_device = torch.device("cpu")
+        else:
+            if isinstance(device, str):
+                dv = device.strip().lower()
+                if dv in ("auto", ""):
+                    if torch.cuda.is_available():
+                        resolved_device = torch.device("cuda")
+                    elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+                        resolved_device = torch.device("mps")
+                    else:
+                        resolved_device = torch.device("cpu")
+                else:
+                    # deja que torch.device valide "cpu", "cuda", "cuda:0", "mps", etc.
+                    resolved_device = torch.device(device)
+            else:
+                # ya es un torch.device
+                resolved_device = torch.device(device)
+
+        self.device = resolved_device
+
+        # usar half solo si estamos en CUDA
         self.half = bool(half) and (self.device.type == "cuda")
         self.imagenet_norm = bool(imagenet_norm)
 
-        # Cargar modelo
+        # --- Crear modelo ---
         self.model = timm.create_model(self.model_name, pretrained=True)
         self.model.eval().to(self.device)
         if self.half:
@@ -47,6 +72,7 @@ class DinoV2Features:
         else:
             self.mean = torch.zeros((1, 3, 1, 1), device=self.device)
             self.std  = torch.ones((1, 3, 1, 1), device=self.device)
+
 
     # ---------- helpers ----------
 
