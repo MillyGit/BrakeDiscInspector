@@ -236,6 +236,7 @@ class DinoV2Features:
         return feats
 
 
+
     # ---------------- tokens ----------------
     def _forward_tokens(self, x: torch.Tensor) -> torch.Tensor:
         x, _ = self._prepare_input_size(self.model, x)
@@ -278,7 +279,6 @@ class DinoV2Features:
             return t.permute(0, 2, 3, 1).reshape(b, h * w, c)[0]
         else:
             raise RuntimeError(f"Forma inesperada de features: {t.shape}")
-
 
     # ---------------- API pública ----------------
     @torch.inference_mode()
