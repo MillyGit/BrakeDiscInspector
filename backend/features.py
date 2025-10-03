@@ -16,26 +16,26 @@ import timm
 
 class DinoV2Features:
     """
-    Extractor ViT/DINOv2 con timm.
+    Extractor ViT/DINOv2 (timm) con tamaño fijo de entrada para TokenShape estable.
 
     extract(img) -> (embedding_numpy, (h_tokens, w_tokens))
-      - Si pool="none"  -> (HW, C)   (todos los tokens)  [recomendado para PatchCore/coreset]
-      - Si pool="mean"  -> (1,  C)   (media de tokens)
+      - pool="none" -> (HW, C)  (todos los tokens)  [recomendado para PatchCore/coreset]
+      - pool="mean" -> (1,  C)  (media de tokens)
 
-    Nota: por defecto usamos tamaño **fijo** de entrada (dynamic_input=False) para
-          mantener TokenShape constante entre fit_ok / calibrate / infer.
+    Por defecto usamos input_size=1036 (≈ x2 de 518) con patch=14 -> 74x74 tokens.
+    Se recomienda re-ejecutar fit_ok y calibrate tras cambiar input_size.
     """
 
     def __init__(
         self,
         model_name: str = "vit_small_patch14_dinov2.lvd142m",
-        input_size: int = 518,
+        input_size: int = 1036,                 # x2 de 518 (518*2=1036) => 74x74 tokens con patch=14
         out_indices: Optional[Iterable[int]] = (9, 10, 11),
         device: Optional[Union[str, torch.device]] = None,   # "auto", "cpu", "cuda[:0]", "mps"
         half: bool = False,
         imagenet_norm: bool = True,
-        pool: str = "none",          # "none" | "mean"
-        dynamic_input: bool = False, # False => tamaño fijo; True => permite set_input_size si cuadra
+        pool: str = "none",                     # "none" | "mean"
+        dynamic_input: bool = False,            # False => tamaño fijo; True => permite set_input_size si cuadra
         **_,
     ) -> None:
         self.model_name = model_name
@@ -114,7 +114,7 @@ class DinoV2Features:
 
     def _preprocess(self, img) -> torch.Tensor:
         pil = self._to_pil(img)
-        # tamaño sugerido; _prepare_input_size fijará el tamaño exacto para el ViT
+        # tamaño sugerido; _prepare_input_size fijará el tamaño exacto solicitado
         if self.input_size and self.input_size > 0:
             pil = pil.resize((self.input_size, self.input_size), Image.BICUBIC)
         arr = (np.asarray(pil).astype(np.float32) / 255.0)
@@ -127,33 +127,32 @@ class DinoV2Features:
     def _prepare_input_size(self, model: nn.Module, x: torch.Tensor) -> Tuple[torch.Tensor, str]:
         """
         Devuelve (x_preparado, modo) con modo en {"unchanged","set_input_size","resize"}.
-        Si dynamic_input=False (por defecto), siempre hace resize al img_size del ViT
-        para mantener TokenShape constante (evita mismatches en fit/val/infer).
+        - Con dynamic_input=False (por defecto): redimensiona SIEMPRE a (self.input_size, self.input_size),
+          lo que garantiza TokenShape constante = (input_size / patch)^2.
+        - Con dynamic_input=True: si el tamaño es múltiplo del patch y el modelo lo permite,
+          actualiza el patch_embed a ese tamaño; si no, aplica resize.
         """
-        pe = getattr(model, "patch_embed", None)
-        if pe is None:
-            return x, "unchanged"
-
+        target_h = int(self.input_size)
+        target_w = int(self.input_size)
         H, W = x.shape[-2:]
-        ps = getattr(pe, "patch_size", getattr(self, "patch", 14))
-        if isinstance(ps, int):
-            ps = (ps, ps)
-
-        img_size = getattr(pe, "img_size", (H, W))
-        if isinstance(img_size, int):
-            img_size = (img_size, img_size)
-        target_h, target_w = int(img_size[0]), int(img_size[1])
 
         if (H, W) == (target_h, target_w):
             return x, "unchanged"
 
-        if self.dynamic_input and hasattr(pe, "set_input_size") and (H % ps[0] == 0) and (W % ps[1] == 0):
-            pe.set_input_size((H, W))
-            if hasattr(model, "img_size"):
-                model.img_size = (H, W)
-            return x, "set_input_size"
+        if self.dynamic_input:
+            pe = getattr(model, "patch_embed", None)
+            ps = getattr(pe, "patch_size", getattr(self, "patch", 14))
+            if isinstance(ps, int):
+                ps = (ps, ps)
+            if (target_h % ps[0] == 0) and (target_w % ps[1] == 0) and hasattr(pe, "set_input_size"):
+                pe.set_input_size((target_h, target_w))
+                if hasattr(model, "img_size"):
+                    model.img_size = (target_h, target_w)
+                if (H, W) != (target_h, target_w):
+                    x = F.interpolate(x, size=(target_h, target_w), mode="bilinear", align_corners=False)
+                return x, "set_input_size"
 
-        # Por defecto: tamaño fijo (evita incompatibilidades 37x37 vs otros)
+        # Por defecto / fallback: tamaño fijo (evita incompatibilidades de TokenShape)
         x_res = F.interpolate(x, size=(target_h, target_w), mode="bilinear", align_corners=False)
         return x_res, "resize"
 
