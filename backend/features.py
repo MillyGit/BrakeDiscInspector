@@ -124,37 +124,31 @@ class DinoV2Features:
         return x
 
     # ---------------- tamaño de entrada ----------------
-    def _prepare_input_size(self, model: nn.Module, x: torch.Tensor) -> Tuple[torch.Tensor, str]:
+    def _prepare_input_size(self, model: nn.Module, x: torch.Tensor):
         """
-        Devuelve (x_preparado, modo) con modo en {"unchanged","set_input_size","resize"}.
-        - Con dynamic_input=False (por defecto): redimensiona SIEMPRE a (self.input_size, self.input_size),
-          lo que garantiza TokenShape constante = (input_size / patch)^2.
-        - Con dynamic_input=True: si el tamaño es múltiplo del patch y el modelo lo permite,
-          actualiza el patch_embed a ese tamaño; si no, aplica resize.
+        Fuerza SIEMPRE a (self.input_size, self.input_size) cuando dynamic_input=False.
+        Además sincroniza patch_embed/img_size del ViT para evitar asserts.
         """
         target_h = int(self.input_size)
         target_w = int(self.input_size)
+    
+        # Reescalar entrada si hace falta
         H, W = x.shape[-2:]
-
-        if (H, W) == (target_h, target_w):
-            return x, "unchanged"
-
-        if self.dynamic_input:
-            pe = getattr(model, "patch_embed", None)
-            ps = getattr(pe, "patch_size", getattr(self, "patch", 14))
-            if isinstance(ps, int):
-                ps = (ps, ps)
-            if (target_h % ps[0] == 0) and (target_w % ps[1] == 0) and hasattr(pe, "set_input_size"):
+        if (H, W) != (target_h, target_w):
+            x = F.interpolate(x, size=(target_h, target_w), mode="bilinear", align_corners=False)
+    
+        # Sincronizar ViT para este tamaño (evita el assert de timm)
+        pe = getattr(model, "patch_embed", None)
+        if pe is not None:
+            if hasattr(pe, "set_input_size"):
                 pe.set_input_size((target_h, target_w))
-                if hasattr(model, "img_size"):
-                    model.img_size = (target_h, target_w)
-                if (H, W) != (target_h, target_w):
-                    x = F.interpolate(x, size=(target_h, target_w), mode="bilinear", align_corners=False)
-                return x, "set_input_size"
-
-        # Por defecto / fallback: tamaño fijo (evita incompatibilidades de TokenShape)
-        x_res = F.interpolate(x, size=(target_h, target_w), mode="bilinear", align_corners=False)
-        return x_res, "resize"
+            # Por si el modelo consulta estas propiedades:
+            if hasattr(pe, "img_size"):
+                pe.img_size = (target_h, target_w)
+            if hasattr(model, "img_size"):
+                model.img_size = (target_h, target_w)
+    
+        return x, "resize"
 
     # ---------------- compat capas intermedias ----------------
     def _call_get_intermediate_layers_compat(
@@ -249,24 +243,14 @@ class DinoV2Features:
 
     # ---------------- API pública ----------------
     @torch.inference_mode()
-    def extract(self, img) -> Tuple[np.ndarray, Tuple[int, int]]:
-        """
-        Devuelve:
-          emb: np.ndarray
-               - pool="none" -> (HW, C)  (todos los tokens)
-               - pool="mean" -> (1,  C)  (media de tokens)
-          hw:  (h_tokens, w_tokens)
-        """
+    def extract(self, img):
         x = self._preprocess(img)
-        x, _ = self._prepare_input_size(self.model, x)
-
-        tokens = self._forward_tokens(x)  # (HW, C)
+        x, how = self._prepare_input_size(self.model, x)
+        print(f"[features] after-prep: {x.shape[-2:]} ({how}), patch={self.patch}")
+        tokens = self._forward_tokens(x)
         H, W = x.shape[-2:]
         h_tokens, w_tokens = H // self.patch, W // self.patch
-
-        if self.pool == "mean":
-            emb_np = tokens.mean(dim=0, keepdim=True).float().detach().cpu().numpy()  # (1, C)
-        else:
-            emb_np = tokens.float().detach().cpu().numpy()  # (HW, C)
-
+        emb_np = tokens.float().detach().cpu().numpy()
         return emb_np, (int(h_tokens), int(w_tokens))
+
+    
