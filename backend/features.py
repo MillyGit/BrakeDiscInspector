@@ -226,22 +226,102 @@ class DinoV2Features:
         return feats
 
     # ---------------- tokens ----------------
-    def _forward_tokens(self, x: torch.Tensor) -> torch.Tensor:
-        x, _ = self._prepare_input_size(self.model, x)
+    def _forward_tokens(
+        self,
+        x: torch.Tensor,
+        *,
+        use_intermediate: bool | None = None,   # None => usa intermedias si self.out_indices está definido
+        want_reshape: bool = True,              # pedir (B,H,W,C) en intermedias cuando sea posible
+        remove_cls: bool = True,                # quitar CLS si viene
+        combine: str = "concat",                # "concat" | "mean" | "stack" (combina capas intermedias)
+    ) -> torch.Tensor:
+        """
+        Devuelve tokens como (HW, C_out).
     
-        if self.out_indices and hasattr(self.model, "get_intermediate_layers"):
+        - use_intermediate:
+            True  -> intenta get_intermediate_layers (si el modelo lo soporta)
+            False -> usa sólo forward_features
+            None  -> usa intermedias si self.out_indices está definido, si no fallback a forward_features
+        - want_reshape: cuando se usan intermedias, intenta que devuelvan (B,H,W,C)
+        - remove_cls: elimina el token CLS si viene (N == HW+1)
+        - combine:
+            "concat" -> concatena canales de todas las capas a lo largo de C
+            "mean"   -> media de canales entre capas (C_out = promedio)
+            "stack"  -> apila capas en un eje extra y las aplana al final (equivalente a concat si tamaños coinciden)
+        """
+    
+        def _expected_grid(batched_x: torch.Tensor) -> tuple[int, int, int]:
+            H, W = batched_x.shape[-2:]
+            htok, wtok = H // self.patch, W // self.patch
+            return htok, wtok, htok * wtok
+    
+        def _as_BxNC(t: torch.Tensor, expected_N: int) -> torch.Tensor:
+            # Convierte (B,H,W,C)->(B,HW,C), quita CLS opcional y valida N
+            if t.ndim == 4:  # (B,H,W,C)
+                b, h, w, c = t.shape
+                t = t.reshape(b, h * w, c)
+            elif t.ndim != 3:  # (B,N,C) esperado
+                raise RuntimeError(f"Forma inesperada en intermedia/feature: {t.shape}")
+    
+            # quitar CLS si procede
+            if remove_cls and t.shape[1] == expected_N + 1:
+                t = t[:, 1:, :]
+    
+            if t.shape[1] != expected_N:
+                raise RuntimeError(
+                    f"TokenShape mismatch: N={t.shape[1]} esperado={expected_N} "
+                    f"(patch={self.patch})"
+                )
+            return t
+    
+        # 1) Asegurar tamaño de entrada (fijo / sincronizado)
+        x, _ = self._prepare_input_size(self.model, x)
+        htok, wtok, expected_N = _expected_grid(x)
+    
+        # 2) ¿Usamos intermedias?
+        if use_intermediate is None:
+            use_intermediate = bool(self.out_indices) and hasattr(self.model, "get_intermediate_layers")
+    
+        if use_intermediate:
             try:
                 layers = self._call_get_intermediate_layers_compat(
-                    self.model, x, self.out_indices, want_cls=False, want_reshape=True
+                    self.model,
+                    x,
+                    self.out_indices,
+                    want_cls=False,
+                    want_reshape=want_reshape,
                 )
                 if layers is not None:
-                    feats = self._normalize_layers(layers, x)   # <— usa la versión NO estática
-                    tokens = torch.cat(feats, dim=-1)           # (B, HW, sumC)
-                    return tokens[0]                            # (HW, C)
-            except Exception as ex:
-                print(f"[features] fallback por get_intermediate_layers: {ex}")
+                    # Desempaquetar y normalizar todas a (B,N,C)
+                    normed: list[torch.Tensor] = []
+                    for li, layer in enumerate(layers):
+                        if isinstance(layer, (tuple, list)) and len(layer) > 0 and torch.is_tensor(layer[0]):
+                            layer = layer[0]
+                        if not torch.is_tensor(layer):
+                            raise RuntimeError(f"Tipo inesperado en capa {li}: {type(layer)}")
+                        normed.append(_as_BxNC(layer, expected_N))
     
-        # Fallback a forward_features si algo falla arriba
+                    # Combinar capas
+                    if combine == "concat":
+                        out = torch.cat(normed, dim=-1)       # (B,N, sumC)
+                    elif combine == "mean":
+                        # apila y promedia canales
+                        stk = torch.stack(normed, dim=0)      # (L,B,N,C)
+                        out = stk.mean(dim=0)                 # (B,N,C)
+                    elif combine == "stack":
+                        # apilar y aplanar (similar a concat si tamaños coinciden)
+                        stk = torch.stack(normed, dim=-1)     # (B,N,C,L)
+                        b, n, c, l = stk.shape
+                        out = stk.reshape(b, n, c * l)        # (B,N,C*L)
+                    else:
+                        raise ValueError("combine debe ser 'concat', 'mean' o 'stack'")
+    
+                    return out[0]  # (N, C_out)
+            except Exception as ex:
+                # Fallback limpio a forward_features
+                print(f"[features] fallback intermedias -> forward_features: {ex}")
+    
+        # 3) forward_features (fallback o seleccionado)
         feats = self.model.forward_features(x)
         if isinstance(feats, dict):
             t = feats.get("x") or feats.get("tokens")
@@ -253,20 +333,15 @@ class DinoV2Features:
         else:
             t = feats
     
-        if t.ndim == 3:
-            B, N, C = t.shape
-            H, W = x.shape[-2:]
-            exp = (H // self.patch) * (W // self.patch)
-            if N == exp + 1:
-                t = t[:, 1:, :]
-            elif N != exp:
-                raise RuntimeError(f"forward_features N={N} != esperado={exp}")
-            return t[0]
-        elif t.ndim == 4:
+        if t.ndim == 3:          # (B,N,C) posiblemente con CLS
+            t = _as_BxNC(t, expected_N)
+            return t[0]          # (N,C)
+        elif t.ndim == 4:        # (B,C,H,W)
             b, c, h, w = t.shape
-            return t.permute(0, 2, 3, 1).reshape(b, h * w, c)[0]
+            return t.permute(0, 2, 3, 1).reshape(b, h * w, c)[0]  # (N,C)
         else:
             raise RuntimeError(f"Forma inesperada de features: {t.shape}")
+
 
 
     # ---------------- API pública ----------------
