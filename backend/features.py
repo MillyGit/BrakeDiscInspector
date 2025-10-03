@@ -183,59 +183,47 @@ class DinoV2Features:
             n = len(out_indices) if out_indices else 1
             return fn(x, n)
 
-    @staticmethod
     def _normalize_layers(self, layers: list[torch.Tensor], x: torch.Tensor) -> list[torch.Tensor]:
         """
-        Convierte cualquier forma a B x (Htok*Wtok) x C, quitando CLS si aparece.
+        Convierte cualquier forma a B x (Htok*Wtok) x C, quitando CLS si aparece
+        y verificando que todas las capas queden con el MISMO N (= Htok*Wtok).
         """
-        # grid esperado en función del input ya preparado
         H, W = x.shape[-2:]
         htok, wtok = H // self.patch, W // self.patch
         expected = htok * wtok
     
         feats = []
-        for layer in layers:
-            # Si algunas impls devuelven (tensor, ) o [tensor], quítalo
+        for i, layer in enumerate(layers):
+            # Desempaquetar (tensor,) o [tensor]
             if isinstance(layer, (tuple, list)) and len(layer) > 0 and torch.is_tensor(layer[0]):
                 layer = layer[0]
             if not torch.is_tensor(layer):
-                raise RuntimeError(f"Tipo inesperado en capa intermedia: {type(layer)}")
+                raise RuntimeError(f"Tipo inesperado en capa intermedia {i}: {type(layer)}")
     
             if layer.ndim == 4:
-                # B x H x W x C  →  B x (HW) x C
+                # (B, H, W, C) -> (B, HW, C)
                 b, h, w, c = layer.shape
                 layer = layer.reshape(b, h * w, c)
-    
             elif layer.ndim == 3:
-                # B x N x C (quizá con CLS)
+                # (B, N, C) posiblemente con CLS
                 b, n, c = layer.shape
                 if n == expected + 1:
-                    # quitar CLS
-                    layer = layer[:, 1:, :]
-                elif n != expected:
-                    # último recurso: si N es cuadrado ±1, intenta cuadrar
-                    sq = int(round(n ** 0.5))
-                    if sq * sq + 1 == n:
-                        layer = layer[:, 1:, :]
-                    elif sq * sq == n and n != expected:
-                        # dejamos el valor pero avisamos
-                        print(f"[features] WARN: N={n} != expected={expected} (sin CLS). Se continúa.")
-                    # si no cuadra, seguimos tal cual y fallará más adelante con mensaje claro
+                    layer = layer[:, 1:, :]  # quitar CLS
+                    n = expected
             else:
-                raise RuntimeError(f"Forma inesperada en capa intermedia: {layer.shape}")
+                raise RuntimeError(f"Forma inesperada en capa intermedia {i}: {layer.shape}")
     
-            # tras normalizar, verificamos
-            if layer.shape[1] != expected:
+            n = layer.shape[1]
+            if n != expected:
+                # Mensaje explícito para detectar el desajuste (1025 vs 1370, etc.)
                 raise RuntimeError(
-                    f"TokenShape mismatch al normalizar: N={layer.shape[1]} esperado={expected} "
+                    f"TokenShape mismatch en capa {i}: N={n}, esperado={expected} "
                     f"(grid {htok}x{wtok}, HxW={H}x{W}, patch={self.patch})"
                 )
     
             feats.append(layer)
     
         return feats
-
-
 
     # ---------------- tokens ----------------
     def _forward_tokens(self, x: torch.Tensor) -> torch.Tensor:
@@ -247,38 +235,39 @@ class DinoV2Features:
                     self.model, x, self.out_indices, want_cls=False, want_reshape=True
                 )
                 if layers is not None:
-                    feats = self._normalize_layers(layers, x)  # <-- pasa x
-                    tokens = torch.cat(feats, dim=-1)          # (B, HW, sumC)
-                    return tokens[0]                           # (HW, C)
+                    feats = self._normalize_layers(layers, x)   # <— usa la versión NO estática
+                    tokens = torch.cat(feats, dim=-1)           # (B, HW, sumC)
+                    return tokens[0]                            # (HW, C)
             except Exception as ex:
                 print(f"[features] fallback por get_intermediate_layers: {ex}")
     
+        # Fallback a forward_features si algo falla arriba
         feats = self.model.forward_features(x)
         if isinstance(feats, dict):
             t = feats.get("x") or feats.get("tokens")
             if t is None:
-                candidates = [v for v in feats.values() if isinstance(v, torch.Tensor)]
-                if not candidates:
+                cands = [v for v in feats.values() if isinstance(v, torch.Tensor)]
+                if not cands:
                     raise RuntimeError("forward_features devolvió un dict sin tensores utilizables")
-                t = max(candidates, key=lambda u: u.numel())
+                t = max(cands, key=lambda u: u.numel())
         else:
             t = feats
     
         if t.ndim == 3:
             B, N, C = t.shape
             H, W = x.shape[-2:]
-            htok, wtok = H // self.patch, W // self.patch
-            expected = htok * wtok
-            if N == expected + 1:
+            exp = (H // self.patch) * (W // self.patch)
+            if N == exp + 1:
                 t = t[:, 1:, :]
-            elif N != expected:
-                raise RuntimeError(f"forward_features N={N} != esperado={expected} (grid {htok}x{wtok})")
+            elif N != exp:
+                raise RuntimeError(f"forward_features N={N} != esperado={exp}")
             return t[0]
         elif t.ndim == 4:
             b, c, h, w = t.shape
             return t.permute(0, 2, 3, 1).reshape(b, h * w, c)[0]
         else:
             raise RuntimeError(f"Forma inesperada de features: {t.shape}")
+
 
     # ---------------- API pública ----------------
     @torch.inference_mode()
