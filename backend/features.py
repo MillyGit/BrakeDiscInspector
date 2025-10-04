@@ -182,8 +182,7 @@ class DinoV2Features:
         if hasattr(model, "img_size"):
             model.img_size = (H, W)
 
-        # === OPTION 2 ROBUST ===
-        # Resetear pos_embed al original y redimensionarlo manualmente al grid actual
+        # Reset + resize manual del pos_embed al grid actual
         self._reset_and_resize_pos_embed(H // self.patch, W // self.patch)
 
         return x, ("dynamic" if self.dynamic_input else "resize")
@@ -202,7 +201,7 @@ class DinoV2Features:
                 return
             cls, grid = pos[:, :1], pos[:, 1:]                   # (1,1,C) y (1,HW,C)
 
-            # grid actual del pos_embed
+            # grid actual del pos_embed (g_old x g_old)
             g_old = int(grid.shape[1] ** 0.5)
             grid = grid[:, : g_old * g_old, :]                   # seguridad
             B, N, C = grid.shape
@@ -431,9 +430,11 @@ class DinoV2Features:
 
         # Debug útil
         pe_n = getattr(self.model, "pos_embed", None)
-        pe_n = int(pe_n.shape[1]) if isinstance(pe_n, torch.Tensor) else -1
-        print(f\"[features] after-prep: {H}x{W} ({how}), patch={self.patch}, grid={h_tokens}x{w_tokens}, "
-              f"tokens(N+CLS)={h_tokens*w_tokens+1}, pos_embed_N={pe_n}\")
+        pe_count = int(pe_n.shape[1]) if isinstance(pe_n, torch.Tensor) else -1
+        print(
+            f"[features] after-prep: {H}x{W} ({how}), patch={self.patch}, "
+            f"grid={h_tokens}x{w_tokens}, tokens(N+CLS)={h_tokens*w_tokens+1}, pos_embed_N={pe_count}"
+        )
 
         tokens = self._forward_tokens(x)  # (N, C)
 
