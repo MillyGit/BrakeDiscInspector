@@ -1,4 +1,4 @@
-# backend/features.py
+# backend/features.py  (Option 2: resize pos_embed on-the-fly)
 from __future__ import annotations
 
 import io
@@ -12,11 +12,13 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import timm
+from timm.models.vision_transformer import resize_pos_embed
 
 
 class DinoV2Features:
     """
-    Extractor ViT/DINOv2 (timm) con tamaño de entrada controlado para TokenShape estable.
+    Extractor ViT/DINOv2 (timm) con tamaño de entrada controlado y
+    adaptación dinámica del positional embedding (Option 2).
 
     extract(img) -> (embedding_numpy, (h_tokens, w_tokens))
       - pool="none" -> (HW, C)  (todos los tokens)  [recomendado para PatchCore/coreset]
@@ -145,7 +147,7 @@ class DinoV2Features:
         - dynamic_input=False -> fuerza siempre (input_size, input_size)
         - dynamic_input=True  -> acepta HxW actuales si son múltiplos de self.patch;
                                  si no, redimensiona a input_size.
-        En ambos casos, sincroniza patch_embed/img_size del ViT.
+        En ambos casos, sincroniza patch_embed/img_size del ViT y adapta pos_embed.
         """
         target_h = int(self.input_size)
         target_w = int(self.input_size)
@@ -173,7 +175,25 @@ class DinoV2Features:
         if hasattr(model, "img_size"):
             model.img_size = (H, W)
 
+        # === OPTION 2: redimensionar pos_embed al grid actual ===
+        self._resize_pos_embed_to(H // self.patch, W // self.patch)
+
         return x, ("dynamic" if self.dynamic_input else "resize")
+
+    # ---- adaptar pos_embed al grid de tokens actual ----
+    def _resize_pos_embed_to(self, h_tokens: int, w_tokens: int):
+        pe = getattr(self.model, "pos_embed", None)
+        if pe is None:
+            return
+        with torch.no_grad():
+            pos = self.model.pos_embed  # (1, 1+HW, C)
+            cls, grid = pos[:, :1], pos[:, 1:]
+            g = int(grid.shape[1] ** 0.5)
+            if g != h_tokens or g != w_tokens:
+                new_grid = resize_pos_embed(grid, (h_tokens, w_tokens))
+                new_pos = torch.cat([cls, new_grid], dim=1)
+                # No entrenamos pos_embed; sólo adaptamos para el forward
+                self.model.pos_embed = nn.Parameter(new_pos, requires_grad=False)
 
     # ---------------- compat capas intermedias ----------------
     def _call_get_intermediate_layers_compat(
@@ -240,7 +260,7 @@ class DinoV2Features:
 
             n = layer.shape[1]
             if n != expected:
-                # Mensaje explícito para detectar el desajuste (1025 vs 1370, etc.)
+                # Mensaje explícito para detectar el desajuste
                 raise RuntimeError(
                     f"TokenShape mismatch en capa {i}: N={n}, esperado={expected} "
                     f"(grid {htok}x{wtok}, HxW={H}x{W}, patch={self.patch})"
@@ -262,19 +282,7 @@ class DinoV2Features:
     ) -> torch.Tensor:
         """
         Devuelve tokens como (N, C_out) con N = Htok*Wtok.
-
-        - use_intermediate:
-            True  -> intenta get_intermediate_layers (si el modelo lo soporta)
-            False -> usa sólo forward_features
-            None  -> usa intermedias si self.out_indices está definido, si no fallback a forward_features
-        - want_reshape: cuando se usan intermedias, intenta que devuelvan (B,H,W,C)
-        - remove_cls: elimina el token CLS si viene (N == HW+1)
-        - combine:
-            "concat" -> concatena canales de todas las capas a lo largo de C
-            "mean"   -> media de canales entre capas (C_out = promedio)
-            "stack"  -> apila capas en un eje extra y las aplana al final
         """
-
         def _expected_grid(batched_x: torch.Tensor) -> tuple[int, int, int]:
             H, W = batched_x.shape[-2:]
             htok, wtok = H // self.patch, W // self.patch
@@ -299,7 +307,7 @@ class DinoV2Features:
                 )
             return t
 
-        # 1) Asegurar tamaño de entrada (fijo / sincronizado)
+        # 1) Asegurar tamaño de entrada (fijo / sincronizado) y adaptar pos_embed
         x, _ = self._prepare_input_size(self.model, x)
         htok, wtok, expected_N = _expected_grid(x)
 
@@ -393,15 +401,19 @@ class DinoV2Features:
     def extract(self, img):
         x = self._preprocess(img)
         x, how = self._prepare_input_size(self.model, x)
-        print(f"[features] after-prep: {x.shape[-2:]} ({how}), patch={self.patch}")
-
-        tokens = self._forward_tokens(x)  # (N, C)
         H, W = x.shape[-2:]
         h_tokens, w_tokens = H // self.patch, W // self.patch
 
+        # Debug útil
+        pe_n = getattr(self.model, "pos_embed", None)
+        pe_n = int(pe_n.shape[1]) if pe_n is not None else -1
+        print(f"[features] after-prep: {H}x{W} ({how}), patch={self.patch}, grid={h_tokens}x{w_tokens}, "
+              f"tokens(N+CLS)={h_tokens*w_tokens+1}, pos_embed_N={pe_n}")
+
+        tokens = self._forward_tokens(x)  # (N, C)
+
         if self.pool == "mean":
-            # (N, C) -> (1, C): media de tokens
-            tokens = tokens.mean(dim=0, keepdim=True)
+            tokens = tokens.mean(dim=0, keepdim=True)  # (1, C)
 
         emb_np = tokens.float().detach().cpu().numpy()
         return emb_np, (int(h_tokens), int(w_tokens))
