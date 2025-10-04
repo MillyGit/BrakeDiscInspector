@@ -16,7 +16,7 @@ import timm
 
 class DinoV2Features:
     """
-    Extractor ViT/DINOv2 (timm) con tamaño fijo de entrada para TokenShape estable.
+    Extractor ViT/DINOv2 (timm) con tamaño de entrada controlado para TokenShape estable.
 
     extract(img) -> (embedding_numpy, (h_tokens, w_tokens))
       - pool="none" -> (HW, C)  (todos los tokens)  [recomendado para PatchCore/coreset]
@@ -29,13 +29,13 @@ class DinoV2Features:
     def __init__(
         self,
         model_name: str = "vit_small_patch14_dinov2.lvd142m",
-        input_size: int = 1036,                 # x2 de 518 (518*2=1036) => 74x74 tokens con patch=14
+        input_size: int = 1036,                 # 1036 = 74*14 (múltiplo de 14)
         out_indices: Optional[Iterable[int]] = (9, 10, 11),
         device: Optional[Union[str, torch.device]] = None,   # "auto", "cpu", "cuda[:0]", "mps"
         half: bool = False,
         imagenet_norm: bool = True,
         pool: str = "none",                     # "none" | "mean"
-        dynamic_input: bool = False,            # False => tamaño fijo; True => permite set_input_size si cuadra
+        dynamic_input: bool = False,            # False => fuerza tamaño fijo; True => acepta tamaños HxW múltiplos de patch
         **_,
     ) -> None:
         self.model_name = model_name
@@ -113,10 +113,26 @@ class DinoV2Features:
         raise TypeError(f"Tipo de imagen no soportado: {type(img)}")
 
     def _preprocess(self, img) -> torch.Tensor:
+        """
+        Preprocesa aplicando LETTERBOX (mantener aspecto + padding) a input_size x input_size
+        si dynamic_input=False. Si dynamic_input=True se hace letterbox igualmente aquí para
+        garantizar cuadrado; luego _prepare_input_size decidirá si mantener HxW.
+        """
         pil = self._to_pil(img)
-        # tamaño sugerido; _prepare_input_size fijará el tamaño exacto solicitado
+
+        # --- LETTERBOX (mantener aspecto + padding a cuadrado) ---
         if self.input_size and self.input_size > 0:
-            pil = pil.resize((self.input_size, self.input_size), Image.BICUBIC)
+            target = int(self.input_size)
+            w, h = pil.size
+            scale = min(target / w, target / h)
+            nw, nh = int(round(w * scale)), int(round(h * scale))
+            pil_resized = pil.resize((nw, nh), Image.BICUBIC)
+            canvas = Image.new("RGB", (target, target), (0, 0, 0))
+            left = (target - nw) // 2
+            top = (target - nh) // 2
+            canvas.paste(pil_resized, (left, top))
+            pil = canvas  # ahora es exactamente target x target
+
         arr = (np.asarray(pil).astype(np.float32) / 255.0)
         x = torch.from_numpy(arr).permute(2, 0, 1).unsqueeze(0).to(self.device)
         x = x.half() if self.half else x.float()
@@ -126,29 +142,38 @@ class DinoV2Features:
     # ---------------- tamaño de entrada ----------------
     def _prepare_input_size(self, model: nn.Module, x: torch.Tensor):
         """
-        Fuerza SIEMPRE a (self.input_size, self.input_size) cuando dynamic_input=False.
-        Además sincroniza patch_embed/img_size del ViT para evitar asserts.
+        - dynamic_input=False -> fuerza siempre (input_size, input_size)
+        - dynamic_input=True  -> acepta HxW actuales si son múltiplos de self.patch;
+                                 si no, redimensiona a input_size.
+        En ambos casos, sincroniza patch_embed/img_size del ViT.
         """
         target_h = int(self.input_size)
         target_w = int(self.input_size)
-    
-        # Reescalar entrada si hace falta
+
         H, W = x.shape[-2:]
-        if (H, W) != (target_h, target_w):
-            x = F.interpolate(x, size=(target_h, target_w), mode="bilinear", align_corners=False)
-    
-        # Sincronizar ViT para este tamaño (evita el assert de timm)
+        if self.dynamic_input:
+            # Aceptar tamaño actual solo si cuadra con el patch
+            if (H % self.patch == 0) and (W % self.patch == 0):
+                pass  # mantener H, W
+            else:
+                x = F.interpolate(x, size=(target_h, target_w), mode="bilinear", align_corners=False)
+                H, W = target_h, target_w
+        else:
+            if (H, W) != (target_h, target_w):
+                x = F.interpolate(x, size=(target_h, target_w), mode="bilinear", align_corners=False)
+                H, W = target_h, target_w
+
+        # Sincronizar ViT/timm
         pe = getattr(model, "patch_embed", None)
         if pe is not None:
             if hasattr(pe, "set_input_size"):
-                pe.set_input_size((target_h, target_w))
-            # Por si el modelo consulta estas propiedades:
+                pe.set_input_size((H, W))
             if hasattr(pe, "img_size"):
-                pe.img_size = (target_h, target_w)
-            if hasattr(model, "img_size"):
-                model.img_size = (target_h, target_w)
-    
-        return x, "resize"
+                pe.img_size = (H, W)
+        if hasattr(model, "img_size"):
+            model.img_size = (H, W)
+
+        return x, ("dynamic" if self.dynamic_input else "resize")
 
     # ---------------- compat capas intermedias ----------------
     def _call_get_intermediate_layers_compat(
@@ -191,7 +216,7 @@ class DinoV2Features:
         H, W = x.shape[-2:]
         htok, wtok = H // self.patch, W // self.patch
         expected = htok * wtok
-    
+
         feats = []
         for i, layer in enumerate(layers):
             # Desempaquetar (tensor,) o [tensor]
@@ -199,7 +224,7 @@ class DinoV2Features:
                 layer = layer[0]
             if not torch.is_tensor(layer):
                 raise RuntimeError(f"Tipo inesperado en capa intermedia {i}: {type(layer)}")
-    
+
             if layer.ndim == 4:
                 # (B, H, W, C) -> (B, HW, C)
                 b, h, w, c = layer.shape
@@ -212,7 +237,7 @@ class DinoV2Features:
                     n = expected
             else:
                 raise RuntimeError(f"Forma inesperada en capa intermedia {i}: {layer.shape}")
-    
+
             n = layer.shape[1]
             if n != expected:
                 # Mensaje explícito para detectar el desajuste (1025 vs 1370, etc.)
@@ -220,9 +245,9 @@ class DinoV2Features:
                     f"TokenShape mismatch en capa {i}: N={n}, esperado={expected} "
                     f"(grid {htok}x{wtok}, HxW={H}x{W}, patch={self.patch})"
                 )
-    
+
             feats.append(layer)
-    
+
         return feats
 
     # ---------------- tokens ----------------
@@ -233,11 +258,11 @@ class DinoV2Features:
         use_intermediate: bool | None = None,   # None => usa intermedias si self.out_indices está definido
         want_reshape: bool = True,              # pedir (B,H,W,C) en intermedias cuando sea posible
         remove_cls: bool = True,                # quitar CLS si viene
-        combine: str = "concat",                # "concat" | "mean" | "stack" (combina capas intermedias)
+        combine: str = "concat",                # "concat" | "mean" | "stack"
     ) -> torch.Tensor:
         """
-        Devuelve tokens como (HW, C_out).
-    
+        Devuelve tokens como (N, C_out) con N = Htok*Wtok.
+
         - use_intermediate:
             True  -> intenta get_intermediate_layers (si el modelo lo soporta)
             False -> usa sólo forward_features
@@ -247,14 +272,14 @@ class DinoV2Features:
         - combine:
             "concat" -> concatena canales de todas las capas a lo largo de C
             "mean"   -> media de canales entre capas (C_out = promedio)
-            "stack"  -> apila capas en un eje extra y las aplana al final (equivalente a concat si tamaños coinciden)
+            "stack"  -> apila capas en un eje extra y las aplana al final
         """
-    
+
         def _expected_grid(batched_x: torch.Tensor) -> tuple[int, int, int]:
             H, W = batched_x.shape[-2:]
             htok, wtok = H // self.patch, W // self.patch
             return htok, wtok, htok * wtok
-    
+
         def _as_BxNC(t: torch.Tensor, expected_N: int) -> torch.Tensor:
             # Convierte (B,H,W,C)->(B,HW,C), quita CLS opcional y valida N
             if t.ndim == 4:  # (B,H,W,C)
@@ -262,26 +287,26 @@ class DinoV2Features:
                 t = t.reshape(b, h * w, c)
             elif t.ndim != 3:  # (B,N,C) esperado
                 raise RuntimeError(f"Forma inesperada en intermedia/feature: {t.shape}")
-    
+
             # quitar CLS si procede
             if remove_cls and t.shape[1] == expected_N + 1:
                 t = t[:, 1:, :]
-    
+
             if t.shape[1] != expected_N:
                 raise RuntimeError(
                     f"TokenShape mismatch: N={t.shape[1]} esperado={expected_N} "
                     f"(patch={self.patch})"
                 )
             return t
-    
+
         # 1) Asegurar tamaño de entrada (fijo / sincronizado)
         x, _ = self._prepare_input_size(self.model, x)
         htok, wtok, expected_N = _expected_grid(x)
-    
+
         # 2) ¿Usamos intermedias?
         if use_intermediate is None:
             use_intermediate = bool(self.out_indices) and hasattr(self.model, "get_intermediate_layers")
-    
+
         if use_intermediate:
             try:
                 layers = self._call_get_intermediate_layers_compat(
@@ -300,7 +325,7 @@ class DinoV2Features:
                         if not torch.is_tensor(layer):
                             raise RuntimeError(f"Tipo inesperado en capa {li}: {type(layer)}")
                         normed.append(_as_BxNC(layer, expected_N))
-    
+
                     # Combinar capas
                     if combine == "concat":
                         out = torch.cat(normed, dim=-1)       # (B,N, sumC)
@@ -315,12 +340,12 @@ class DinoV2Features:
                         out = stk.reshape(b, n, c * l)        # (B,N,C*L)
                     else:
                         raise ValueError("combine debe ser 'concat', 'mean' o 'stack'")
-    
+
                     return out[0]  # (N, C_out)
             except Exception as ex:
                 # Fallback limpio a forward_features
                 print(f"[features] fallback intermedias -> forward_features: {ex}")
-    
+
         # 3) forward_features (fallback o seleccionado)
         feats = self.model.forward_features(x)
         if isinstance(feats, dict):
@@ -332,7 +357,7 @@ class DinoV2Features:
                 t = max(cands, key=lambda u: u.numel())
         else:
             t = feats
-    
+
         if t.ndim == 3:          # (B,N,C) posiblemente con CLS
             t = _as_BxNC(t, expected_N)
             return t[0]          # (N,C)
@@ -342,7 +367,26 @@ class DinoV2Features:
         else:
             raise RuntimeError(f"Forma inesperada de features: {t.shape}")
 
+    # ---------------- utilidades públicas ----------------
+    def get_metadata(self) -> dict:
+        return {
+            "model_name": self.model_name,
+            "device": str(self.device),
+            "half": bool(self.half),
+            "imagenet_norm": bool(self.imagenet_norm),
+            "patch_size": int(self.patch),
+            "input_size": int(self.input_size),
+            "dynamic_input": bool(self.dynamic_input),
+            "out_indices": list(self.out_indices) if self.out_indices else [],
+            "pool": self.pool,
+        }
 
+    def assert_token_shape(self, expected: Tuple[int, int], got: Tuple[int, int], ctx: str = ""):
+        if expected and tuple(expected) != tuple(got):
+            raise RuntimeError(
+                f"TokenShape mismatch{(' @' + ctx) if ctx else ''}: {got} != {expected}. "
+                f"Comprueba input_size/dynamic_input y reentrena si cambió."
+            )
 
     # ---------------- API pública ----------------
     @torch.inference_mode()
@@ -350,10 +394,14 @@ class DinoV2Features:
         x = self._preprocess(img)
         x, how = self._prepare_input_size(self.model, x)
         print(f"[features] after-prep: {x.shape[-2:]} ({how}), patch={self.patch}")
-        tokens = self._forward_tokens(x)
+
+        tokens = self._forward_tokens(x)  # (N, C)
         H, W = x.shape[-2:]
         h_tokens, w_tokens = H // self.patch, W // self.patch
+
+        if self.pool == "mean":
+            # (N, C) -> (1, C): media de tokens
+            tokens = tokens.mean(dim=0, keepdim=True)
+
         emb_np = tokens.float().detach().cpu().numpy()
         return emb_np, (int(h_tokens), int(w_tokens))
-
-    
