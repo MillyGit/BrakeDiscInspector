@@ -1,4 +1,4 @@
-# backend/features.py  (Option 2: resize pos_embed on-the-fly)
+# backend/features.py  (Option 2 robust: resize pos_embed manually + reset each call)
 from __future__ import annotations
 
 import io
@@ -12,32 +12,32 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import timm
-from timm.models.vision_transformer import resize_pos_embed
 
 
 class DinoV2Features:
     """
-    Extractor ViT/DINOv2 (timm) con tamaño de entrada controlado y
-    adaptación dinámica del positional embedding (Option 2).
+    Extractor ViT/DINOv2 (timm) con:
+      - LETTERBOX (mantener aspecto + padding) a input_size
+      - Tamaño de entrada controlado (fijo o dinámico múltiplo de patch)
+      - *Opción 2*: redimensionado del positional embedding **manual** (sin depender de timm.resize_pos_embed)
+      - *Reset* del pos_embed original en **cada** `extract()` para evitar acumulación
 
     extract(img) -> (embedding_numpy, (h_tokens, w_tokens))
       - pool="none" -> (HW, C)  (todos los tokens)  [recomendado para PatchCore/coreset]
       - pool="mean" -> (1,  C)  (media de tokens)
-
-    Por defecto usamos input_size=1036 (≈ x2 de 518) con patch=14 -> 74x74 tokens.
-    Se recomienda re-ejecutar fit_ok y calibrate tras cambiar input_size.
     """
 
     def __init__(
         self,
         model_name: str = "vit_small_patch14_dinov2.lvd142m",
-        input_size: int = 1036,                 # 1036 = 74*14 (múltiplo de 14)
+        input_size: int = 1036,                 # múltiplo de 14 (por ser ViT/14)
         out_indices: Optional[Iterable[int]] = (9, 10, 11),
         device: Optional[Union[str, torch.device]] = None,   # "auto", "cpu", "cuda[:0]", "mps"
         half: bool = False,
         imagenet_norm: bool = True,
         pool: str = "none",                     # "none" | "mean"
-        dynamic_input: bool = False,            # False => fuerza tamaño fijo; True => acepta tamaños HxW múltiplos de patch
+        dynamic_input: bool = False,            # False => fuerza tamaño fijo; True => acepta HxW múltiplos de patch
+        patch_size: Optional[int] = None,       # si se pasa, fuerza el valor de patch
         **_,
     ) -> None:
         self.model_name = model_name
@@ -84,8 +84,11 @@ class DinoV2Features:
 
         # patch size
         pe = getattr(self.model, "patch_embed", None)
-        ps = getattr(pe, "patch_size", 14)
-        self.patch = int(ps[0]) if isinstance(ps, (tuple, list)) else int(ps)
+        if patch_size is not None:
+            self.patch = int(patch_size)
+        else:
+            ps = getattr(pe, "patch_size", 14)
+            self.patch = int(ps[0]) if isinstance(ps, (tuple, list)) else int(ps)
 
         # normalización tipo ImageNet
         if self.imagenet_norm:
@@ -94,6 +97,10 @@ class DinoV2Features:
         else:
             self.mean = torch.zeros((1, 3, 1, 1), device=self.device)
             self.std  = torch.ones((1, 3, 1, 1), device=self.device)
+
+        # Guardar pos_embed "de fábrica" para poder resetearlo en cada extract()
+        pe = getattr(self.model, "pos_embed", None)
+        self._pos_embed_base: Optional[torch.Tensor] = pe.detach().clone() if isinstance(pe, torch.Tensor) else None
 
     # ---------------- imagen / preprocesado ----------------
     @staticmethod
@@ -175,25 +182,43 @@ class DinoV2Features:
         if hasattr(model, "img_size"):
             model.img_size = (H, W)
 
-        # === OPTION 2: redimensionar pos_embed al grid actual ===
-        self._resize_pos_embed_to(H // self.patch, W // self.patch)
+        # === OPTION 2 ROBUST ===
+        # Resetear pos_embed al original y redimensionarlo manualmente al grid actual
+        self._reset_and_resize_pos_embed(H // self.patch, W // self.patch)
 
         return x, ("dynamic" if self.dynamic_input else "resize")
 
-    # ---- adaptar pos_embed al grid de tokens actual ----
-    def _resize_pos_embed_to(self, h_tokens: int, w_tokens: int):
-        pe = getattr(self.model, "pos_embed", None)
-        if pe is None:
+    # ---- reset + adaptar pos_embed al grid actual (sin timm.resize_pos_embed) ----
+    def _reset_and_resize_pos_embed(self, h_tokens: int, w_tokens: int):
+        if self._pos_embed_base is None:
             return
         with torch.no_grad():
+            # Reset al "de fábrica"
+            base = self._pos_embed_base.to(self.model.pos_embed.device, dtype=self.model.pos_embed.dtype)
+            self.model.pos_embed = nn.Parameter(base.clone(), requires_grad=False)
+
             pos = self.model.pos_embed  # (1, 1+HW, C)
-            cls, grid = pos[:, :1], pos[:, 1:]
-            g = int(grid.shape[1] ** 0.5)
-            if g != h_tokens or g != w_tokens:
-                new_grid = resize_pos_embed(grid, (h_tokens, w_tokens))
-                new_pos = torch.cat([cls, new_grid], dim=1)
-                # No entrenamos pos_embed; sólo adaptamos para el forward
-                self.model.pos_embed = nn.Parameter(new_pos, requires_grad=False)
+            if not isinstance(pos, torch.Tensor):
+                return
+            cls, grid = pos[:, :1], pos[:, 1:]                   # (1,1,C) y (1,HW,C)
+
+            # grid actual del pos_embed
+            g_old = int(grid.shape[1] ** 0.5)
+            grid = grid[:, : g_old * g_old, :]                   # seguridad
+            B, N, C = grid.shape
+
+            # (1, HW, C) -> (1, C, g_old, g_old)
+            grid_2d = grid.reshape(B, g_old, g_old, C).permute(0, 3, 1, 2).contiguous()
+
+            # Interpolar en 2D al nuevo tamaño
+            new_2d = F.interpolate(grid_2d, size=(h_tokens, w_tokens), mode='bicubic', align_corners=False)
+
+            # Volver a (1, HW, C)
+            new_grid = new_2d.permute(0, 2, 3, 1).reshape(B, h_tokens * w_tokens, C).contiguous()
+
+            # Concatenar CLS
+            new_pos = torch.cat([cls, new_grid], dim=1)
+            self.model.pos_embed = nn.Parameter(new_pos, requires_grad=False)
 
     # ---------------- compat capas intermedias ----------------
     def _call_get_intermediate_layers_compat(
@@ -406,9 +431,9 @@ class DinoV2Features:
 
         # Debug útil
         pe_n = getattr(self.model, "pos_embed", None)
-        pe_n = int(pe_n.shape[1]) if pe_n is not None else -1
-        print(f"[features] after-prep: {H}x{W} ({how}), patch={self.patch}, grid={h_tokens}x{w_tokens}, "
-              f"tokens(N+CLS)={h_tokens*w_tokens+1}, pos_embed_N={pe_n}")
+        pe_n = int(pe_n.shape[1]) if isinstance(pe_n, torch.Tensor) else -1
+        print(f\"[features] after-prep: {H}x{W} ({how}), patch={self.patch}, grid={h_tokens}x{w_tokens}, "
+              f"tokens(N+CLS)={h_tokens*w_tokens+1}, pos_embed_N={pe_n}\")
 
         tokens = self._forward_tokens(x)  # (N, C)
 
