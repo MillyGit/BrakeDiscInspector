@@ -13,8 +13,7 @@ using System.Threading.Tasks;
 namespace BrakeDiscInspector_GUI_ROI.Workflow
 {
     /// <summary>
-    /// BackendClient consolidado: API pública igual (métodos/firmas/DTOs) y
-    /// sin duplicación de código en InferAsync (sobrecargas delegan a un core).
+    /// BackendClient revisado: API igual, robustez en JSON, MIME y errores.
     /// </summary>
     public sealed class BackendClient
     {
@@ -37,23 +36,30 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
                     _httpClient.BaseAddress = null;
                     return;
                 }
+
                 var trimmed = value.TrimEnd('/');
                 if (!trimmed.StartsWith("http", StringComparison.OrdinalIgnoreCase))
+                {
                     trimmed = "http://" + trimmed;
+                }
+
                 _httpClient.BaseAddress = new Uri(trimmed + "/");
             }
         }
 
         private static string ResolveDefaultBaseUrl()
         {
-            string def = "http://127.0.0.1:8000";
+            string defaultUrl = "http://127.0.0.1:8000";
 
             string? envBaseUrl =
                 Environment.GetEnvironmentVariable("BRAKEDISC_BACKEND_BASEURL") ??
                 Environment.GetEnvironmentVariable("BRAKEDISC_BACKEND_BASE_URL") ??
                 Environment.GetEnvironmentVariable("BRAKEDISC_BACKEND_URL");
 
-            if (!string.IsNullOrWhiteSpace(envBaseUrl)) return envBaseUrl;
+            if (!string.IsNullOrWhiteSpace(envBaseUrl))
+            {
+                return envBaseUrl;
+            }
 
             var host = Environment.GetEnvironmentVariable("BRAKEDISC_BACKEND_HOST") ??
                        Environment.GetEnvironmentVariable("HOST");
@@ -66,12 +72,13 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
                 port = string.IsNullOrWhiteSpace(port) ? "8000" : port.Trim();
                 return $"{host}:{port}";
             }
-            return def;
+
+            return defaultUrl;
         }
 
-        // ===========================================================
-        // Endpoints
-        // ===========================================================
+        // =========================
+        //  Endpoints
+        // =========================
 
         public async Task<FitOkResult> FitOkAsync(
             string roleId,
@@ -91,17 +98,20 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
             bool hasImage = false;
             foreach (var path in okImagePaths)
             {
-                if (string.IsNullOrWhiteSpace(path) || !File.Exists(path)) continue;
+                if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
+                    continue;
 
                 var stream = File.OpenRead(path);
                 var content = new StreamContent(stream);
                 content.Headers.ContentType =
                     new System.Net.Http.Headers.MediaTypeHeaderValue(GuessMediaType(path));
-                // Mismo nombre de campo para cada imagen -> "images"
+                // Importante: mismo nombre de campo para cada imagen -> "images"
                 form.Add(content, "images", Path.GetFileName(path));
                 hasImage = true;
             }
-            if (!hasImage) throw new InvalidOperationException("No OK images were provided for training.");
+
+            if (!hasImage)
+                throw new InvalidOperationException("No OK images were provided for training.");
 
             using var response = await _httpClient.PostAsync("fit_ok", form, ct).ConfigureAwait(false);
             var body = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
@@ -111,6 +121,7 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
             using var streamResp = new MemoryStream(Encoding.UTF8.GetBytes(body));
             var payload = await JsonSerializer.DeserializeAsync<FitOkResult>(streamResp, JsonOptions, ct).ConfigureAwait(false)
                           ?? throw new InvalidOperationException("Empty or invalid JSON from fit_ok endpoint.");
+
             return payload;
         }
 
@@ -145,8 +156,9 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
             var payload = await JsonSerializer.DeserializeAsync<CalibResult>(stream, JsonOptions, ct).ConfigureAwait(false)
                           ?? throw new InvalidOperationException("Empty or invalid JSON from calibrate_ng endpoint.");
 
-            // Fallback por si backend aún no devuelve valor (evita UI rota)
-            payload.Threshold ??= 0.5;
+            // Fallback por si backend devuelve null u omite el campo (evita romper UI)
+            payload.threshold ??= 0.5;
+
             return payload;
         }
 
@@ -177,7 +189,7 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
             string? shapeJson = null,
             CancellationToken ct = default)
         {
-            if (imageStream is null) throw new ArgumentNullException(nameof(imageStream));
+            if (imageStream == null) throw new ArgumentNullException(nameof(imageStream));
             if (imageStream.CanSeek) imageStream.Seek(0, SeekOrigin.Begin);
 
             return await _InferMultipartAsync(roleId, roiId, mmPerPx, imageStream, fileName, shapeJson, ct)
@@ -193,7 +205,7 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
             string? shapeJson = null,
             CancellationToken ct = default)
         {
-            if (imageBytes is null || imageBytes.Length == 0)
+            if (imageBytes == null || imageBytes.Length == 0)
                 throw new ArgumentException("Image bytes are required", nameof(imageBytes));
 
             await using var ms = new MemoryStream(imageBytes, writable: false);
@@ -219,11 +231,11 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
             var content = new StreamContent(imageStream);
             content.Headers.ContentType =
                 new System.Net.Http.Headers.MediaTypeHeaderValue(GuessMediaType(fileName));
-            form.Add(content, "image", string.IsNullOrWhiteSpace(fileName) ? "frame" : fileName);
+            form.Add(content, "image", string.IsNullOrWhiteSpace(fileName) ? "roi" : fileName);
 
             if (!string.IsNullOrWhiteSpace(shapeJson))
             {
-                // Texto plano para FastAPI Form(str); si tu backend acepta JSON puro, añade el media type.
+                // Texto plano para FastAPI Form(str)
                 form.Add(new StringContent(shapeJson, Encoding.UTF8), "shape");
             }
 
@@ -236,8 +248,9 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
             var payload = await JsonSerializer.DeserializeAsync<InferResult>(stream, JsonOptions, ct).ConfigureAwait(false)
                           ?? throw new InvalidOperationException("Empty or invalid JSON from infer endpoint.");
 
-            // Garantizar default si threshold no viene
-            payload.Threshold ??= 0.5;
+            // Fallback: si el backend devuelve threshold null/omitido
+            payload.threshold ??= 0.5;
+
             return payload;
         }
 
@@ -258,9 +271,9 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
             }
         }
 
-        // ===========================================================
+        // =========================
         // Utilidades
-        // ===========================================================
+        // =========================
 
         private static string GuessMediaType(string pathOrName)
         {
@@ -275,6 +288,7 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
             };
         }
 
+        // Opciones JSON robustas
         private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
         {
             PropertyNameCaseInsensitive = true,
@@ -283,7 +297,7 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
         };
     }
 
-    // ===================== DTOs =====================
+    // ============ DTOs (mismos nombres/campos; threshold nullable) ============
 
     public sealed class FitOkResult
     {
@@ -294,37 +308,20 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
 
     public sealed class CalibResult
     {
-        [JsonPropertyName("threshold")]
-        public double? Threshold { get; set; }   // << antes era double
-    
-        [JsonPropertyName("score_percentile")]
-        public int ScorePercentile { get; set; }
-    
-        [JsonPropertyName("ok_count")]
-        public int OkCount { get; set; }
-    
-        [JsonPropertyName("ng_count")]
-        public int NgCount { get; set; }
-    }
-    
-    public sealed class InferResult
-    {
-        [JsonPropertyName("score")]
-        public double Score { get; set; }
-    
-        [JsonPropertyName("threshold")]
-        public double? Threshold { get; set; }   // << antes era double
-    
-        [JsonPropertyName("token_shape")]
-        public int[]? TokenShape { get; set; }
-    
-        [JsonPropertyName("heatmap_png_base64")]
-        public string? HeatmapPngBase64 { get; set; }
-    
-        [JsonPropertyName("regions")]
-        public object? Regions { get; set; }
+        public double? threshold { get; set; }      // << ahora nullable
+        public double ok_mean { get; set; }
+        public double ng_mean { get; set; }
+        public double score_percentile { get; set; }
+        public double area_mm2_thr { get; set; }
     }
 
+    public sealed class InferResult
+    {
+        public double score { get; set; }
+        public double? threshold { get; set; }      // << ahora nullable
+        public string? heatmap_png_base64 { get; set; }
+        public Region[]? regions { get; set; }
+    }
 
     public sealed class Region
     {
