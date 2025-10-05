@@ -1,134 +1,157 @@
-@app.post("/infer")
-def infer(
-    role_id: str = Form(...),
-    roi_id: str = Form(...),
-    mm_per_px: float = Form(...),
-    image: UploadFile = File(...),
-    shape: Optional[str] = Form(None),
-):
-    try:
-        import json, base64, numpy as np
-        try:
-            import cv2  # opcional para PNG rápido
-            _has_cv2 = True
-        except Exception:
-            _has_cv2 = False
-            from PIL import Image
-            import io
+from __future__ import annotations
+import numpy as np
+import cv2
+from typing import Tuple, Optional, Dict, Any, List
 
-        # 1) Imagen y features (sólo para verificar grid)
-        img = _read_image_file(image)
-        emb, token_hw = _extractor.extract(img)
+from .features import DinoV2Features
+from .patchcore import PatchCoreMemory
+from .roi_mask import build_mask
+from .utils import percentile, mm2_to_px2, px2_to_mm2
 
-        # 2) Cargar memoria/coreset
-        loaded = store.load_memory(role_id, roi_id)
-        if loaded is None:
-            return JSONResponse(status_code=400, content={"error": "Memoria no encontrada. Ejecuta /fit_ok primero."})
-        emb_mem, token_hw_mem, metadata = loaded
 
-        # 3) Validación de grid aquí (clara al usuario)
-        if tuple(map(int, token_hw)) != tuple(map(int, token_hw_mem)):
-            return JSONResponse(
-                status_code=400,
-                content={"error": f"Token grid mismatch: got {tuple(map(int,token_hw))}, expected {tuple(map(int,token_hw_mem))}"},
-            )
+class InferenceEngine:
+    """
+    Ejecuta el pipeline de inferencia:
+      ROI (BGR uint8) -> embeddings (DINOv2) -> kNN (PatchCore) -> heatmap + score
+      + posproceso opcional (blur, máscara ROI, umbral, eliminación de islas, contornos).
+    """
+    def __init__(self,
+                 extractor: DinoV2Features,
+                 memory: PatchCoreMemory,
+                 token_hw: Tuple[int, int],
+                 mm_per_px: float,
+                 k: int = 1,
+                 score_percentile: int = 99,
+                 memory_metadata: Optional[Dict[str, Any]] = None):
+        self.extractor = extractor
+        self.memory = memory
+        self.token_hw = tuple(token_hw)  # (Ht, Wt) con el que se construyó la memoria
+        self.mm_per_px = float(mm_per_px)
+        self.k = int(k)
+        self.score_p = int(score_percentile)
+        self.memory_metadata = memory_metadata or {}
 
-        # 4) Reconstruir memoria (+FAISS si existe)
-        mem = PatchCoreMemory(embeddings=emb_mem, index=None, coreset_rate=metadata.get("coreset_rate"))
-        try:
-            import faiss  # type: ignore
-            blob = store.load_index_blob(role_id, roi_id)
-            if blob is not None:
-                idx = faiss.deserialize_index(np.frombuffer(blob, dtype=np.uint8))
-                mem.index = idx
-                mem.nn = None
-        except Exception:
-            pass
+    def run(self,
+            img_bgr: np.ndarray,
+            *,
+            token_shape_expected: Optional[Tuple[int, int]] = None,
+            shape: Optional[Dict[str, Any]] = None,
+            blur_sigma: float = 1.0,
+            area_mm2_thr: float = 1.0,
+            threshold: Optional[float] = None,
+            score_percentile: Optional[int] = None) -> Dict[str, Any]:
+        """
+        Ejecuta una pasada de inferencia.
 
-        # 5) Calibración (puede faltar)
-        calib = store.load_calib(role_id, roi_id, default=None)
-        thr = calib.get("threshold") if calib else None
-        area_mm2_thr = calib.get("area_mm2_thr", 1.0) if calib else 1.0
-        p_score = calib.get("score_percentile", 99) if calib else 99
+        Args:
+            img_bgr: imagen ROI en BGR (uint8).
+            token_shape_expected: (Ht,Wt) esperado por la memoria. Si no coincide, se lanza ValueError.
+            shape: definición de máscara ROI (rect/circle/annulus...).
+            blur_sigma: sigma del GaussianBlur para suavizado del heatmap reescalado.
+            area_mm2_thr: área mínima de defectos en mm² para eliminar islas pequeñas.
+            threshold: si se pasa, se segmenta el heatmap y se devuelven regiones.
+            score_percentile: si se pasa, sobrescribe el percentil usado para el score global.
 
-        # 6) Shape (máscara) opcional
-        shape_obj = json.loads(shape) if shape else None
+        Returns:
+            dict con:
+              - score: float
+              - threshold: Optional[float]
+              - heatmap_u8: np.uint8[H,W] (0..255, ya enmascarado)
+              - regions: lista de regiones (si threshold no es None)
+              - token_shape: [Ht, Wt]
+              - params: metadatos de ejecución
+        """
+        # 1) Embeddings del ROI canónico
+        emb, (Ht, Wt) = self.extractor.extract(img_bgr)
 
-        # 7) Crear engine con lo que tu __init__ soporte
-        try:
-            engine = InferenceEngine(_extractor, mem, token_hw_mem, mm_per_px=float(mm_per_px))
-        except TypeError:
-            # Si tu __init__ no acepta mm_per_px
-            engine = InferenceEngine(_extractor, mem, token_hw_mem)
+        # Validación de grid si se solicita
+        if token_shape_expected is not None:
+            exp = tuple(int(x) for x in token_shape_expected)
+            got = (int(Ht), int(Wt))
+            if got != exp:
+                raise ValueError(f"Token grid mismatch: got {got}, expected {exp}")
 
-        # 8) Ejecutar run() (probar con token_shape_expected y si no reintentar sin él)
-        try:
-            res = engine.run(
-                img,
-                token_shape_expected=tuple(map(int, token_hw_mem)),
-                shape=shape_obj,
-                threshold=thr,
-                area_mm2_thr=float(area_mm2_thr),
-                score_percentile=int(p_score),
-            )
-        except TypeError:
-            res = engine.run(
-                img,
-                shape=shape_obj,
-                threshold=thr,
-                area_mm2_thr=float(area_mm2_thr),
-                score_percentile=int(p_score),
-            )
+        # 2) Distancias kNN por parche (min-dist al coreset)
+        d = self.memory.knn_min_dist(emb)  # (N,)
+        heat = d.reshape(Ht, Wt).astype(np.float32)
 
-        # 9) Normalizar salida (dict nuevo o tupla antigua)
-        score: float
-        regions = []
-        heatmap_png_b64 = None
-        token_shape_out = [int(token_hw_mem[0]), int(token_hw_mem[1])]
+        # 3) Reescalar a tamaño del ROI (para overlay)
+        H, W = img_bgr.shape[:2]
+        heat_up = cv2.resize(heat, (W, H), interpolation=cv2.INTER_LINEAR).astype(np.float32)
 
-        if isinstance(res, dict):
-            score = float(res.get("score", 0.0))
-            regions = res.get("regions") or []
-            token_shape_out = list(res.get("token_shape") or token_shape_out)
-            # heatmap puede venir como uint8 ("heatmap_u8") o como float32 ("heatmap")
-            hm_u8 = res.get("heatmap_u8")
-            if hm_u8 is None:
-                hm = res.get("heatmap")
-                if hm is not None:
-                    hm_u8 = np.clip(np.asarray(hm, dtype=np.float32) * 255.0, 0, 255).astype(np.uint8)
-            if hm_u8 is not None:
-                if _has_cv2:
-                    ok, png = cv2.imencode(".png", np.asarray(hm_u8, dtype=np.uint8))
-                    if ok:
-                        heatmap_png_b64 = base64.b64encode(png.tobytes()).decode("ascii")
-                else:
-                    pil = Image.fromarray(np.asarray(hm_u8, dtype=np.uint8), mode="L")
-                    buf = io.BytesIO()
-                    pil.save(buf, format="PNG")
-                    heatmap_png_b64 = base64.b64encode(buf.getvalue()).decode("ascii")
+        # 4) Suavizado opcional
+        if blur_sigma and blur_sigma > 0:
+            ksize = int(max(3, round(blur_sigma * 3) * 2 + 1))
+            heat_proc = cv2.GaussianBlur(heat_up, (ksize, ksize), blur_sigma)
         else:
-            # Compat tupla antigua: (score, heatmap_float, regions)
-            score, heatmap_f32, regions = res
-            hm_u8 = np.clip(np.asarray(heatmap_f32, dtype=np.float32) * 255.0, 0, 255).astype(np.uint8)
-            if _has_cv2:
-                ok, png = cv2.imencode(".png", hm_u8)
-                if ok:
-                    heatmap_png_b64 = base64.b64encode(png.tobytes()).decode("ascii")
-            else:
-                pil = Image.fromarray(hm_u8, mode="L")
-                buf = io.BytesIO()
-                pil.save(buf, format="PNG")
-                heatmap_png_b64 = base64.b64encode(buf.getvalue()).decode("ascii")
+            heat_proc = heat_up
 
-        # 10) Respuesta (threshold puede ser None → se serializa como null)
+        # 5) Máscara del ROI (rect/circle/annulus) si viene descrita
+        mask = build_mask(H, W, shape)
+        mask_bool = mask > 0
+
+        # 6) Score global sobre el heatmap suavizado y enmascarado
+        p_use = int(score_percentile) if score_percentile is not None else self.score_p
+        valid = heat_proc[mask_bool]
+        sc = percentile(valid, p_use) if valid.size else 0.0
+
+        # 7) Generar heatmap 0..255 para visualización
+        heat_vis = np.zeros_like(heat_proc, dtype=np.float32)
+        if valid.size:
+            mn, mx = np.percentile(valid, [1, 99])
+            if mx > mn:
+                heat_vis[mask_bool] = np.clip((heat_proc[mask_bool] - mn) / (mx - mn), 0.0, 1.0)
+            else:
+                heat_vis[mask_bool] = 0.0
+        heat_u8 = (heat_vis * 255.0 + 0.5).astype(np.uint8)
+        heat_u8_masked = cv2.bitwise_and(heat_u8, heat_u8, mask=mask)
+
+        # 8) Umbral + eliminación de islas pequeñas + contornos
+        regions: List[Dict[str, Any]] = []
+        thr_value = float(threshold) if threshold is not None else None
+        if thr_value is not None:
+            bin_img = np.zeros((H, W), dtype=np.uint8)
+            bin_img[mask_bool & (heat_proc >= thr_value)] = 255
+            # Elimina regiones con área < área mínima (en mm² → px²)
+            px_thr = mm2_to_px2(area_mm2_thr, self.mm_per_px)
+            cnts, _ = cv2.findContours(bin_img, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            for c in cnts:
+                area_px = cv2.contourArea(c)
+                if area_px < px_thr:
+                    cv2.drawContours(bin_img, [c], -1, 0, thickness=-1)
+            cnts, _ = cv2.findContours(bin_img, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            for c in cnts:
+                x, y, w, h = cv2.boundingRect(c)
+                area_px = cv2.contourArea(c)
+                regions.append({
+                    "bbox": [int(x), int(y), int(w), int(h)],
+                    "area_px": float(area_px),
+                    "area_mm2": float(px2_to_mm2(area_px, self.mm_per_px)),
+                    "contour": contour_to_list(c),
+                })
+            regions.sort(key=lambda r: r["area_px"], reverse=True)
+
         return {
-            "score": float(score),
-            "threshold": (float(thr) if thr is not None else None),
-            "token_shape": [int(token_shape_out[0]), int(token_shape_out[1])],
-            "heatmap_png_base64": heatmap_png_b64,
-            "regions": regions or [],
+            "score": float(sc),
+            "threshold": float(thr_value) if thr_value is not None else None,
+            "heatmap_u8": heat_u8_masked,   # la API lo convertirá a PNG base64
+            "regions": regions,
+            "token_shape": [int(Ht), int(Wt)],
+            "params": {
+                "extractor": self.extractor.model_name,
+                "input_size": int(self.extractor.input_size),
+                "patch_size": int(self.extractor.patch),
+                "coreset_rate": float(self.memory.coreset_rate) if self.memory.coreset_rate is not None else None,
+                "coreset_rate_applied": self.memory_metadata.get("applied_rate"),
+                "k": int(self.k),
+                "score_percentile": int(p_use),
+                "blur_sigma": float(blur_sigma),
+                "mm_per_px": float(self.mm_per_px),
+            },
         }
 
-    except Exception as e:
-        import traceback
-        return JSONResponse(status_code=500, content={"error": str(e), "trace": traceback.format_exc()})
+
+def contour_to_list(contour: np.ndarray) -> List[List[int]]:
+    pts = contour.reshape(-1, 2)
+    return [[int(x), int(y)] for x, y in pts]
+
