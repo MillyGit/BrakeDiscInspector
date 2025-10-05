@@ -308,19 +308,36 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
 
     public sealed class CalibResult
     {
-        public double threshold { get; set; }
-        public double ok_mean { get; set; }
-        public double ng_mean { get; set; }
-        public double score_percentile { get; set; }
-        public double area_mm2_thr { get; set; }
+        [JsonPropertyName("threshold")]
+        public double? Threshold { get; set; } // ¡nullable!
+    
+        [JsonPropertyName("score_percentile")]
+        public int ScorePercentile { get; set; }
+    
+        [JsonPropertyName("ok_count")]
+        public int OkCount { get; set; }
+    
+        [JsonPropertyName("ng_count")]
+        public int NgCount { get; set; }
     }
 
     public sealed class InferResult
     {
-        public double score { get; set; }
-        public double threshold { get; set; }
-        public string? heatmap_png_base64 { get; set; }
-        public Region[]? regions { get; set; }
+        [JsonPropertyName("score")]
+        public double Score { get; set; }
+    
+        // ¡nullable! para no romper si viene null u omitido
+        [JsonPropertyName("threshold")]
+        public double? Threshold { get; set; }
+    
+        [JsonPropertyName("token_shape")]
+        public int[]? TokenShape { get; set; }  // ej. [56,56] (opcional)
+    
+        [JsonPropertyName("heatmap_png_base64")]
+        public string? HeatmapPngBase64 { get; set; }
+    
+        [JsonPropertyName("regions")]
+        public object? Regions { get; set; } // o tu tipo concreto
     }
 
     public sealed class Region
