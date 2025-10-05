@@ -25,7 +25,7 @@ class InferenceEngine:
                  memory_metadata: Optional[Dict[str, Any]] = None):
         self.extractor = extractor
         self.memory = memory
-        self.token_hw = token_hw  # (Ht, Wt) con el que se construyó la memoria
+        self.token_hw = tuple(token_hw)  # (Ht, Wt) con el que se construyó la memoria
         self.mm_per_px = float(mm_per_px)
         self.k = int(k)
         self.score_p = int(score_percentile)
@@ -33,22 +33,43 @@ class InferenceEngine:
 
     def run(self,
             img_bgr: np.ndarray,
+            *,
+            token_shape_expected: Optional[Tuple[int, int]] = None,
             shape: Optional[Dict[str, Any]] = None,
             blur_sigma: float = 1.0,
             area_mm2_thr: float = 1.0,
-            threshold: Optional[float] = None) -> Dict[str, Any]:
+            threshold: Optional[float] = None,
+            score_percentile: Optional[int] = None) -> Dict[str, Any]:
         """
-        Devuelve:
-          {
-            "score": float,
-            "threshold": Optional[float],
-            "heatmap_u8": np.uint8[H,W]  (normalizado 0..255 y enmascarado),
-            "regions": [ {"bbox":[x,y,w,h], "area_px":..., "area_mm2":...}, ... ],
-            "token_shape": [Ht, Wt]
-          }
+        Ejecuta una pasada de inferencia.
+
+        Args:
+            img_bgr: imagen ROI en BGR (uint8).
+            token_shape_expected: (Ht,Wt) esperado por la memoria. Si no coincide, se lanza ValueError.
+            shape: definición de máscara ROI (rect/circle/annulus...).
+            blur_sigma: sigma del GaussianBlur para suavizado del heatmap reescalado.
+            area_mm2_thr: área mínima de defectos en mm² para eliminar islas pequeñas.
+            threshold: si se pasa, se segmenta el heatmap y se devuelven regiones.
+            score_percentile: si se pasa, sobrescribe el percentil usado para el score global.
+
+        Returns:
+            dict con:
+              - score: float
+              - threshold: Optional[float]
+              - heatmap_u8: np.uint8[H,W] (0..255, ya enmascarado)
+              - regions: lista de regiones (si threshold no es None)
+              - token_shape: [Ht, Wt]
+              - params: metadatos de ejecución
         """
         # 1) Embeddings del ROI canónico
         emb, (Ht, Wt) = self.extractor.extract(img_bgr)
+
+        # Validación de grid si se solicita
+        if token_shape_expected is not None:
+            exp = tuple(int(x) for x in token_shape_expected)
+            got = (int(Ht), int(Wt))
+            if got != exp:
+                raise ValueError(f"Token grid mismatch: got {got}, expected {exp}")
 
         # 2) Distancias kNN por parche (min-dist al coreset)
         d = self.memory.knn_min_dist(emb)  # (N,)
@@ -70,8 +91,9 @@ class InferenceEngine:
         mask_bool = mask > 0
 
         # 6) Score global sobre el heatmap suavizado y enmascarado
+        p_use = int(score_percentile) if score_percentile is not None else self.score_p
         valid = heat_proc[mask_bool]
-        sc = percentile(valid, self.score_p) if valid.size else 0.0
+        sc = percentile(valid, p_use) if valid.size else 0.0
 
         # 7) Generar heatmap 0..255 para visualización
         heat_vis = np.zeros_like(heat_proc, dtype=np.float32)
@@ -122,7 +144,7 @@ class InferenceEngine:
                 "coreset_rate": float(self.memory.coreset_rate) if self.memory.coreset_rate is not None else None,
                 "coreset_rate_applied": self.memory_metadata.get("applied_rate"),
                 "k": int(self.k),
-                "score_percentile": int(self.score_p),
+                "score_percentile": int(p_use),
                 "blur_sigma": float(blur_sigma),
                 "mm_per_px": float(self.mm_per_px),
             },
@@ -132,3 +154,4 @@ class InferenceEngine:
 def contour_to_list(contour: np.ndarray) -> List[List[int]]:
     pts = contour.reshape(-1, 2)
     return [[int(x), int(y)] for x, y in pts]
+
