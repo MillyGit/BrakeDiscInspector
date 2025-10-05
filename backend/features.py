@@ -19,7 +19,7 @@ class DinoV2Features:
     Extractor ViT/DINOv2 (timm) con:
       - LETTERBOX (mantener aspecto + padding) a input_size
       - Tamaño de entrada controlado (fijo o dinámico múltiplo de patch)
-      - *Opción 2*: redimensionado del positional embedding **manual** (sin depender de timm.resize_pos_embed)
+      - *Opción 2*: redimensionado del positional embedding **manual** (sin timm.resize_pos_embed)
       - *Reset* del pos_embed original en **cada** `extract()` para evitar acumulación
 
     extract(img) -> (embedding_numpy, (h_tokens, w_tokens))
@@ -99,8 +99,8 @@ class DinoV2Features:
             self.std  = torch.ones((1, 3, 1, 1), device=self.device)
 
         # Guardar pos_embed "de fábrica" para poder resetearlo en cada extract()
-        pe = getattr(self.model, "pos_embed", None)
-        self._pos_embed_base: Optional[torch.Tensor] = pe.detach().clone() if isinstance(pe, torch.Tensor) else None
+        pe2 = getattr(self.model, "pos_embed", None)
+        self._pos_embed_base: Optional[torch.Tensor] = pe2.detach().clone() if isinstance(pe2, torch.Tensor) else None
 
     # ---------------- imagen / preprocesado ----------------
     @staticmethod
@@ -179,8 +179,13 @@ class DinoV2Features:
                 pe.set_input_size((H, W))
             if hasattr(pe, "img_size"):
                 pe.img_size = (H, W)
+            # Mantener grid_size coherente si existe (evita reshape 37x37 de timm)
+            if hasattr(pe, "grid_size"):
+                pe.grid_size = (H // self.patch, W // self.patch)
         if hasattr(model, "img_size"):
             model.img_size = (H, W)
+        if hasattr(model, "num_patches"):
+            model.num_patches = (H // self.patch) * (W // self.patch)
 
         # Reset + resize manual del pos_embed al grid actual
         self._reset_and_resize_pos_embed(H // self.patch, W // self.patch)
@@ -252,55 +257,13 @@ class DinoV2Features:
             n = len(out_indices) if out_indices else 1
             return fn(x, n)
 
-    def _normalize_layers(self, layers: list[torch.Tensor], x: torch.Tensor) -> list[torch.Tensor]:
-        """
-        Convierte cualquier forma a B x (Htok*Wtok) x C, quitando CLS si aparece
-        y verificando que todas las capas queden con el MISMO N (= Htok*Wtok).
-        """
-        H, W = x.shape[-2:]
-        htok, wtok = H // self.patch, W // self.patch
-        expected = htok * wtok
-
-        feats = []
-        for i, layer in enumerate(layers):
-            # Desempaquetar (tensor,) o [tensor]
-            if isinstance(layer, (tuple, list)) and len(layer) > 0 and torch.is_tensor(layer[0]):
-                layer = layer[0]
-            if not torch.is_tensor(layer):
-                raise RuntimeError(f"Tipo inesperado en capa intermedia {i}: {type(layer)}")
-
-            if layer.ndim == 4:
-                # (B, H, W, C) -> (B, HW, C)
-                b, h, w, c = layer.shape
-                layer = layer.reshape(b, h * w, c)
-            elif layer.ndim == 3:
-                # (B, N, C) posiblemente con CLS
-                b, n, c = layer.shape
-                if n == expected + 1:
-                    layer = layer[:, 1:, :]  # quitar CLS
-                    n = expected
-            else:
-                raise RuntimeError(f"Forma inesperada en capa intermedia {i}: {layer.shape}")
-
-            n = layer.shape[1]
-            if n != expected:
-                # Mensaje explícito para detectar el desajuste
-                raise RuntimeError(
-                    f"TokenShape mismatch en capa {i}: N={n}, esperado={expected} "
-                    f"(grid {htok}x{wtok}, HxW={H}x{W}, patch={self.patch})"
-                )
-
-            feats.append(layer)
-
-        return feats
-
     # ---------------- tokens ----------------
     def _forward_tokens(
         self,
         x: torch.Tensor,
         *,
         use_intermediate: bool | None = None,   # None => usa intermedias si self.out_indices está definido
-        want_reshape: bool = True,              # pedir (B,H,W,C) en intermedias cuando sea posible
+        want_reshape: bool = False,             # << clave: evitar reshape interno de timm (37x37)
         remove_cls: bool = True,                # quitar CLS si viene
         combine: str = "concat",                # "concat" | "mean" | "stack"
     ) -> torch.Tensor:
@@ -349,7 +312,7 @@ class DinoV2Features:
                     want_reshape=want_reshape,
                 )
                 if layers is not None:
-                    # Desempaquetar y normalizar todas a (B,N,C)
+                    # Normalizar todas a (B,N,C)
                     normed: list[torch.Tensor] = []
                     for li, layer in enumerate(layers):
                         if isinstance(layer, (tuple, list)) and len(layer) > 0 and torch.is_tensor(layer[0]):
@@ -362,17 +325,16 @@ class DinoV2Features:
                     if combine == "concat":
                         out = torch.cat(normed, dim=-1)       # (B,N, sumC)
                     elif combine == "mean":
-                        # apila y promedia canales
                         stk = torch.stack(normed, dim=0)      # (L,B,N,C)
                         out = stk.mean(dim=0)                 # (B,N,C)
                     elif combine == "stack":
-                        # apilar y aplanar (similar a concat si tamaños coinciden)
                         stk = torch.stack(normed, dim=-1)     # (B,N,C,L)
                         b, n, c, l = stk.shape
                         out = stk.reshape(b, n, c * l)        # (B,N,C*L)
                     else:
-                        raise ValueError("combine debe ser 'concat', 'mean' o 'stack'")
+                        raise ValueError("combine debe ser 'concat', 'mean' o 'stack'"
 
+                    )
                     return out[0]  # (N, C_out)
             except Exception as ex:
                 # Fallback limpio a forward_features
