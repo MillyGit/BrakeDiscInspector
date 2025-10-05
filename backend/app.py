@@ -208,23 +208,18 @@ def infer(
     image: UploadFile = File(...),
     shape: Optional[str] = Form(None),
 ):
-    """
-    Inferencia sobre el ROI. Tolerante a diferencias de firma en InferenceEngine.
-    - No pasa kwargs desconocidos al constructor.
-    - Intenta pasar area_mm2_thr/score_percentile a run(); si no, hace fallback.
-    """
     try:
         # 1) Imagen y features
         img = _read_image_file(image)
         emb, token_hw = _extractor.extract(img)
 
-        # 2) Cargar memoria (coreset + token grid)
+        # 2) Cargar memoria
         loaded = store.load_memory(role_id, roi_id)
         if loaded is None:
             return JSONResponse(status_code=400, content={"error": "Memoria no encontrada. Ejecuta /fit_ok primero."})
         emb_mem, token_hw_mem, metadata = loaded
 
-        # 3) Reconstruir PatchCoreMemory + FAISS si lo hay
+        # 3) Reconstruir memoria + índice
         mem = PatchCoreMemory(embeddings=emb_mem, index=None, coreset_rate=metadata.get("coreset_rate"))
         try:
             import faiss  # type: ignore
@@ -236,57 +231,35 @@ def infer(
         except Exception:
             pass
 
-        # 4) Calibración (puede no existir)
+        # 4) Calibración (puede faltar)
         calib = store.load_calib(role_id, roi_id, default=None)
         thr = calib.get("threshold") if calib else None
-        area_mm2_thr = float(calib.get("area_mm2_thr", 1.0)) if calib else 1.0
-        p_score = int(calib.get("score_percentile", 99)) if calib else 99
+        area_mm2_thr = calib.get("area_mm2_thr", 1.0) if calib else 1.0
+        p_score = calib.get("score_percentile", 99) if calib else 99
 
         # 5) Shape opcional
         shape_obj = json.loads(shape) if shape else None
 
-        # 6) Crear motor -> ¡sin kwargs desconocidos!
+        # 6) Motor de inferencia: **NO** pasamos area_mm2_thr aquí
+        #    (evita el TypeError del constructor)
         engine = InferenceEngine(
             _extractor,
             mem,
             token_hw_mem,
-            mm_per_px=float(mm_per_px),
+            mm_per_px=float(mm_per_px),   # si tu __init__ no lo acepta, quítalo también
         )
 
-        # 7) Ejecutar. Intentar pasar kwargs; si la firma no los admite, fallback sin ellos
-        try:
-            score, heatmap, regions = engine.run(
-                img,
-                token_shape_expected=token_hw_mem,
-                shape=shape_obj,
-                threshold=thr,
-                area_mm2_thr=area_mm2_thr,
-                score_percentile=p_score,
-            )
-        except TypeError:
-            # versión antigua de run(): no acepta esos kwargs
-            score, heatmap, regions = engine.run(
-                img,
-                token_shape_expected=token_hw_mem,
-                shape=shape_obj,
-                threshold=thr,
-            )
-            # Filtro por área mínima si devolvió regiones en px
-            try:
-                if regions:
-                    # Acepta tanto {'area_mm2':..} como {'area_px':..}
-                    mm2_per_px = (mm_per_px ** 2)
-                    def _ok(r):
-                        if "area_mm2" in r:
-                            return float(r["area_mm2"]) >= area_mm2_thr
-                        if "area_px" in r:
-                            return float(r["area_px"]) * mm2_per_px >= area_mm2_thr
-                        return True
-                    regions = [r for r in regions if _ok(r)]
-            except Exception:
-                pass
+        # 7) Ejecutar. Pasamos los parámetros de postproceso a run()
+        score, heatmap, regions = engine.run(
+            img,
+            token_shape_expected=token_hw_mem,
+            shape=shape_obj,
+            threshold=thr,                         # puede ser None
+            area_mm2_thr=float(area_mm2_thr),      # << mover aquí
+            score_percentile=int(p_score),         # << y aquí
+        )
 
-        # 8) Heatmap opcional a PNG base64
+        # 8) Serializar heatmap (opcional)
         heatmap_png_b64 = None
         try:
             import cv2, base64
@@ -306,8 +279,6 @@ def infer(
         }
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e), "trace": traceback.format_exc()})
-
-
 
 
 if __name__ == "__main__":
