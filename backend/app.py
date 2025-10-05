@@ -84,21 +84,34 @@ def fit_ok(
 ):
     """
     Acumula OKs para construir la memoria PatchCore (coreset + kNN).
-    Devuelve: nº total de embeddings, tamaño del coreset y forma del grid de tokens.
+    Guarda (role_id, roi_id): memoria (embeddings), token grid y, si hay FAISS, el índice.
     """
     try:
-        all_emb = []
-        token_hw = None
-        for f in images:
-            img = _read_image_file(f)
-            emb, hw = _extractor.extract(img)
-            all_emb.append(emb)
-            token_hw = hw
+        if not images:
+            return JSONResponse(status_code=400, content={"error": "No images provided"})
 
-        if token_hw is None:
-            return JSONResponse(status_code=400, content={"error": "No se recibieron imágenes válidas"})
+        all_emb: List[np.ndarray] = []
+        token_hw: Optional[tuple[int, int]] = None
+
+        for uf in images:
+            img = _read_image_file(uf)
+            emb, hw = _extractor.extract(img)
+            if token_hw is None:
+                token_hw = (int(hw[0]), int(hw[1]))
+            else:
+                if (int(hw[0]), int(hw[1])) != token_hw:
+                    return JSONResponse(
+                        status_code=400,
+                        content={"error": f"Token grid mismatch: got {hw}, expected {token_hw}"},
+                    )
+            all_emb.append(emb)
+
+        if not all_emb:
+            return JSONResponse(status_code=400, content={"error": "No valid images"})
 
         E = np.concatenate(all_emb, axis=0)  # (N, D)
+
+        # Coreset (puedes ajustar coreset_rate)
         coreset_rate = 0.02
         mem = PatchCoreMemory.build(E, coreset_rate=coreset_rate, seed=0)
 
@@ -134,11 +147,32 @@ def fit_ok(
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e), "trace": traceback.format_exc()})
 
+
+        # Persistir índice FAISS si está disponible
+        try:
+            import faiss  # type: ignore
+            if mem.index is not None:
+                buf = faiss.serialize_index(mem.index)
+                store.save_index_blob(role_id, roi_id, bytes(buf))
+        except Exception:
+            pass
+
+        return {
+            "n_embeddings": int(E.shape[0]),
+            "coreset_size": int(mem.emb.shape[0]),
+            "token_shape": [int(token_hw[0]), int(token_hw[1])],
+            "coreset_rate_requested": float(coreset_rate),
+            "coreset_rate_applied": float(applied_rate),
+        }
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e), "trace": traceback.format_exc()})
+
 @app.post("/calibrate_ng")
 async def calibrate_ng(payload: Dict[str, Any]):
     """
     Fija umbral por ROI/rol con 0–3 NG.
     Si hay NG: umbral entre p99(OK) y p5(NG). Si no: p99(OK).
+    Devuelve siempre 'threshold' como float (nunca null).
     """
     try:
         role_id = payload["role_id"]
@@ -153,8 +187,8 @@ async def calibrate_ng(payload: Dict[str, Any]):
                              percentile=p_score)
 
         calib = {
-            "threshold": float(t),
-            "p99_ok": float(np.percentile(ok_scores, p_score)) if ok_scores.size > 0 else None,
+            "threshold": float(t),  # <- siempre float
+            "p99_ok": float(np.percentile(ok_scores, p_score)) if ok_scores.size else None,
             "p5_ng": float(np.percentile(ng_scores, 5)) if (ng_scores is not None and ng_scores.size > 0) else None,
             "mm_per_px": float(mm_per_px),
             "area_mm2_thr": float(area_mm2_thr),
@@ -164,6 +198,7 @@ async def calibrate_ng(payload: Dict[str, Any]):
         return calib
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e), "trace": traceback.format_exc()})
+
 
 @app.post("/infer")
 def infer(
@@ -177,19 +212,22 @@ def infer(
     Inferencia sobre un ROI canónico:
       - Extrae embeddings (DINOv2)
       - kNN al coreset (PatchCore) → heatmap de distancias
-      - Score global (percentil) + posproceso (blur, máscara, umbral, islas, contornos)
-    Devuelve JSON con score, threshold, heatmap en base64 y regiones.
+      - Score global + posproceso (blur/máscara/umbral/islas/contornos)
+    Devuelve JSON con score, threshold (puede ser null), heatmap en base64 y regiones.
     """
     try:
+        # 1) Imagen y features
         img = _read_image_file(image)
+        emb, token_hw = _extractor.extract(img)
 
+        # 2) Cargar memoria
         loaded = store.load_memory(role_id, roi_id)
         if loaded is None:
             return JSONResponse(status_code=400, content={"error": "Memoria no encontrada. Ejecuta /fit_ok primero."})
-        emb, token_hw, metadata = loaded
+        emb_mem, token_hw_mem, metadata = loaded
 
-        # Reconstruir memoria + índice
-        mem = PatchCoreMemory(embeddings=emb, index=None, coreset_rate=metadata.get("coreset_rate"))
+        # 3) Reconstruir memoria + índice
+        mem = PatchCoreMemory(embeddings=emb_mem, index=None, coreset_rate=metadata.get("coreset_rate"))
         try:
             import faiss  # type: ignore
             blob = store.load_index_blob(role_id, roi_id)
@@ -200,37 +238,55 @@ def infer(
         except Exception:
             pass
 
+        # 4) Calibración (puede faltar)
         calib = store.load_calib(role_id, roi_id, default=None)
         thr = calib.get("threshold") if calib else None
         area_mm2_thr = calib.get("area_mm2_thr", 1.0) if calib else 1.0
         p_score = calib.get("score_percentile", 99) if calib else 99
 
+        # 5) Shape opcional
         shape_obj = json.loads(shape) if shape else None
 
+        # 6) Motor de inferencia
         engine = InferenceEngine(
             _extractor,
             mem,
-            token_hw,
-            mm_per_px,
-            k=1,
-            score_percentile=p_score,
-            memory_metadata=metadata,
+            token_hw_mem,
+            mm_per_px=float(mm_per_px),
+            area_mm2_thr=float(area_mm2_thr),
+            score_percentile=int(p_score),
         )
-        out = engine.run(img, shape=shape_obj, blur_sigma=1.0, area_mm2_thr=area_mm2_thr, threshold=thr)
 
-        # Empaquetar heatmap como PNG base64 para la GUI
-        heat_u8 = out["heatmap_u8"]
-        ok, buf = cv2.imencode(".png", heat_u8)
-        if not ok:
-            raise RuntimeError("No se pudo codificar heatmap")
-        out["heatmap_png_base64"] = base64_from_bytes(buf.tobytes())
-        del out["heatmap_u8"]
+        score, heatmap, regions = engine.run(
+            img,
+            token_shape_expected=token_hw_mem,   # valida grid
+            shape=shape_obj,
+            threshold=thr,                       # puede ser None → el cliente ya tolera null
+        )
 
-        out["role_id"] = role_id
-        out["roi_id"] = roi_id
-        return out
+        # 7) Serializar heatmap (opcional)
+        heatmap_png_b64 = None
+        try:
+            import cv2
+            import base64
+            hm8 = np.clip(heatmap * 255.0, 0, 255).astype(np.uint8)
+            ok, png = cv2.imencode(".png", hm8)
+            if ok:
+                heatmap_png_b64 = base64.b64encode(png.tobytes()).decode("ascii")
+        except Exception:
+            pass
+
+        # 8) Respuesta (si thr es None, se enviará como null en JSON)
+        return {
+            "score": float(score),
+            "threshold": (float(thr) if thr is not None else None),
+            "token_shape": [int(token_hw_mem[0]), int(token_hw_mem[1])],
+            "heatmap_png_base64": heatmap_png_b64,
+            "regions": regions or [],
+        }
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e), "trace": traceback.format_exc()})
+
 
 
 if __name__ == "__main__":
