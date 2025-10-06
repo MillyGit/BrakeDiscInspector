@@ -14,8 +14,6 @@ using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
 using System.Windows;
-using WPoint = System.Windows.Point;
-using CvPoint = OpenCvSharp.Point;
 using System.Windows.Controls;
 using System.Windows.Documents;
 using System.Windows.Input;
@@ -35,6 +33,7 @@ using WColor = System.Windows.Media.Color;
 using WEllipse = System.Windows.Shapes.Ellipse;
 using WLine = System.Windows.Shapes.Line;
 // Aliases WPF
+using WPoint = System.Windows.Point;
 using WRect = System.Windows.Rect;
 using WRectShape = System.Windows.Shapes.Rectangle;
 using Path = System.IO.Path;
@@ -159,7 +158,7 @@ namespace BrakeDiscInspector_GUI_ROI
                 tg.Children.Add(new ScaleTransform(RoiOverlay.Scale, RoiOverlay.Scale));
                 tg.Children.Add(new TranslateTransform(RoiOverlay.OffsetX, RoiOverlay.OffsetY));
                 CanvasROI.RenderTransform = tg;
-                CanvasROI.RenderTransformOrigin = new WPoint(0, 0);
+                CanvasROI.RenderTransformOrigin = new Point(0, 0);
             };
 
             // Fuerza una primera actualización al iniciar
