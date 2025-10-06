@@ -50,7 +50,8 @@ namespace BrakeDiscInspector_GUI_ROI
 
                 if (Shape == RoiShape.Annulus)
                 {
-                    RInner = AnnulusDefaults.ClampInnerRadius(RInner, R);
+                    if (RInner < 0) RInner = 0;
+                    if (RInner > R) RInner = R;
                 }
                 else
                 {
