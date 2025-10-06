@@ -148,11 +148,11 @@ namespace BrakeDiscInspector_GUI_ROI
             throw new ArgumentOutOfRangeException(nameof(index));
         }
 
-        protected override GeneralTransform GetDesiredTransform(GeneralTransform transform)
+        public override GeneralTransform GetDesiredTransform(GeneralTransform transform)
         {
             var baseT = base.GetDesiredTransform(transform);
 
-            // Matriz: primero escalar, luego trasladar
+            // Matriz: primero escalar, luego trasladar (valores del overlay)
             var m = new Matrix();
             m.ScaleAt(_overlay.Scale, _overlay.Scale, 0, 0);
             m.Translate(_overlay.OffsetX, _overlay.OffsetY);
