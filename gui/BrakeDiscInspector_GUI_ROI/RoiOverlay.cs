@@ -1,133 +1,187 @@
 using System;
+using System.Globalization;
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Media;
+using System.Windows.Media.Imaging;
 
 namespace BrakeDiscInspector_GUI_ROI
 {
     public class RoiOverlay : FrameworkElement
     {
-        public ROI Roi { get; set; }
+        public ROI? Roi { get; set; }
+
+        // === Transformación imagen <-> pantalla ===
+        private Image? _boundImage;
+        private double _scale = 1.0;
+        private double _offX = 0.0, _offY = 0.0;
+        private int _imgW = 0, _imgH = 0;
+
+        // Vincula este overlay con la Image real (ImgMain)
+        public void BindToImage(Image image)
+        {
+            _boundImage = image;
+            InvalidateOverlay();
+        }
+
+        // Fuerza recálculo y repintado
+        public void InvalidateOverlay()
+        {
+            RecomputeImageTransform();
+            InvalidateVisual();
+        }
+
+        // Recalcular scale/offset asumiendo Stretch=Uniform y letterbox centrado
+        private void RecomputeImageTransform()
+        {
+            if (_boundImage?.Source is BitmapSource bmp)
+            {
+                _imgW = bmp.PixelWidth;
+                _imgH = bmp.PixelHeight;
+            }
+            else
+            {
+                _imgW = _imgH = 0;
+            }
+
+            double sw = ActualWidth;
+            double sh = ActualHeight;
+
+            if (_boundImage != null)
+            {
+                if (_boundImage.ActualWidth > 0) sw = _boundImage.ActualWidth;
+                if (_boundImage.ActualHeight > 0) sh = _boundImage.ActualHeight;
+            }
+
+            if (_imgW <= 0 || _imgH <= 0 || sw <= 0 || sh <= 0)
+            {
+                _scale = 1.0;
+                _offX = _offY = 0.0;
+                return;
+            }
+
+            _scale = Math.Min(sw / _imgW, sh / _imgH);
+            _offX = (sw - _imgW * _scale) * 0.5;
+            _offY = (sh - _imgH * _scale) * 0.5;
+        }
+
+        // Conversión coordenadas
+        public Point ToScreen(double ix, double iy) => new Point(_offX + ix * _scale, _offY + iy * _scale);
+        public double ToScreenLen(double ilen) => ilen * _scale;
+        public Point ToImage(double sx, double sy)
+        {
+            if (_scale <= 0) return new Point();
+            return new Point((sx - _offX) / _scale, (sy - _offY) / _scale);
+        }
+
+        public double ToImageLen(double slen) => _scale > 0 ? slen / _scale : 0.0;
 
         protected override void OnRender(DrawingContext dc)
         {
-            if (Roi == null) return;
+            base.OnRender(dc);
+            RecomputeImageTransform();
 
-            Roi.EnforceMinSize(10, 10);
+            var roi = Roi;
+            if (roi == null || _scale <= 0 || _imgW <= 0 || _imgH <= 0)
+                return;
 
-            // Mapear píxeles de imagen → coords del CanvasROI (mismo que usa el adorner)
-            var mw = Window.GetWindow(this) as MainWindow;
-            if (mw == null) return;
-
-            if (mw.ImgMain.Source is not System.Windows.Media.Imaging.BitmapSource bmp) return;
-
-            double canvasWidth = mw.CanvasROI?.ActualWidth ?? 0;
-            double canvasHeight = mw.CanvasROI?.ActualHeight ?? 0;
-
-            if (canvasWidth <= 0 || canvasHeight <= 0)
-            {
-                canvasWidth = this.ActualWidth;
-                canvasHeight = this.ActualHeight;
-            }
-
-            if (canvasWidth <= 0 || canvasHeight <= 0) return;
-
-            double sx = canvasWidth / bmp.PixelWidth;
-            double sy = canvasHeight / bmp.PixelHeight;
-
-            double centerImageX = Roi.Shape == RoiShape.Rectangle ? Roi.X : Roi.CX;
-            double centerImageY = Roi.Shape == RoiShape.Rectangle ? Roi.Y : Roi.CY;
-
-            double widthPx = Roi.Width;
-            double heightPx = Roi.Height;
-
-            if (Roi.Shape == RoiShape.Circle || Roi.Shape == RoiShape.Annulus)
-            {
-                double radius = Roi.R > 0 ? Roi.R : Math.Max(Roi.Width, Roi.Height) / 2.0;
-                double diameter = radius * 2.0;
-                widthPx = diameter;
-                heightPx = diameter;
-            }
-
-            double cx = centerImageX * sx;
-            double cy = centerImageY * sy;
-            double w = widthPx * sx;
-            double h = heightPx * sy;
-
-            var rect = new System.Windows.Rect(cx - w / 2, cy - h / 2, w, h);
-            var rotate = new RotateTransform(Roi.AngleDeg, cx, cy);
-            var pen = new Pen(Brushes.Lime, 2);
-
-            dc.PushTransform(rotate);
-
-            switch (Roi.Shape)
-            {
-                case RoiShape.Rectangle:
-                    dc.DrawRectangle(null, pen, rect);
-                    break;
-                case RoiShape.Circle:
-                    dc.DrawEllipse(null, pen, new System.Windows.Point(cx, cy), w / 2.0, h / 2.0);
-                    break;
-                case RoiShape.Annulus:
-                    {
-                        double outerRadius = Roi.R > 0 ? Roi.R : Math.Max(Roi.Width, Roi.Height) / 2.0;
-                        if (outerRadius <= 0)
-                            outerRadius = Math.Max(Roi.Width, Roi.Height) / 2.0;
-
-                        double outerRadiusX = outerRadius * sx;
-                        double outerRadiusY = outerRadius * sy;
-
-                        double innerCandidate = Roi.RInner;
-                        double innerRadius = innerCandidate > 0
-                            ? AnnulusDefaults.ClampInnerRadius(innerCandidate, outerRadius)
-                            : AnnulusDefaults.ResolveInnerRadius(innerCandidate, outerRadius);
-
-                        double innerRadiusX = innerRadius * sx;
-                        double innerRadiusY = innerRadius * sy;
-
-                        var center = new System.Windows.Point(cx, cy);
-                        var geometry = new StreamGeometry { FillRule = FillRule.EvenOdd };
-                        using (var ctx = geometry.Open())
-                        {
-                            ctx.BeginFigure(new System.Windows.Point(center.X + outerRadiusX, center.Y), false, false);
-                            ctx.ArcTo(new System.Windows.Point(center.X - outerRadiusX, center.Y), new Size(outerRadiusX, outerRadiusY), 0,
-                                false, SweepDirection.Clockwise, true, false);
-                            ctx.ArcTo(new System.Windows.Point(center.X + outerRadiusX, center.Y), new Size(outerRadiusX, outerRadiusY), 0,
-                                false, SweepDirection.Clockwise, true, false);
-
-                            if (innerRadius > 0)
-                            {
-                                ctx.BeginFigure(new System.Windows.Point(center.X + innerRadiusX, center.Y), false, false);
-                                ctx.ArcTo(new System.Windows.Point(center.X - innerRadiusX, center.Y), new Size(innerRadiusX, innerRadiusY), 0,
-                                    false, SweepDirection.Counterclockwise, true, false);
-                                ctx.ArcTo(new System.Windows.Point(center.X + innerRadiusX, center.Y), new Size(innerRadiusX, innerRadiusY), 0,
-                                    false, SweepDirection.Counterclockwise, true, false);
-                            }
-                        }
-
-                        geometry.Freeze();
-                        dc.DrawGeometry(null, pen, geometry);
-                        break;
-                    }
-                default:
-                    dc.DrawRectangle(null, pen, rect);
-                    break;
-            }
+            double centerImgX = roi.Shape == RoiShape.Rectangle ? roi.X : roi.CX;
+            double centerImgY = roi.Shape == RoiShape.Rectangle ? roi.Y : roi.CY;
+            var centerScreen = ToScreen(centerImgX, centerImgY);
 
             var dpi = VisualTreeHelper.GetDpi(this);
+            var highlightPen = new Pen(Brushes.DeepSkyBlue, 2.0);
 
+            if (roi.Shape == RoiShape.Annulus)
+            {
+                double outerImg = roi.R > 0 ? roi.R : Math.Max(roi.Width, roi.Height) / 2.0;
+                if (outerImg <= 0)
+                {
+                    outerImg = Math.Max(roi.Width, roi.Height) / 2.0;
+                }
+
+                double innerImg = roi.RInner > 0
+                    ? AnnulusDefaults.ClampInnerRadius(roi.RInner, outerImg)
+                    : AnnulusDefaults.ResolveInnerRadius(roi.RInner, outerImg);
+
+                double ro = ToScreenLen(outerImg);
+                double ri = ToScreenLen(innerImg);
+
+                if (ro <= 0)
+                    return;
+
+                dc.DrawEllipse(null, highlightPen, centerScreen, ro, ro);
+                if (ri > 0)
+                {
+                    dc.DrawEllipse(null, highlightPen, centerScreen, ri, ri);
+                }
+
+                var dashedPen = new Pen(Brushes.OrangeRed, 1.5)
+                {
+                    DashStyle = new DashStyle(new double[] { 4, 4 }, 0)
+                };
+                dc.DrawEllipse(null, dashedPen, centerScreen, ro, ro);
+
+                string label = string.IsNullOrWhiteSpace(roi.Legend) ? "Annulus" : roi.Legend;
+                var ft = new FormattedText(
+                    label,
+                    CultureInfo.CurrentUICulture,
+                    FlowDirection.LeftToRight,
+                    new Typeface("Segoe UI"),
+                    12,
+                    Brushes.White,
+                    dpi.PixelsPerDip);
+
+                var labelPos = new Point(centerScreen.X - ft.Width / 2.0, centerScreen.Y - ro - ft.Height - 6.0);
+                var bgRect = new Rect(labelPos.X - 4.0, labelPos.Y - 2.0, ft.Width + 8.0, ft.Height + 4.0);
+                dc.DrawRectangle(new SolidColorBrush(Color.FromArgb(160, 0, 0, 0)), null, bgRect);
+                dc.DrawText(ft, labelPos);
+                return;
+            }
+
+            double widthImg = roi.Width;
+            double heightImg = roi.Height;
+
+            if (roi.Shape == RoiShape.Circle)
+            {
+                double radiusImg = roi.R > 0 ? roi.R : Math.Max(roi.Width, roi.Height) / 2.0;
+                double radiusScreen = ToScreenLen(radiusImg);
+                dc.DrawEllipse(null, highlightPen, centerScreen, radiusScreen, radiusScreen);
+                DrawLabel(dc, dpi, roi.Legend, centerScreen);
+                return;
+            }
+
+            if (roi.Shape == RoiShape.Rectangle)
+            {
+                double widthScreen = ToScreenLen(widthImg);
+                double heightScreen = ToScreenLen(heightImg);
+                var rect = new Rect(centerScreen.X - widthScreen / 2.0, centerScreen.Y - heightScreen / 2.0, widthScreen, heightScreen);
+
+                var rotate = new RotateTransform(roi.AngleDeg, centerScreen.X, centerScreen.Y);
+                dc.PushTransform(rotate);
+                dc.DrawRectangle(null, highlightPen, rect);
+                dc.Pop();
+
+                DrawLabel(dc, dpi, roi.Legend, new Point(centerScreen.X, rect.Top));
+            }
+        }
+
+        private static void DrawLabel(DrawingContext dc, DpiScale dpi, string? legend, Point anchor)
+        {
+            string text = string.IsNullOrWhiteSpace(legend) ? "ROI" : legend;
             var ft = new FormattedText(
-                Roi.Legend,
-                System.Globalization.CultureInfo.CurrentCulture,
+                text,
+                CultureInfo.CurrentUICulture,
                 FlowDirection.LeftToRight,
                 new Typeface("Segoe UI"),
                 12,
-                Brushes.Lime,
+                Brushes.White,
                 dpi.PixelsPerDip);
 
-            dc.DrawText(ft, new System.Windows.Point(rect.X, rect.Y - 16));
-            dc.Pop();
+            var labelPos = new Point(anchor.X - ft.Width / 2.0, anchor.Y - ft.Height - 6.0);
+            var bgRect = new Rect(labelPos.X - 4.0, labelPos.Y - 2.0, ft.Width + 8.0, ft.Height + 4.0);
+            dc.DrawRectangle(new SolidColorBrush(Color.FromArgb(160, 0, 0, 0)), null, bgRect);
+            dc.DrawText(ft, labelPos);
         }
-
-
     }
 }

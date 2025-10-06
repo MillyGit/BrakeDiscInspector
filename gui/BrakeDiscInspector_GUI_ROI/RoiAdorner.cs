@@ -26,6 +26,7 @@ namespace BrakeDiscInspector_GUI_ROI
     public class RoiAdorner : Adorner
     {
         private readonly Shape _shape;
+        private readonly RoiOverlay _overlay;
         private readonly Action<RoiAdornerChangeKind, RoiModel> _onChanged;
         private readonly Action<string> _log;
 
@@ -43,9 +44,10 @@ namespace BrakeDiscInspector_GUI_ROI
         private UIElement? _rotationReferenceElement;
         private double _rotationPointerAngleAtDragStartDeg;
 
-        public RoiAdorner(UIElement adornedElement, Action<RoiAdornerChangeKind, RoiModel> onChanged, Action<string> log)
+        public RoiAdorner(UIElement adornedElement, RoiOverlay overlay, Action<RoiAdornerChangeKind, RoiModel> onChanged, Action<string> log)
             : base(adornedElement)
         {
+            _overlay = overlay ?? throw new ArgumentNullException(nameof(overlay));
             _shape = adornedElement as Shape ?? throw new ArgumentException("RoiAdorner requiere Shape.", nameof(adornedElement));
             _onChanged = onChanged ?? ((_, __) => { });
             _log = log ?? (_ => { });
@@ -258,8 +260,40 @@ namespace BrakeDiscInspector_GUI_ROI
 
         private void MoveThumb_DragDelta(object sender, DragDeltaEventArgs e)
         {
-            var roi = _shape.Tag as RoiModel;
-            if (roi == null) return;
+            if (_shape.Tag is not RoiModel roi)
+                return;
+
+            if (roi.Shape == RoiShape.Annulus || roi.Shape == RoiShape.Circle)
+            {
+                var mouseOverlay = Mouse.GetPosition(_overlay);
+                var mouseImg = _overlay.ToImage(mouseOverlay.X, mouseOverlay.Y);
+                var centerScreen = _overlay.ToScreen(mouseImg.X, mouseImg.Y);
+
+                double width = _shape.Width;
+                if (double.IsNaN(width) || width <= 0)
+                    width = _shape.RenderSize.Width;
+                if (double.IsNaN(width) || width <= 0)
+                    width = roi.Width;
+
+                double height = _shape.Height;
+                if (double.IsNaN(height) || height <= 0)
+                    height = _shape.RenderSize.Height;
+                if (double.IsNaN(height) || height <= 0)
+                    height = roi.Height;
+
+                double angle = GetCurrentAngle();
+
+                double diameter = Math.Max(width, height);
+                if (diameter <= 0)
+                {
+                    double radiusCanvas = roi.R > 0 ? roi.R : Math.Max(roi.Width, roi.Height) / 2.0;
+                    diameter = Math.Max(1.0, radiusCanvas * 2.0);
+                }
+
+                ApplyResizeResult(centerScreen, diameter, diameter, angle, roi);
+                _overlay.InvalidateOverlay();
+                return;
+            }
 
             double x = Canvas.GetLeft(_shape); if (double.IsNaN(x)) x = 0;
             double y = Canvas.GetTop(_shape); if (double.IsNaN(y)) y = 0;
@@ -271,9 +305,10 @@ namespace BrakeDiscInspector_GUI_ROI
             Canvas.SetTop(_shape, ny);
 
             SyncModelFromShape(_shape, roi);
-            InvalidateArrange(); // recoloca thumbs
+            InvalidateArrange();
 
             _onChanged(RoiAdornerChangeKind.Delta, roi);
+            _overlay.InvalidateOverlay();
         }
 
         private void OnThumbDragStarted(object? sender, DragStartedEventArgs e)
@@ -301,6 +336,12 @@ namespace BrakeDiscInspector_GUI_ROI
         {
             var roi = _shape.Tag as RoiModel;
             if (roi == null) return;
+
+            if (roi.Shape == RoiShape.Annulus)
+            {
+                ResizeAnnulusOuterFromOverlay(roi);
+                return;
+            }
 
             double x = Canvas.GetLeft(_shape); if (double.IsNaN(x)) x = 0;
             double y = Canvas.GetTop(_shape); if (double.IsNaN(y)) y = 0;
@@ -359,6 +400,59 @@ namespace BrakeDiscInspector_GUI_ROI
             Point newCenter = ComputeCenterFromAnchor(anchorWorld, anchorCorner, roi, newWidth, newHeight, angleRad);
 
             ApplyResizeResult(newCenter, newWidth, newHeight, angleDeg, roi);
+        }
+
+        private void ResizeAnnulusOuterFromOverlay(RoiModel roi)
+        {
+            double width = _shape.Width;
+            if (double.IsNaN(width) || width <= 0)
+                width = _shape.RenderSize.Width;
+            if (double.IsNaN(width) || width <= 0)
+                width = roi.Width;
+
+            double height = _shape.Height;
+            if (double.IsNaN(height) || height <= 0)
+                height = _shape.RenderSize.Height;
+            if (double.IsNaN(height) || height <= 0)
+                height = roi.Height;
+
+            var centerLocal = new Point(width / 2.0, height / 2.0);
+            var centerOverlay = _shape.TranslatePoint(centerLocal, _overlay);
+
+            var mouseOverlay = Mouse.GetPosition(_overlay);
+
+            var centerImg = _overlay.ToImage(centerOverlay.X, centerOverlay.Y);
+            var mouseImg = _overlay.ToImage(mouseOverlay.X, mouseOverlay.Y);
+
+            double dx = mouseImg.X - centerImg.X;
+            double dy = mouseImg.Y - centerImg.Y;
+            double outerImg = Math.Sqrt(dx * dx + dy * dy);
+            if (outerImg <= 0)
+                return;
+
+            double innerCanvas = roi.RInner;
+            double innerImg = _overlay.ToImageLen(innerCanvas);
+            double innerResolved = outerImg > 0
+                ? AnnulusDefaults.ClampInnerRadius(innerImg, outerImg)
+                : 0;
+
+            double outerScreen = _overlay.ToScreenLen(outerImg);
+            if (outerScreen <= 0)
+                outerScreen = 1.0;
+
+            double innerScreen = _overlay.ToScreenLen(innerResolved);
+
+            if (_shape is AnnulusShape annulusShape)
+            {
+                annulusShape.InnerRadius = innerScreen;
+            }
+
+            var centerScreen = _overlay.ToScreen(centerImg.X, centerImg.Y);
+            double diameterScreen = outerScreen * 2.0;
+            double angle = GetCurrentAngle();
+
+            ApplyResizeResult(centerScreen, diameterScreen, diameterScreen, angle, roi);
+            _overlay.InvalidateOverlay();
         }
 
         private void ResizeByEdge(double dragDx, double dragDy, Edge edge)
@@ -447,6 +541,7 @@ namespace BrakeDiscInspector_GUI_ROI
             SyncModelFromShape(_shape, roi);
             InvalidateArrange();
             _onChanged(RoiAdornerChangeKind.Delta, roi);
+            _overlay.InvalidateOverlay();
         }
 
         // === Rotación ===

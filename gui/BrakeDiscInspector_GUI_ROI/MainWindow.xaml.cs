@@ -145,6 +145,20 @@ namespace BrakeDiscInspector_GUI_ROI
         public MainWindow()
         {
             InitializeComponent();
+
+            if (RoiOverlay != null)
+            {
+                // Vincular overlay con la imagen para conocer su rectángulo renderizado (Stretch=Uniform)
+                RoiOverlay.BindToImage(ImgMain);
+            }
+
+            if (ImgMain != null)
+            {
+                // Recalcular transform cuando cambie el tamaño de la imagen o la ventana
+                ImgMain.SizeChanged += (_, __) => RoiOverlay?.InvalidateOverlay();
+            }
+
+            SizeChanged += (_, __) => RoiOverlay?.InvalidateOverlay();
             _preset = PresetManager.LoadOrDefault(_preset);
 
             InitUI();
@@ -390,6 +404,7 @@ namespace BrakeDiscInspector_GUI_ROI
             _imgSourceBI.EndInit();
 
             ImgMain.Source = _imgSourceBI;
+            RoiOverlay?.InvalidateOverlay();
             _imgW = _imgSourceBI.PixelWidth;
             _imgH = _imgSourceBI.PixelHeight;
 
@@ -638,7 +653,10 @@ namespace BrakeDiscInspector_GUI_ROI
             if (shape.Tag is not RoiModel roiInfo)
                 return;
 
-            var newAdorner = new RoiAdorner(shape, (changeKind, updatedModel) =>
+            if (RoiOverlay == null)
+                return;
+
+            var newAdorner = new RoiAdorner(shape, RoiOverlay, (changeKind, updatedModel) =>
             {
                 var pixelModel = CanvasToImage(updatedModel);
                 UpdateLayoutFromPixel(pixelModel);
@@ -1426,7 +1444,10 @@ namespace BrakeDiscInspector_GUI_ROI
                         al.Remove(ad);
                 }
 
-                var adorner = new RoiAdorner(_previewShape, (changeKind, modelUpdated) =>
+                if (RoiOverlay == null)
+                    return;
+
+                var adorner = new RoiAdorner(_previewShape, RoiOverlay, (changeKind, modelUpdated) =>
                 {
                     var pixelModel = CanvasToImage(modelUpdated);
                     _tmpBuffer = pixelModel.Clone();
@@ -3050,7 +3071,7 @@ namespace BrakeDiscInspector_GUI_ROI
                 return;
 
             RoiOverlay.Roi = CurrentRoi;
-            RoiOverlay.InvalidateVisual();
+            RoiOverlay.InvalidateOverlay();
         }
 
         private void UpdateOverlayFromPixelModel(RoiModel pixelModel)
@@ -3575,7 +3596,7 @@ namespace BrakeDiscInspector_GUI_ROI
                 RoiOverlay.Height = h;
                 RoiOverlay.SnapsToDevicePixels = true;
                 RenderOptions.SetEdgeMode(RoiOverlay, EdgeMode.Aliased);
-                RoiOverlay.InvalidateVisual();
+                RoiOverlay.InvalidateOverlay();
             }
 
             // Estabilidad visual
