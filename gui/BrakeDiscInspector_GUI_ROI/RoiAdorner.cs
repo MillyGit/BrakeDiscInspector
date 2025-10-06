@@ -25,8 +25,8 @@ namespace BrakeDiscInspector_GUI_ROI
     /// callback: onChanged(changeKind, modelUpdated)
     public class RoiAdorner : Adorner
     {
-        private readonly Shape _shape;
         private readonly RoiOverlay _overlay;
+        private readonly Shape _shape;
         private readonly Action<RoiAdornerChangeKind, RoiModel> _onChanged;
         private readonly Action<string> _log;
 
@@ -146,6 +146,21 @@ namespace BrakeDiscInspector_GUI_ROI
                 return _innerRadiusThumb;
 
             throw new ArgumentOutOfRangeException(nameof(index));
+        }
+
+        protected override GeneralTransform GetDesiredTransform(GeneralTransform transform)
+        {
+            var baseT = base.GetDesiredTransform(transform);
+
+            // Matriz: primero escalar, luego trasladar
+            var m = new Matrix();
+            m.ScaleAt(_overlay.Scale, _overlay.Scale, 0, 0);
+            m.Translate(_overlay.OffsetX, _overlay.OffsetY);
+
+            var gt = new GeneralTransformGroup();
+            if (baseT != null) gt.Children.Add(baseT);
+            gt.Children.Add(new MatrixTransform(m));
+            return gt;
         }
 
         protected override Size ArrangeOverride(Size finalSize)
