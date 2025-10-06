@@ -3541,6 +3541,7 @@ namespace BrakeDiscInspector_GUI_ROI
                 RoiOverlay.Height = h;
                 RoiOverlay.SnapsToDevicePixels = true;
                 RenderOptions.SetEdgeMode(RoiOverlay, EdgeMode.Aliased);
+                RoiOverlay.InvalidateVisual();
             }
 
             // Estabilidad visual
