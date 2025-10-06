@@ -144,24 +144,19 @@ namespace BrakeDiscInspector_GUI_ROI
         {
             InitializeComponent();
 
-            // (si no está ya) vincular overlay a la Image y recalcular en cambios de tamaño
-            RoiOverlay.BindToImage(ImgMain);
-            ImgMain.SizeChanged += (_, __) => RoiOverlay.InvalidateOverlay();
-            SizeChanged += (_, __) => RoiOverlay.InvalidateOverlay();
-
-            // === NUEVO: sincronizar CanvasROI con la misma transform imagen (scale+offset) ===
-            RoiOverlay.OverlayTransformChanged += (_, __) =>
+            if (RoiOverlay != null)
             {
-                var tg = new TransformGroup();
-                tg.Children.Add(new ScaleTransform(RoiOverlay.Scale, RoiOverlay.Scale));
-                tg.Children.Add(new TranslateTransform(RoiOverlay.OffsetX, RoiOverlay.OffsetY));
-                CanvasROI.RenderTransform = tg;
-                CanvasROI.RenderTransformOrigin = new Point(0, 0);
-            };
+                // Vincular overlay con la imagen para conocer su rectángulo renderizado (Stretch=Uniform)
+                RoiOverlay.BindToImage(ImgMain);
+            }
 
-            // Fuerza una primera actualización al iniciar
-            RoiOverlay.InvalidateOverlay();
+            if (ImgMain != null)
+            {
+                // Recalcular transform cuando cambie el tamaño de la imagen o la ventana
+                ImgMain.SizeChanged += (_, __) => RoiOverlay?.InvalidateOverlay();
+            }
 
+            SizeChanged += (_, __) => RoiOverlay?.InvalidateOverlay();
             _preset = PresetManager.LoadOrDefault(_preset);
 
             InitUI();
@@ -406,7 +401,7 @@ namespace BrakeDiscInspector_GUI_ROI
             _imgSourceBI.EndInit();
 
             ImgMain.Source = _imgSourceBI;
-            RoiOverlay.InvalidateOverlay();
+            RoiOverlay?.InvalidateOverlay();
             _imgW = _imgSourceBI.PixelWidth;
             _imgH = _imgSourceBI.PixelHeight;
 

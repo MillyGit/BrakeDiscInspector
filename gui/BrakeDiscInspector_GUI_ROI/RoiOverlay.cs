@@ -9,14 +9,6 @@ namespace BrakeDiscInspector_GUI_ROI
 {
     public class RoiOverlay : FrameworkElement
     {
-        // === Exponer la transform actual del overlay ===
-        public double Scale => _scale;
-        public double OffsetX => _offX;
-        public double OffsetY => _offY;
-
-        // Evento para avisar de cambios en la transform (scale/offset)
-        public event EventHandler? OverlayTransformChanged;
-
         public ROI? Roi { get; set; }
 
         // === Transformación imagen <-> pantalla ===
@@ -65,17 +57,12 @@ namespace BrakeDiscInspector_GUI_ROI
             {
                 _scale = 1.0;
                 _offX = _offY = 0.0;
-                // Notificar identidad cuando no hay imagen/tamaño válido
-                OverlayTransformChanged?.Invoke(this, EventArgs.Empty);
                 return;
             }
 
             _scale = Math.Min(sw / _imgW, sh / _imgH);
             _offX = (sw - _imgW * _scale) * 0.5;
             _offY = (sh - _imgH * _scale) * 0.5;
-
-            // Notificar a quien se suscriba (Canvas/Adorner) que cambió la transform
-            OverlayTransformChanged?.Invoke(this, EventArgs.Empty);
         }
 
         // Conversión coordenadas
