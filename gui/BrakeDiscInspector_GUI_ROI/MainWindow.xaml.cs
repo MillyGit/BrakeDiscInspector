@@ -84,6 +84,9 @@ namespace BrakeDiscInspector_GUI_ROI
         private double _lastLoggedAnnulusInnerProposed = double.NaN;
         private double _lastLoggedAnnulusInnerFinal = double.NaN;
         private bool _annulusResetLogged;
+        private static readonly TimeSpan AnnulusLogMinInterval = TimeSpan.FromMilliseconds(120);
+        private DateTime _lastAnnulusOuterLogTimestamp = DateTime.MinValue;
+        private DateTime _lastAnnulusInnerLogTimestamp = DateTime.MinValue;
 
         // Cache de la última sincronización del overlay
         private double _canvasLeftPx = 0;
@@ -99,6 +102,10 @@ namespace BrakeDiscInspector_GUI_ROI
         private readonly string _fileLogPath = System.IO.Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
             "brakedisc_localmatcher.log");
+        private readonly Queue<int> _logLineLengths = new();
+        private int _logCharCount;
+        private const int MaxLogCharacters = 60000;
+        private const int TrimmedLogCharacters = 50000;
         // Si tu overlay se llama distinto, ajusta esta propiedad (o referencia directa en los métodos).
         // Por ejemplo, si en XAML tienes <Canvas x:Name="Overlay"> usa ese nombre aquí.
         private Canvas OverlayCanvas => CanvasROI;
@@ -1066,6 +1073,18 @@ namespace BrakeDiscInspector_GUI_ROI
             return shouldLog;
         }
 
+        private static bool TryConsumeLogSlot(ref DateTime lastTimestamp)
+        {
+            var now = DateTime.UtcNow;
+            if (now - lastTimestamp < AnnulusLogMinInterval)
+            {
+                return false;
+            }
+
+            lastTimestamp = now;
+            return true;
+        }
+
         private void UpdateDraw(RoiShape shape, System.Windows.Point p0, System.Windows.Point p1)
         {
             if (_previewShape == null) return;
@@ -1108,16 +1127,38 @@ namespace BrakeDiscInspector_GUI_ROI
             {
                 // Outer radius = radius (canvas)
                 var outer = radius;
+                double previousOuter = _lastLoggedAnnulusOuterRadius;
                 if (ShouldLogAnnulusValue(ref _lastLoggedAnnulusOuterRadius, outer))
-                    AppendLog($"[annulus] outer radius preview={outer:0.##} px");
+                {
+                    if (TryConsumeLogSlot(ref _lastAnnulusOuterLogTimestamp))
+                    {
+                        AppendLog($"[annulus] outer radius preview={outer:0.##} px");
+                    }
+                    else
+                    {
+                        _lastLoggedAnnulusOuterRadius = previousOuter;
+                    }
+                }
 
                 // Conserva proporción si el usuario ya la ha cambiado; si no, usa el default & clamp.
                 double proposedInner = annulus.InnerRadius;
                 double resolvedInner = AnnulusDefaults.ResolveInnerRadius(proposedInner, outer);
                 double finalInner = AnnulusDefaults.ClampInnerRadius(resolvedInner, outer);
 
+                double previousInnerProposed = _lastLoggedAnnulusInnerProposed;
+                double previousInnerFinal = _lastLoggedAnnulusInnerFinal;
                 if (ShouldLogAnnulusInner(proposedInner, finalInner))
-                    AppendLog($"[annulus] outer={outer:0.##} px, proposed inner={proposedInner:0.##} px -> final inner={finalInner:0.##} px");
+                {
+                    if (TryConsumeLogSlot(ref _lastAnnulusInnerLogTimestamp))
+                    {
+                        AppendLog($"[annulus] outer={outer:0.##} px, proposed inner={proposedInner:0.##} px -> final inner={finalInner:0.##} px");
+                    }
+                    else
+                    {
+                        _lastLoggedAnnulusInnerProposed = previousInnerProposed;
+                        _lastLoggedAnnulusInnerFinal = previousInnerFinal;
+                    }
+                }
 
                 annulus.InnerRadius = finalInner;
             }
@@ -2071,8 +2112,54 @@ namespace BrakeDiscInspector_GUI_ROI
                 return;
             }
 
-            TrainLogText.AppendText(line + Environment.NewLine);
+            string entry = line + Environment.NewLine;
+            TrainLogText.AppendText(entry);
+            _logLineLengths.Enqueue(entry.Length);
+            _logCharCount += entry.Length;
+
+            TrimLogIfNeeded();
+
             TrainLogText.ScrollToEnd();
+        }
+
+        private void TrimLogIfNeeded()
+        {
+            if (TrainLogText == null)
+            {
+                return;
+            }
+
+            if (_logCharCount <= MaxLogCharacters)
+            {
+                return;
+            }
+
+            while (_logCharCount > TrimmedLogCharacters && _logLineLengths.Count > 0)
+            {
+                int expectedLength = _logLineLengths.Dequeue();
+                int available = TrainLogText.Text.Length;
+                if (available <= 0)
+                {
+                    _logCharCount = 0;
+                    _logLineLengths.Clear();
+                    break;
+                }
+
+                int removeLength = Math.Min(expectedLength, available);
+                TrainLogText.Select(0, removeLength);
+                TrainLogText.SelectedText = string.Empty;
+                _logCharCount -= removeLength;
+
+                if (removeLength < expectedLength)
+                {
+                    _logLineLengths.Clear();
+                    _logCharCount = TrainLogText.Text.Length;
+                    break;
+                }
+            }
+
+            TrainLogText.CaretIndex = TrainLogText.Text.Length;
+            _logCharCount = TrainLogText.Text.Length;
         }
 
         // --------- AppendLog (para evitar CS0119 en invocaciones) ---------
