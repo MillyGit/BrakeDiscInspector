@@ -62,8 +62,6 @@ namespace BrakeDiscInspector_GUI_ROI
         private BitmapSource? _heatmapBitmap;
         private RoiModel? _heatmapRoiImage;
         private double _heatmapOverlayOpacity = 0.6;
-        private System.Windows.Rect _lastImageDisplayRect = System.Windows.Rect.Empty;
-        private const double DisplayRectChangeTolerance = 0.5;
 
         private Shape? _previewShape;
         private bool _isDrawing;
@@ -172,7 +170,6 @@ namespace BrakeDiscInspector_GUI_ROI
             InitWorkflow();
 
             ImgMain.SizeChanged += ImgMain_SizeChanged;
-            ImgMain.LayoutUpdated += ImgMain_LayoutUpdated;
             this.SizeChanged += MainWindow_SizeChanged;
             this.Loaded += MainWindow_Loaded;
         }
@@ -412,8 +409,6 @@ namespace BrakeDiscInspector_GUI_ROI
             RoiOverlay.InvalidateOverlay();
             _imgW = _imgSourceBI.PixelWidth;
             _imgH = _imgSourceBI.PixelHeight;
-
-            _lastImageDisplayRect = System.Windows.Rect.Empty;
 
             try
             {
@@ -999,35 +994,6 @@ namespace BrakeDiscInspector_GUI_ROI
         {
             ScheduleSyncOverlay(force: true);
             RefreshHeatmapOverlay();
-        }
-
-        private void ImgMain_LayoutUpdated(object? sender, EventArgs e)
-        {
-            var currentRect = GetImageDisplayRect();
-
-            if (currentRect.Width <= 0 || currentRect.Height <= 0)
-            {
-                _lastImageDisplayRect = currentRect;
-                return;
-            }
-
-            bool lastInvalid = _lastImageDisplayRect.Width <= 0 || _lastImageDisplayRect.Height <= 0;
-            bool changed = lastInvalid || HasMeaningfulDisplayRectDelta(currentRect, _lastImageDisplayRect);
-
-            _lastImageDisplayRect = currentRect;
-
-            if (changed)
-            {
-                ScheduleSyncOverlay(force: true);
-            }
-        }
-
-        private static bool HasMeaningfulDisplayRectDelta(System.Windows.Rect current, System.Windows.Rect previous)
-        {
-            return Math.Abs(current.X - previous.X) > DisplayRectChangeTolerance ||
-                   Math.Abs(current.Y - previous.Y) > DisplayRectChangeTolerance ||
-                   Math.Abs(current.Width - previous.Width) > DisplayRectChangeTolerance ||
-                   Math.Abs(current.Height - previous.Height) > DisplayRectChangeTolerance;
         }
 
 
