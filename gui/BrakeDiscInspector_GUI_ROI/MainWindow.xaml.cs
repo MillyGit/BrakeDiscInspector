@@ -548,12 +548,12 @@ namespace BrakeDiscInspector_GUI_ROI
             }
             else
             {
+                // Para Circle y Annulus: SIEMPRE cuadrado perfecto (2·R)
                 double diameter = Math.Max(canvasRoi.Width, canvasRoi.R * 2.0);
-                double height = canvasRoi.Shape == RoiShape.Annulus && canvasRoi.Height > 0 ? canvasRoi.Height : diameter;
                 Canvas.SetLeft(shape, canvasRoi.CX - diameter / 2.0);
-                Canvas.SetTop(shape, canvasRoi.CY - height / 2.0);
+                Canvas.SetTop(shape, canvasRoi.CY - diameter / 2.0);
                 shape.Width = diameter;
-                shape.Height = height;
+                shape.Height = diameter;
             }
 
             shape.Tag = canvasRoi;
