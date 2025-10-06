@@ -25,6 +25,7 @@ namespace BrakeDiscInspector_GUI_ROI
     /// callback: onChanged(changeKind, modelUpdated)
     public class RoiAdorner : Adorner
     {
+        private readonly RoiOverlay _overlay;
         private readonly Shape _shape;
         private readonly Action<RoiAdornerChangeKind, RoiModel> _onChanged;
         private readonly Action<string> _log;
@@ -43,9 +44,10 @@ namespace BrakeDiscInspector_GUI_ROI
         private UIElement? _rotationReferenceElement;
         private double _rotationPointerAngleAtDragStartDeg;
 
-        public RoiAdorner(UIElement adornedElement, Action<RoiAdornerChangeKind, RoiModel> onChanged, Action<string> log)
+        public RoiAdorner(UIElement adornedElement, RoiOverlay overlay, Action<RoiAdornerChangeKind, RoiModel> onChanged, Action<string> log)
             : base(adornedElement)
         {
+            _overlay = overlay ?? throw new ArgumentNullException(nameof(overlay));
             _shape = adornedElement as Shape ?? throw new ArgumentException("RoiAdorner requiere Shape.", nameof(adornedElement));
             _onChanged = onChanged ?? ((_, __) => { });
             _log = log ?? (_ => { });
@@ -274,6 +276,7 @@ namespace BrakeDiscInspector_GUI_ROI
             InvalidateArrange(); // recoloca thumbs
 
             _onChanged(RoiAdornerChangeKind.Delta, roi);
+            _overlay.InvalidateOverlay();
         }
 
         private void OnThumbDragStarted(object? sender, DragStartedEventArgs e)
@@ -447,6 +450,7 @@ namespace BrakeDiscInspector_GUI_ROI
             SyncModelFromShape(_shape, roi);
             InvalidateArrange();
             _onChanged(RoiAdornerChangeKind.Delta, roi);
+            _overlay.InvalidateOverlay();
         }
 
         // === Rotación ===
@@ -619,6 +623,7 @@ namespace BrakeDiscInspector_GUI_ROI
 
             roi.AngleDeg = angleDeg;
             InvalidateArrange();
+            _overlay.InvalidateOverlay();
         }
 
         private double GetCurrentAngle()
@@ -838,6 +843,7 @@ namespace BrakeDiscInspector_GUI_ROI
             InvalidateArrange();
 
             _onChanged(RoiAdornerChangeKind.Delta, roi);
+            _overlay.InvalidateOverlay();
         }
 
         private void UpdateRotationCenterIfNeeded(RoiModel? roi, double width, double height)
@@ -857,56 +863,72 @@ namespace BrakeDiscInspector_GUI_ROI
             double w = shape.Width; if (double.IsNaN(w)) w = 0;
             double h = shape.Height; if (double.IsNaN(h)) h = 0;
 
+            double angle = GetCurrentAngle();
+            roi.AngleDeg = angle;
+
+            var topLeftScreen = new Point(x, y);
+            var bottomRightScreen = new Point(x + w, y + h);
+            var centerScreen = new Point(x + w / 2.0, y + h / 2.0);
+
+            var topLeftImage = _overlay.ToImage(topLeftScreen.X, topLeftScreen.Y);
+            var bottomRightImage = _overlay.ToImage(bottomRightScreen.X, bottomRightScreen.Y);
+            var centerImage = _overlay.ToImage(centerScreen.X, centerScreen.Y);
+
+            double widthImage = Math.Abs(bottomRightImage.X - topLeftImage.X);
+            double heightImage = Math.Abs(bottomRightImage.Y - topLeftImage.Y);
+
             if (shape is Rectangle)
             {
                 roi.Shape = RoiShape.Rectangle;
-                roi.Width = w;
-                roi.Height = h;
-                roi.Left = x;
-                roi.Top = y;
+                roi.Width = widthImage;
+                roi.Height = heightImage;
+                roi.X = centerImage.X;
+                roi.Y = centerImage.Y;
                 roi.CX = roi.X;
                 roi.CY = roi.Y;
+                roi.Left = roi.X - roi.Width / 2.0;
+                roi.Top = roi.Y - roi.Height / 2.0;
                 roi.R = Math.Max(roi.Width, roi.Height) / 2.0;
                 roi.RInner = 0.0;
             }
             else if (shape is AnnulusShape annulus)
             {
-                double radiusX = w / 2.0;
-                double radiusY = h / 2.0;
-                double centerX = x + radiusX;
-                double centerY = y + radiusY;
-                double radius = Math.Max(radiusX, radiusY);
+                double diameterScreen = Math.Max(w, h);
+                double radiusImage = _overlay.ToImageLen(diameterScreen / 2.0);
+                double innerScreen = annulus.InnerRadius;
+                double innerImage = _overlay.ToImageLen(innerScreen);
+                innerImage = AnnulusDefaults.ClampInnerRadius(innerImage, radiusImage);
 
                 roi.Shape = RoiShape.Annulus;
-                roi.Width = w;
-                roi.Height = h;
-                roi.Left = x;
-                roi.Top = y;
-                roi.CX = centerX;
-                roi.CY = centerY;
-                roi.R = radius;
-
-                double inner = annulus.InnerRadius;
-                double maxInner = radius > 0 ? radius : Math.Max(radiusX, radiusY);
-                inner = Math.Max(0, Math.Min(inner, maxInner));
-                roi.RInner = inner;
-                annulus.InnerRadius = inner;
+                roi.CX = centerImage.X;
+                roi.CY = centerImage.Y;
+                roi.X = roi.CX;
+                roi.Y = roi.CY;
+                roi.R = radiusImage;
+                roi.RInner = innerImage;
+                double diameterImage = radiusImage * 2.0;
+                roi.Width = diameterImage;
+                roi.Height = diameterImage;
+                roi.Left = roi.CX - roi.Width / 2.0;
+                roi.Top = roi.CY - roi.Height / 2.0;
+                annulus.InnerRadius = _overlay.ToScreenLen(innerImage);
             }
             else if (shape is Ellipse)
             {
-                double radiusX = w / 2.0;
-                double radiusY = h / 2.0;
-                double centerX = x + radiusX;
-                double centerY = y + radiusY;
+                double diameterScreen = Math.Max(w, h);
+                double radiusImage = _overlay.ToImageLen(diameterScreen / 2.0);
 
                 roi.Shape = RoiShape.Circle;
-                roi.Width = w;
-                roi.Height = h;
-                roi.Left = x;
-                roi.Top = y;
-                roi.CX = centerX;
-                roi.CY = centerY;
-                roi.R = Math.Max(radiusX, radiusY);
+                roi.CX = centerImage.X;
+                roi.CY = centerImage.Y;
+                roi.X = roi.CX;
+                roi.Y = roi.CY;
+                roi.R = radiusImage;
+                double diameterImage = radiusImage * 2.0;
+                roi.Width = diameterImage;
+                roi.Height = diameterImage;
+                roi.Left = roi.CX - roi.Width / 2.0;
+                roi.Top = roi.CY - roi.Height / 2.0;
                 roi.RInner = 0.0;
             }
         }
