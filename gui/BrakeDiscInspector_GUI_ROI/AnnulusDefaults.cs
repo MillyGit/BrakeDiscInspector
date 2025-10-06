@@ -5,6 +5,7 @@ namespace BrakeDiscInspector_GUI_ROI
     internal static class AnnulusDefaults
     {
         public const double DefaultInnerRadiusRatio = 0.6;
+        public const double MinimumInnerRadius = 10.0; // pixels (=> 20 px diameter)
 
         public static double ResolveInnerRadius(double requestedInnerRadius, double outerRadius)
         {
@@ -32,6 +33,10 @@ namespace BrakeDiscInspector_GUI_ROI
                 inner = 0;
             if (inner > outerRadius)
                 inner = outerRadius;
+
+            double minAllowed = outerRadius >= MinimumInnerRadius ? MinimumInnerRadius : 0.0;
+            if (inner < minAllowed)
+                inner = minAllowed;
 
             return inner;
         }
