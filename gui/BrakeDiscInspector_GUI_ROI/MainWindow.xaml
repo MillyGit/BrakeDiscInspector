@@ -30,9 +30,7 @@
                                 Panel.ZIndex="1"/>
                         <local:RoiOverlay x:Name="RoiOverlay"
                                           IsHitTestVisible="False"
-                                          Panel.ZIndex="2"
-                                          HorizontalAlignment="Stretch"
-                                          VerticalAlignment="Stretch"/>
+                                          Panel.ZIndex="2"/>
                     </Grid>
                 </Grid>
             </AdornerDecorator>
