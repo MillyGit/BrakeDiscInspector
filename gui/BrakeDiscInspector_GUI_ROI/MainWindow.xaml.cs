@@ -145,26 +145,27 @@ namespace BrakeDiscInspector_GUI_ROI
         private void UpdateRoiLabelPosition(Shape shape)
         {
             if (shape == null) return;
-            if (CanvasROI == null) return;
 
-            // Accept both ROI (with Legend) and RoiModel (with Label) in Tag
+            // Accept both ROI (Legend) and RoiModel (Label)
             object tag = shape.Tag;
             string legendOrLabel = null;
-            if (tag is LegacyROI rTag)
-                legendOrLabel = rTag.Legend;
-            else if (tag is RoiModel mTag)
-                legendOrLabel = mTag.Label;
+            if (tag is LegacyROI rTag)        legendOrLabel = rTag.Legend;
+            else if (tag is RoiModel m) legendOrLabel = m.Label;
 
             string labelName = "roiLabel_" + ((legendOrLabel ?? string.Empty).Replace(" ", "_"));
             var label = CanvasROI.Children.OfType<TextBlock>().FirstOrDefault(tb => tb.Name == labelName);
             if (label == null) return;
 
+            // If Left/Top are not ready yet, defer positioning to next layout pass
             double left = Canvas.GetLeft(shape);
             double top  = Canvas.GetTop(shape);
-            if (double.IsNaN(left)) left = 0;
-            if (double.IsNaN(top))  top  = 0;
+            if (double.IsNaN(left) || double.IsNaN(top))
+            {
+                Dispatcher.BeginInvoke(new Action(() => UpdateRoiLabelPosition(shape)), System.Windows.Threading.DispatcherPriority.Loaded);
+                return;
+            }
 
-            // Use fully-qualified System.Windows.Size to avoid ambiguity with OpenCvSharp.Size
+            // Measure and place label just above ROI bbox (4 px gap)
             label.Measure(new System.Windows.Size(double.PositiveInfinity, double.PositiveInfinity));
             double textH = label.DesiredSize.Height;
             Canvas.SetLeft(label, left);
@@ -652,8 +653,6 @@ namespace BrakeDiscInspector_GUI_ROI
                 shape.StrokeThickness = 0;
                 shape.IsHitTestVisible = true;
 
-                EnsureRoiLabel(shape, roi);
-
                 if (shape.Tag is not RoiModel canvasRoi)
                 {
                     canvasRoi = roi.Clone();
@@ -754,6 +753,30 @@ namespace BrakeDiscInspector_GUI_ROI
                         }
                 }
 
+                // Create/update label on Canvas for this ROI
+                string _lbl = (roi is LegacyROI r2) ? r2.Legend
+                            : (roi is RoiModel m2) ? m2.Label
+                            : "ROI";
+                string _labelName = "roiLabel_" + (_lbl ?? string.Empty).Replace(" ", "_");
+
+                var _existing = CanvasROI.Children.OfType<TextBlock>().FirstOrDefault(tb => tb.Name == _labelName);
+                var _label = _existing ?? new TextBlock { Name = _labelName };
+                _label.Text = string.IsNullOrWhiteSpace(_lbl) ? "ROI" : _lbl;
+                _label.FontFamily = new FontFamily("Segoe UI");
+                _label.FontSize = 12;
+                _label.FontWeight = FontWeights.SemiBold;
+                _label.Foreground = Brushes.White;
+                _label.IsHitTestVisible = false;
+
+                if (_existing == null)
+                {
+                    CanvasROI.Children.Add(_label);
+                    Panel.SetZIndex(_label, int.MaxValue);
+                }
+
+                // Place label next to the ROI shape (this call may defer via Dispatcher if not ready)
+                UpdateRoiLabelPosition(shape);
+
                 if (shape != null)
                 {
                     double l = Canvas.GetLeft(shape), t = Canvas.GetTop(shape);
@@ -761,7 +784,6 @@ namespace BrakeDiscInspector_GUI_ROI
                 }
 
                 ApplyRoiRotationToShape(shape, roi.AngleDeg);
-                UpdateRoiLabelPosition(shape);
             }
 
             if (_layout.Inspection != null)
@@ -1980,6 +2002,61 @@ namespace BrakeDiscInspector_GUI_ROI
                     _state = MasterState.Ready;
                     break;
             }
+
+            var masterRoi = savedRoi;
+
+            // Clear preview safely (so it doesn't overlay)
+            try
+            {
+                if (_previewShape != null)
+                {
+                    CanvasROI.Children.Remove(_previewShape);
+                    _previewShape = null;
+                }
+            }
+            catch { /* ignore */ }
+
+            // Redraw saved ROIs (labels are created/updated there)
+            RedrawOverlay();
+
+            // Ensure the label for the just-saved Master ROI is created and positioned
+            try
+            {
+                // Find the canvas shape that corresponds to the just-saved Master
+                // 'masterRoi' should be your saved ROI instance (type ROI or RoiModel).
+                // If your variable has a different name, use it below.
+                var shape = CanvasROI.Children.OfType<Shape>()
+                    .FirstOrDefault(s => ReferenceEquals(s.Tag, masterRoi));
+
+                if (shape != null)
+                {
+                    // Create/update the label if your RedrawOverlay didn’t already do it
+                    string legendOrLabel = (masterRoi is LegacyROI r) ? r.Legend
+                                      : (masterRoi is RoiModel m) ? m.Label
+                                      : "ROI";
+                    string labelName = "roiLabel_" + (legendOrLabel ?? string.Empty).Replace(" ", "_");
+                    var label = CanvasROI.Children.OfType<TextBlock>().FirstOrDefault(tb => tb.Name == labelName);
+                    if (label == null)
+                    {
+                        label = new TextBlock
+                        {
+                            Name = labelName,
+                            Text = string.IsNullOrWhiteSpace(legendOrLabel) ? "ROI" : legendOrLabel,
+                            FontFamily = new FontFamily("Segoe UI"),
+                            FontSize = 12,
+                            FontWeight = FontWeights.SemiBold,
+                            Foreground = Brushes.White,
+                            IsHitTestVisible = false
+                        };
+                        CanvasROI.Children.Add(label);
+                        Panel.SetZIndex(label, int.MaxValue);
+                    }
+
+                    // Now position the label next to the ROI shape (after geometry is valid)
+                    UpdateRoiLabelPosition(shape);
+                }
+            }
+            catch { /* ignore */ }
 
             // Limpia preview/adorner y persiste
             ClearPreview();
