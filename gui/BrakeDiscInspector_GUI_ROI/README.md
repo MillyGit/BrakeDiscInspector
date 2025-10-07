@@ -1,3 +1,14 @@
+
+# 📌 Actualización — 2025-10-07
+
+**Cambios clave (GUI):**
+- Corrección de salto del frame al clicar adorner (círculo/annulus): cálculo y propagación del centro reales en `SyncModelFromShape` y sincronización `X,Y = CX,CY` en `CreateLayoutShape`.
+- Bbox SIEMPRE cuadrado para circle/annulus; overlay heatmap alineado.
+- Decisiones del proyecto y parámetros vigentes documentados.
+
+**Cambios clave (Backend):**
+- PatchCore + DINOv2 ViT-S/14; endpoints `/health`, `/fit_ok`, `/calibrate_ng`, `/infer`; persistencia por `(role_id, roi_id)`.
+
 # BrakeDiscInspector GUI — ROI Workflow
 
 ## 1. Objetivo
