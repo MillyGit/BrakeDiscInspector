@@ -101,6 +101,9 @@ namespace BrakeDiscInspector_GUI_ROI
         private readonly string _fileLogPath = System.IO.Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
             "brakedisc_localmatcher.log");
+        private static readonly string _resizeLogDir = System.IO.Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+            "BrakeDiscInspector", "logs");
         // Si tu overlay se llama distinto, ajusta esta propiedad (o referencia directa en los métodos).
         // Por ejemplo, si en XAML tienes <Canvas x:Name="Overlay"> usa ese nombre aquí.
         private Canvas OverlayCanvas => CanvasROI;
@@ -202,6 +205,22 @@ namespace BrakeDiscInspector_GUI_ROI
         private bool _overlayNeedsRedraw;
         private bool _adornerHadDelta;
         private bool _analysisViewActive;
+
+        private void AppendResizeLog(string msg)
+        {
+            try
+            {
+                if (!System.IO.Directory.Exists(_resizeLogDir))
+                    System.IO.Directory.CreateDirectory(_resizeLogDir);
+                string path = System.IO.Path.Combine(_resizeLogDir, $"resize-debug-{DateTime.Now:yyyyMMdd}.txt");
+                string line = $"[{DateTime.Now:HH:mm:ss.fff}] {msg}";
+                System.IO.File.AppendAllText(path, line + Environment.NewLine);
+            }
+            catch
+            {
+                // swallow logging errors
+            }
+        }
         public MainWindow()
         {
             InitializeComponent();
@@ -552,6 +571,7 @@ namespace BrakeDiscInspector_GUI_ROI
 
         private void RedrawOverlay()
         {
+            AppendResizeLog($"[redraw] start: CanvasROI={CanvasROI.ActualWidth:0}x{CanvasROI.ActualHeight:0}");
             if (CanvasROI == null || _imgW <= 0 || _imgH <= 0)
                 return;
 
@@ -701,6 +721,12 @@ namespace BrakeDiscInspector_GUI_ROI
                             canvasRoi.R = d / 2.0;
                             break;
                         }
+                }
+
+                if (shape != null)
+                {
+                    double l = Canvas.GetLeft(shape), t = Canvas.GetTop(shape);
+                    AppendResizeLog($"[roi] {roi.Legend ?? roi.Label ?? "ROI"}: L={l:0} T={t:0} W={shape.Width:0} H={shape.Height:0}");
                 }
 
                 ApplyRoiRotationToShape(shape, roi.AngleDeg);
@@ -1142,12 +1168,14 @@ namespace BrakeDiscInspector_GUI_ROI
 
         private void MainWindow_SizeChanged(object sender, SizeChangedEventArgs e)
         {
+            AppendResizeLog($"[window] SizeChanged: window={ActualWidth:0}x{ActualHeight:0} ImgMain={ImgMain.ActualWidth:0}x{ImgMain.ActualHeight:0}");
             ScheduleSyncOverlay(force: true);
             RefreshHeatmapOverlay();
         }
 
         private void ImgMain_SizeChanged(object sender, SizeChangedEventArgs e)
         {
+            AppendResizeLog($"[image] SizeChanged: ImgMain={ImgMain.ActualWidth:0}x{ImgMain.ActualHeight:0}");
             ScheduleSyncOverlay(force: true);
             RefreshHeatmapOverlay();
         }
@@ -3649,6 +3677,50 @@ namespace BrakeDiscInspector_GUI_ROI
             return result;
         }
 
+        private void RecomputePreviewShapeAfterSync()
+        {
+            if (_previewShape == null) return;
+            if (_tmpBuffer == null) return; // image-space ROI model while drawing
+
+            // Map image-space preview ROI → canvas-space model
+            var rc = ImageToCanvas(_tmpBuffer); // rc is canvas-space ROI
+
+            // Position the preview shape according to rc
+            if (_previewShape is System.Windows.Shapes.Rectangle)
+            {
+                Canvas.SetLeft(_previewShape, rc.Left);
+                Canvas.SetTop(_previewShape,  rc.Top);
+                _previewShape.Width  = Math.Max(1.0, rc.Width);
+                _previewShape.Height = Math.Max(1.0, rc.Height);
+            }
+            else if (_previewShape is System.Windows.Shapes.Ellipse)
+            {
+                double d = Math.Max(1.0, rc.R * 2.0);
+                Canvas.SetLeft(_previewShape, rc.CX - d / 2.0);
+                Canvas.SetTop(_previewShape,  rc.CY - d / 2.0);
+                _previewShape.Width  = d;
+                _previewShape.Height = d;
+            }
+            else if (_previewShape is AnnulusShape ann)
+            {
+                double d = Math.Max(1.0, rc.R * 2.0);
+                Canvas.SetLeft(ann, rc.CX - d / 2.0);
+                Canvas.SetTop(ann,  rc.CY - d / 2.0);
+                ann.Width  = d;
+                ann.Height = d;
+                double inner = Math.Max(0.0, Math.Min(rc.RInner, rc.R)); // clamp
+                ann.InnerRadius = inner;
+            }
+
+            // Rotation (if applicable on preview)
+            try { ApplyRoiRotationToShape(_previewShape, rc.AngleDeg); } catch { /* ignore */ }
+
+            // Optional: reposition label tied to preview shape, if in use
+            try { UpdateRoiLabelPosition(_previewShape); } catch { /* ignore if labels disabled */ }
+
+            AppendResizeLog($"[preview] recomputed: img({(_tmpBuffer.Left):0},{(_tmpBuffer.Top):0},{(_tmpBuffer.Width):0},{(_tmpBuffer.Height):0}) → canvas L={Canvas.GetLeft(_previewShape):0},T={Canvas.GetTop(_previewShape):0}, W={_previewShape.Width:0}, H={_previewShape.Height:0}");
+        }
+
 
 
         // === Sincroniza CanvasROI para que SE ACOMODE EXACTAMENTE al área visible de la imagen (letterbox) ===
@@ -3765,7 +3837,11 @@ namespace BrakeDiscInspector_GUI_ROI
             }
 
             AppendLog("[sync] post-layout redraw");
-            RedrawOverlay();
+            AppendResizeLog($"[after_sync] CanvasROI={CanvasROI.ActualWidth:0}x{CanvasROI.ActualHeight:0} displayRect={GetImageDisplayRect().Width:0}x{GetImageDisplayRect().Height:0}");
+
+            RedrawOverlay();            // saved ROIs
+            RecomputePreviewShapeAfterSync(); // PREVIEW ROI (unsaved)
+
             RefreshHeatmapOverlay();
             _overlayNeedsRedraw = false;
             return;
