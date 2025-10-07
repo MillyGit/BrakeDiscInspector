@@ -144,46 +144,77 @@ namespace BrakeDiscInspector_GUI_ROI
 
         private void UpdateRoiLabelPosition(Shape shape)
         {
-            if (shape == null)
-                return;
+            if (shape == null) return;
+            if (CanvasROI == null) return;
 
-            if (!_roiLabels.TryGetValue(shape, out var label))
-                return;
+            // Accept both ROI (with Legend) and RoiModel (with Label) in Tag
+            object tag = shape.Tag;
+            string legendOrLabel = null;
+            if (tag is LegacyROI rTag)
+                legendOrLabel = rTag.Legend;
+            else if (tag is RoiModel mTag)
+                legendOrLabel = mTag.Label;
+
+            string labelName = "roiLabel_" + ((legendOrLabel ?? string.Empty).Replace(" ", "_"));
+            var label = CanvasROI.Children.OfType<TextBlock>().FirstOrDefault(tb => tb.Name == labelName);
+            if (label == null) return;
 
             double left = Canvas.GetLeft(shape);
-            double top = Canvas.GetTop(shape);
+            double top  = Canvas.GetTop(shape);
             if (double.IsNaN(left)) left = 0;
-            if (double.IsNaN(top)) top = 0;
+            if (double.IsNaN(top))  top  = 0;
 
+            // Use fully-qualified System.Windows.Size to avoid ambiguity with OpenCvSharp.Size
             label.Measure(new System.Windows.Size(double.PositiveInfinity, double.PositiveInfinity));
             double textH = label.DesiredSize.Height;
-
             Canvas.SetLeft(label, left);
-            Canvas.SetTop(label, top - (textH + 4));
+            Canvas.SetTop(label,  top - (textH + 4));
         }
 
-        private void EnsureRoiLabel(Shape shape, RoiModel roi)
+        private void EnsureRoiLabel(Shape shape, object roi)
         {
             if (CanvasROI == null)
                 return;
 
-            if (!_roiLabels.TryGetValue(shape, out var label))
-            {
-                label = new TextBlock
-                {
-                    FontFamily = new FontFamily("Segoe UI"),
-                    FontSize = 12,
-                    FontWeight = FontWeights.SemiBold,
-                    IsHitTestVisible = false,
-                    Foreground = Brushes.White
-                };
+            _roiLabels.TryGetValue(shape, out var previous);
 
-                _roiLabels[shape] = label;
+            // Build label text and key supporting both types
+            string _lbl;
+            if (roi is LegacyROI rObj)
+                _lbl = string.IsNullOrWhiteSpace(rObj.Legend) ? "ROI" : rObj.Legend;
+            else if (roi is RoiModel mObj)
+                _lbl = string.IsNullOrWhiteSpace(mObj.Label) ? "ROI" : mObj.Label;
+            else
+                _lbl = "ROI";
+
+            string labelName = "roiLabel_" + _lbl.Replace(" ", "_");
+            var existing = CanvasROI.Children.OfType<TextBlock>().FirstOrDefault(tb => tb.Name == labelName);
+            var label = existing ?? new TextBlock { Name = labelName };
+
+            label.Text = _lbl;
+
+            if (existing == null)
+            {
+                label.FontFamily = new FontFamily("Segoe UI");
+                label.FontSize = 12;
+                label.FontWeight = FontWeights.SemiBold;
+                label.IsHitTestVisible = false;
+                label.Foreground = Brushes.White;
+
                 CanvasROI.Children.Add(label);
                 Panel.SetZIndex(label, int.MaxValue);
             }
 
-            label.Text = ResolveRoiLabelText(roi) ?? "ROI";
+            if (previous != null && !ReferenceEquals(previous, label))
+            {
+                bool usedElsewhere = _roiLabels.Any(kv => !ReferenceEquals(kv.Key, shape) && ReferenceEquals(kv.Value, previous));
+                if (!usedElsewhere && CanvasROI.Children.Contains(previous))
+                {
+                    CanvasROI.Children.Remove(previous);
+                }
+            }
+
+            _roiLabels[shape] = label;
         }
 
         private void RemoveRoiLabel(Shape shape)
@@ -726,7 +757,7 @@ namespace BrakeDiscInspector_GUI_ROI
                 if (shape != null)
                 {
                     double l = Canvas.GetLeft(shape), t = Canvas.GetTop(shape);
-                    AppendResizeLog($"[roi] {roi.Legend ?? roi.Label ?? "ROI"}: L={l:0} T={t:0} W={shape.Width:0} H={shape.Height:0}");
+                    AppendResizeLog($"[roi] {roi.Label ?? "ROI"}: L={l:0} T={t:0} W={shape.Width:0} H={shape.Height:0}");
                 }
 
                 ApplyRoiRotationToShape(shape, roi.AngleDeg);
