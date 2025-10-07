@@ -799,33 +799,22 @@ namespace BrakeDiscInspector_GUI_ROI
                 // Ensure shape.Tag references the ROI clone for downstream logic
                 shape.Tag = canvasRoi;
 
-                // Build label text: prefer ResolveRoiLabelText(roi) if available; else use roi.Label or "ROI"
                 string _lbl;
-                try
+                if (roi is RoiModel mObj)
                 {
-                    // If ResolveRoiLabelText is defined for RoiModel, prefer it
-                    if (roi is RoiModel rm)
-                    {
-                        string resolved = ResolveRoiLabelText(rm);
-                        _lbl = !string.IsNullOrWhiteSpace(resolved) ? resolved
-                              : (!string.IsNullOrWhiteSpace(rm.Label) ? rm.Label : "ROI");
-                        // Persist back so future redraws reuse the same text/key
-                        if (string.IsNullOrWhiteSpace(rm.Label) && !string.IsNullOrWhiteSpace(resolved))
-                            rm.Label = resolved;
-                    }
-                    else if (roi is ROI rlegacy)
-                    {
-                        _lbl = !string.IsNullOrWhiteSpace(rlegacy.Legend) ? rlegacy.Legend : "ROI";
-                    }
-                    else
-                    {
-                        _lbl = "ROI";
-                    }
+                    string resolved = null;
+                    try { resolved = ResolveRoiLabelText(mObj); } catch { /* ignore */ }
+
+                    _lbl = !string.IsNullOrWhiteSpace(resolved) ? resolved
+                         : (!string.IsNullOrWhiteSpace(mObj.Label) ? mObj.Label : "ROI");
+
+                    // Persist resolved label so future redraws reuse same text/key
+                    if (string.IsNullOrWhiteSpace(mObj.Label) && !string.IsNullOrWhiteSpace(resolved))
+                        mObj.Label = resolved;
                 }
-                catch
+                else
                 {
-                    // Fallback
-                    _lbl = (roi is RoiModel m2 && !string.IsNullOrWhiteSpace(m2.Label)) ? m2.Label : "ROI";
+                    _lbl = "ROI";
                 }
 
                 if (canvasRoi is RoiModel)
