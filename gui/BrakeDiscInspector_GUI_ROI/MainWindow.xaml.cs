@@ -147,11 +147,13 @@ namespace BrakeDiscInspector_GUI_ROI
             if (shape == null) return;
 
             // Accept both ROI (Legend) and RoiModel (Label)
-            object tag = shape.Tag;
-            string legendOrLabel = null;
-            if (tag is LegacyROI rTag)        legendOrLabel = rTag.Legend;
-            else if (tag is RoiModel m) legendOrLabel = m.Label;
-
+            object tag = shape?.Tag;
+            string legendOrLabel = tag switch
+            {
+                ROI r      => r.Legend,
+                RoiModel m => m.Label,
+                _          => null
+            };
             string labelName = "roiLabel_" + ((legendOrLabel ?? string.Empty).Replace(" ", "_"));
             var label = CanvasROI.Children.OfType<TextBlock>().FirstOrDefault(tb => tb.Name == labelName);
             if (label == null) return;
@@ -754,10 +756,15 @@ namespace BrakeDiscInspector_GUI_ROI
                 }
 
                 // Create/update label on Canvas for this ROI
-                string _lbl = (roi is LegacyROI r2) ? r2.Legend
-                            : (roi is RoiModel m2) ? m2.Label
-                            : "ROI";
-                string _labelName = "roiLabel_" + (_lbl ?? string.Empty).Replace(" ", "_");
+                // Build label text from either ROI (Legend) or RoiModel (Label) without invalid pattern on RoiModel-typed vars
+                object src = (object)roi ?? (shape != null ? shape.Tag : null);
+                string _lbl = src switch
+                {
+                    ROI r      => string.IsNullOrWhiteSpace(r.Legend) ? "ROI" : r.Legend,
+                    RoiModel m => string.IsNullOrWhiteSpace(m.Label)  ? "ROI" : m.Label,
+                    _          => "ROI"
+                };
+                string _labelName = "roiLabel_" + _lbl.Replace(" ", "_");
 
                 var _existing = CanvasROI.Children.OfType<TextBlock>().FirstOrDefault(tb => tb.Name == _labelName);
                 var _label = _existing ?? new TextBlock { Name = _labelName };
@@ -2031,17 +2038,21 @@ namespace BrakeDiscInspector_GUI_ROI
                 if (shape != null)
                 {
                     // Create/update the label if your RedrawOverlay didn’t already do it
-                    string legendOrLabel = (masterRoi is LegacyROI r) ? r.Legend
-                                      : (masterRoi is RoiModel m) ? m.Label
-                                      : "ROI";
-                    string labelName = "roiLabel_" + (legendOrLabel ?? string.Empty).Replace(" ", "_");
+                    object src = (object)masterRoi ?? (shape != null ? shape.Tag : null);
+                    string _lbl = src switch
+                    {
+                        ROI r      => string.IsNullOrWhiteSpace(r.Legend) ? "ROI" : r.Legend,
+                        RoiModel m => string.IsNullOrWhiteSpace(m.Label)  ? "ROI" : m.Label,
+                        _          => "ROI"
+                    };
+                    string labelName = "roiLabel_" + _lbl.Replace(" ", "_");
                     var label = CanvasROI.Children.OfType<TextBlock>().FirstOrDefault(tb => tb.Name == labelName);
                     if (label == null)
                     {
                         label = new TextBlock
                         {
                             Name = labelName,
-                            Text = string.IsNullOrWhiteSpace(legendOrLabel) ? "ROI" : legendOrLabel,
+                            Text = string.IsNullOrWhiteSpace(_lbl) ? "ROI" : _lbl,
                             FontFamily = new FontFamily("Segoe UI"),
                             FontSize = 12,
                             FontWeight = FontWeights.SemiBold,
