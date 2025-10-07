@@ -132,6 +132,7 @@ namespace BrakeDiscInspector_GUI_ROI
         private const int MaxSyncRetries = 3;
         // overlay diferido
         private bool _overlayNeedsRedraw;
+        private bool _adornerHadDelta;
         private bool _analysisViewActive;
         public MainWindow()
         {
@@ -665,8 +666,7 @@ namespace BrakeDiscInspector_GUI_ROI
             var newAdorner = new RoiAdorner(shape, RoiOverlay, (changeKind, updatedModel) =>
             {
                 var pixelModel = CanvasToImage(updatedModel);
-                // Evitar salto del frame al hacer click en un adorner (sin arrastrar):
-                // no redibujamos aquí; delegamos en HandleAdornerChange con gating.
+                // Evitamos redibujar en DragStarted (click en adorner sin mover)
                 HandleAdornerChange(changeKind, updatedModel, pixelModel, "[adorner]");
             }, AppendLog);
 
@@ -1435,19 +1435,25 @@ namespace BrakeDiscInspector_GUI_ROI
             switch (changeKind)
             {
                 case RoiAdornerChangeKind.DragStarted:
+                    _adornerHadDelta = false;
                     HandleDragStarted(canvasModel, pixelModel, contextLabel);
-                    break;
+                    return;
+
                 case RoiAdornerChangeKind.Delta:
+                    _adornerHadDelta = true;
                     HandleDragDelta(canvasModel, pixelModel, contextLabel);
-                    break;
+                    // Redibujamos solo cuando hay delta real
+                    UpdateOverlayFromPixelModel(pixelModel);
+                    return;
+
                 case RoiAdornerChangeKind.DragCompleted:
                     HandleDragCompleted(canvasModel, pixelModel, contextLabel);
-                    break;
+                    // Si no hubo delta (click sin mover), NO redibujamos → evita “salto”
+                    if (_adornerHadDelta)
+                        UpdateOverlayFromPixelModel(pixelModel);
+                    _adornerHadDelta = false;
+                    return;
             }
-
-            // Redibuja solo si hubo cambio geométrico real (no al iniciar el drag).
-            if (changeKind != RoiAdornerChangeKind.DragStarted)
-                UpdateOverlayFromPixelModel(pixelModel);
         }
 
         private void HandleDragStarted(RoiModel canvasModel, RoiModel pixelModel, string contextLabel)
@@ -3528,7 +3534,7 @@ namespace BrakeDiscInspector_GUI_ROI
 
             AppendLog($"[sync] Canvas px=({w:0}x{h:0}) Offset=({left:0},{top:0})  Img={bmp.PixelWidth}x{bmp.PixelHeight}");
 
-            RedrawOverlay();
+            RedrawOverlaySafe();
 
             // Dentro de SyncOverlayToImage(), al final:
             var disp = GetImageDisplayRect();
