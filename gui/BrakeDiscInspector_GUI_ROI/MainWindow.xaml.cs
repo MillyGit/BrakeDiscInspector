@@ -38,6 +38,8 @@ using WRect = System.Windows.Rect;
 using WRectShape = System.Windows.Shapes.Rectangle;
 using Path = System.IO.Path;
 using WSize = System.Windows.Size;
+using LegacyROI = BrakeDiscInspector_GUI_ROI.ROI;
+using ROI = BrakeDiscInspector_GUI_ROI.RoiModel;
 
 namespace BrakeDiscInspector_GUI_ROI
 {
@@ -108,7 +110,7 @@ namespace BrakeDiscInspector_GUI_ROI
         private const double LabelOffsetX = 10;   // desplazamiento a la derecha de la cruz
         private const double LabelOffsetY = -20;  // desplazamiento hacia arriba de la cruz
 
-        private ROI CurrentRoi = new ROI
+        private LegacyROI CurrentRoi = new LegacyROI
         {
             X = 200,
             Y = 150,
@@ -127,6 +129,34 @@ namespace BrakeDiscInspector_GUI_ROI
 
         private readonly Dictionary<string, Shape> _roiShapesById = new();
 
+        private IEnumerable<RoiModel> SavedRois => new[]
+        {
+            _layout.Master1Pattern,
+            _layout.Master1Search,
+            _layout.Master2Pattern,
+            _layout.Master2Search,
+            _layout.Inspection
+        }.OfType<RoiModel>();
+
+        private void UpdateRoiLabelPosition(Shape shape)
+        {
+            if (shape?.Tag is not ROI roi) return;
+            string labelName = $"roiLabel_{roi.Id}";
+            var label = CanvasROI.Children.OfType<TextBlock>().FirstOrDefault(tb => tb.Name == labelName);
+            if (label == null) return;
+
+            double left = Canvas.GetLeft(shape);
+            double top  = Canvas.GetTop(shape);
+            if (double.IsNaN(left)) left = 0;
+            if (double.IsNaN(top))  top  = 0;
+
+            // place text just above the ROI bbox (4 px gap)
+            label.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+            double textH = label.DesiredSize.Height;
+            Canvas.SetLeft(label, left);
+            Canvas.SetTop(label,  top - (textH + 4));
+        }
+
         private bool _syncScheduled;
         private int _syncRetryCount;
         private const int MaxSyncRetries = 3;
@@ -138,12 +168,12 @@ namespace BrakeDiscInspector_GUI_ROI
         {
             InitializeComponent();
 
-            // Vincular overlay con la imagen para conocer su rectángulo renderizado (Stretch=Uniform)
-            RoiOverlay.BindToImage(ImgMain);
+            // RoiOverlay disabled: labels are now drawn on Canvas only
+            // RoiOverlay.BindToImage(ImgMain);
 
-            // Recalcular transform cuando cambie el tamaño de la imagen o la ventana
-            ImgMain.SizeChanged += (_, __) => RoiOverlay.InvalidateOverlay();
-            SizeChanged += (_, __) => RoiOverlay.InvalidateOverlay();
+            // RoiOverlay disabled: labels are now drawn on Canvas only
+            // ImgMain.SizeChanged += (_, __) => RoiOverlay.InvalidateOverlay();
+            // SizeChanged += (_, __) => RoiOverlay.InvalidateOverlay();
             _preset = PresetManager.LoadOrDefault(_preset);
 
             InitUI();
@@ -388,7 +418,8 @@ namespace BrakeDiscInspector_GUI_ROI
             _imgSourceBI.EndInit();
 
             ImgMain.Source = _imgSourceBI;
-            RoiOverlay.InvalidateOverlay();
+            // RoiOverlay disabled: labels are now drawn on Canvas only
+            // RoiOverlay.InvalidateOverlay();
             _imgW = _imgSourceBI.PixelWidth;
             _imgH = _imgSourceBI.PixelHeight;
 
@@ -464,6 +495,15 @@ namespace BrakeDiscInspector_GUI_ROI
 
             foreach (var shape in persisted)
             {
+                if (shape.Tag is RoiModel roiModel)
+                {
+                    var labelName = $"roiLabel_{roiModel.Id}";
+                    var label = CanvasROI.Children.OfType<TextBlock>().FirstOrDefault(tb => tb.Name == labelName);
+                    if (label != null)
+                    {
+                        CanvasROI.Children.Remove(label);
+                    }
+                }
                 RemoveRoiAdorners(shape);
                 CanvasROI.Children.Remove(shape);
             }
@@ -489,6 +529,13 @@ namespace BrakeDiscInspector_GUI_ROI
 
             _roiShapesById.Clear();
 
+            // Remove orphan labels for ROIs not present anymore
+            var validIds = new HashSet<string>(SavedRois.Select(r => r.Id));
+            var orphanLabels = CanvasROI.Children.OfType<TextBlock>()
+                .Where(tb => tb.Name.StartsWith("roiLabel_") && !validIds.Contains(tb.Name.Substring("roiLabel_".Length)))
+                .ToList();
+            foreach (var tb in orphanLabels) CanvasROI.Children.Remove(tb);
+
             if (_imgW <= 0 || _imgH <= 0)
                 return;
 
@@ -506,6 +553,58 @@ namespace BrakeDiscInspector_GUI_ROI
 
                 CanvasROI.Children.Add(shape);
                 _roiShapesById[roi.Id] = shape;
+
+                // 1) Hide any visible frame (stroke/fill) → keep shape only for hit-testing/adorner
+                shape.Stroke = Brushes.Transparent;
+                shape.Fill   = Brushes.Transparent;
+                shape.StrokeThickness = 0;
+
+                // 2) Ensure we can hit-test the area although transparent
+                shape.IsHitTestVisible = true;
+
+                // 3) Ensure the ROI instance is set as Tag (needed by UpdateRoiLabelPosition)
+                shape.Tag = roi;
+
+                // 4) Create or update the label TextBlock for this ROI
+                string labelName = $"roiLabel_{roi.Id}";
+                var existing = CanvasROI.Children.OfType<TextBlock>().FirstOrDefault(tb => tb.Name == labelName);
+                var label = existing ?? new TextBlock { Name = labelName };
+
+                // Label text: prefer roi.Label if set; else derive from role
+                string labelText = !string.IsNullOrWhiteSpace(roi.Label) ? roi.Label : roi.Role switch
+                {
+                    RoiRole.Master1Pattern => "Master 1",
+                    RoiRole.Master2Pattern => "Master 2",
+                    RoiRole.Inspection     => "Inspection",
+                    _                      => "ROI"
+                };
+                label.Text = labelText;
+
+                // Style: readable and colored by role (reuse GetRoiStyle strokes if available)
+                label.FontFamily = new FontFamily("Segoe UI");
+                label.FontSize = 12;
+                label.FontWeight = FontWeights.SemiBold;
+                label.IsHitTestVisible = false; // the text should not block mouse events
+
+                // Optional color mapping (keeps prior color semantics)
+                SolidColorBrush roleBrush = Brushes.White;
+                try
+                {
+                    var style = GetRoiStyle(roi); // existing method returning (stroke, fill)
+                    if (style.stroke is SolidColorBrush scb) roleBrush = scb;
+                }
+                catch { /* ignore, fallback to white */ }
+                label.Foreground = roleBrush;
+
+                // Add label if new
+                if (existing == null)
+                {
+                    CanvasROI.Children.Add(label);
+                    Panel.SetZIndex(label, int.MaxValue); // always above shapes
+                }
+
+                // Position label relative to shape
+                UpdateRoiLabelPosition(shape);
 
                 if (ShouldEnableRoiEditing(roi.Role))
                 {
@@ -641,6 +740,11 @@ namespace BrakeDiscInspector_GUI_ROI
             }
         }
 
+        private (WBrush stroke, WBrush fill, double thickness, DoubleCollection? dash, int zIndex) GetRoiStyle(ROI roi)
+        {
+            return GetRoiStyle(roi.Role);
+        }
+
         private void AttachRoiAdorner(Shape shape)
         {
             if (!ShouldEnableRoiEditing((shape.Tag as RoiModel)?.Role ?? RoiRole.Inspection))
@@ -668,6 +772,7 @@ namespace BrakeDiscInspector_GUI_ROI
                 var pixelModel = CanvasToImage(updatedModel);
                 // Evitamos redibujar en DragStarted (click en adorner sin mover)
                 HandleAdornerChange(changeKind, updatedModel, pixelModel, "[adorner]");
+                UpdateRoiLabelPosition(shape);
             }, AppendLog);
 
             layer.Add(newAdorner);
@@ -1210,7 +1315,7 @@ namespace BrakeDiscInspector_GUI_ROI
             }
 
             // 2) Arrastre de ROI existente
-            if (e.OriginalSource is Shape sShape && sShape.Tag is RoiModel)
+            if (e.OriginalSource is Shape sShape && sShape.Tag is RoiModel roiHit && ShouldEnableRoiEditing(roiHit.Role))
             {
                 _dragShape = sShape;
                 _dragStart = e.GetPosition(CanvasROI);
@@ -1256,6 +1361,7 @@ namespace BrakeDiscInspector_GUI_ROI
 
                 Canvas.SetLeft(_dragShape, nx);
                 Canvas.SetTop(_dragShape, ny);
+                UpdateRoiLabelPosition(_dragShape);
 
                 // Sincroniza modelo y recoloca los thumbs del adorner
                 SyncModelFromShape(_dragShape);
@@ -1406,6 +1512,7 @@ namespace BrakeDiscInspector_GUI_ROI
                     if (_tmpBuffer != null)
                     {
                         HandleAdornerChange(changeKind, modelUpdated, pixelModel, "[preview]");
+                        UpdateRoiLabelPosition(_previewShape);
                     }
                 }, AppendLog); // ⬅️ pasa logger
 
@@ -2886,6 +2993,8 @@ namespace BrakeDiscInspector_GUI_ROI
                 roiCanvas.RInner = 0;
             }
 
+            UpdateRoiLabelPosition(shape);
+
             var roiPixel = CanvasToImage(roiCanvas);
 
             if (ReferenceEquals(shape, _previewShape))
@@ -2997,11 +3106,13 @@ namespace BrakeDiscInspector_GUI_ROI
 
         private void UpdateOverlayFromCurrentRoi()
         {
-            if (RoiOverlay == null)
-                return;
+            // RoiOverlay disabled: labels are now drawn on Canvas only
+            // if (RoiOverlay == null)
+            //     return;
 
-            RoiOverlay.Roi = CurrentRoi;
-            RoiOverlay.InvalidateOverlay();
+            // RoiOverlay disabled: labels are now drawn on Canvas only
+            // RoiOverlay.Roi = CurrentRoi;
+            // RoiOverlay.InvalidateOverlay();
         }
 
         private void UpdateOverlayFromPixelModel(RoiModel pixelModel)
@@ -3010,7 +3121,8 @@ namespace BrakeDiscInspector_GUI_ROI
                 return;
 
             ApplyPixelModelToCurrentRoi(pixelModel);
-            UpdateOverlayFromCurrentRoi();
+            // RoiOverlay disabled: labels are now drawn on Canvas only
+            // UpdateOverlayFromCurrentRoi();
         }
 
         private void SyncCurrentRoiFromInspection(RoiModel inspectionPixel)
@@ -3019,7 +3131,8 @@ namespace BrakeDiscInspector_GUI_ROI
 
             ApplyPixelModelToCurrentRoi(inspectionPixel);
             UpdateInspectionShapeRotation(CurrentRoi.AngleDeg);
-            UpdateOverlayFromCurrentRoi();
+            // RoiOverlay disabled: labels are now drawn on Canvas only
+            // UpdateOverlayFromCurrentRoi();
             RefreshHeatmapOverlay();
         }
 

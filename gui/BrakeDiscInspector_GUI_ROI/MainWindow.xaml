@@ -29,6 +29,7 @@
                                 IsHitTestVisible="True"
                                 Panel.ZIndex="1"/>
                         <local:RoiOverlay x:Name="RoiOverlay"
+                                          Visibility="Collapsed"
                                           IsHitTestVisible="False"
                                           Panel.ZIndex="2"
                                           HorizontalAlignment="Stretch"
