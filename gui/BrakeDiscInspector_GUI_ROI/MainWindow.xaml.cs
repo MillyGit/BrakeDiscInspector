@@ -665,7 +665,8 @@ namespace BrakeDiscInspector_GUI_ROI
             var newAdorner = new RoiAdorner(shape, RoiOverlay, (changeKind, updatedModel) =>
             {
                 var pixelModel = CanvasToImage(updatedModel);
-                UpdateLayoutFromPixel(pixelModel);
+                // Evitar salto del frame al hacer click en un adorner (sin arrastrar):
+                // no redibujamos aquí; delegamos en HandleAdornerChange con gating.
                 HandleAdornerChange(changeKind, updatedModel, pixelModel, "[adorner]");
             }, AppendLog);
 
@@ -1444,7 +1445,9 @@ namespace BrakeDiscInspector_GUI_ROI
                     break;
             }
 
-            UpdateOverlayFromPixelModel(pixelModel);
+            // Redibuja solo si hubo cambio geométrico real (no al iniciar el drag).
+            if (changeKind != RoiAdornerChangeKind.DragStarted)
+                UpdateOverlayFromPixelModel(pixelModel);
         }
 
         private void HandleDragStarted(RoiModel canvasModel, RoiModel pixelModel, string contextLabel)
@@ -3585,14 +3588,9 @@ namespace BrakeDiscInspector_GUI_ROI
                 return;
             }
 
-            // ✅ Alineado: si había redibujo pendiente, hazlo ahora
-            if (_overlayNeedsRedraw)
-            {
-                AppendLog("[sync] overlay pendiente → redibujar ahora");
-                RedrawOverlay();
-                _overlayNeedsRedraw = false;
-            }
-
+            AppendLog("[sync] redibujar overlay tras realinear canvas");
+            RedrawOverlay();
+            _overlayNeedsRedraw = false; // defensivo
             RefreshHeatmapOverlay();
         }
 
