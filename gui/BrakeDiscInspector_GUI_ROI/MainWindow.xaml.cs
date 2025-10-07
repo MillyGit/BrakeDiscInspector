@@ -534,7 +534,8 @@ namespace BrakeDiscInspector_GUI_ROI
             Shape shape = canvasRoi.Shape switch
             {
                 RoiShape.Rectangle => new WRectShape(),
-                _ => new WEllipse()
+                RoiShape.Annulus   => new AnnulusShape(),
+                _                  => new WEllipse()
             };
 
             var style = GetRoiStyle(canvasRoi.Role);
@@ -558,10 +559,30 @@ namespace BrakeDiscInspector_GUI_ROI
             {
                 // Para Circle y Annulus: SIEMPRE cuadrado perfecto (2·R)
                 double diameter = Math.Max(canvasRoi.Width, canvasRoi.R * 2.0);
-                Canvas.SetLeft(shape, canvasRoi.CX - diameter / 2.0);
-                Canvas.SetTop(shape, canvasRoi.CY - diameter / 2.0);
-                shape.Width = diameter;
+                double left = canvasRoi.CX - diameter / 2.0;
+                double top  = canvasRoi.CY - diameter / 2.0;
+
+                Canvas.SetLeft(shape, left);
+                Canvas.SetTop(shape,  top);
+                shape.Width  = diameter;
                 shape.Height = diameter;
+
+                // Mantener consistencia del modelo en canvas (Tag)
+                canvasRoi.Left   = left;
+                canvasRoi.Top    = top;
+                canvasRoi.Width  = diameter;
+                canvasRoi.Height = diameter;
+
+                // Si es Annulus, propagar radio interior al shape visual
+                if (shape is AnnulusShape ann)
+                {
+                    double maxInner = Math.Max(0.0, canvasRoi.R);
+                    double inner = canvasRoi.RInner;
+                    if (inner <= 0 || inner >= maxInner)
+                        inner = AnnulusDefaults.ResolveInnerRadius(inner, maxInner);
+                    ann.InnerRadius = Math.Min(inner, Math.Max(0.0, maxInner - 1.0));
+                    canvasRoi.RInner = ann.InnerRadius;
+                }
             }
 
             shape.Tag = canvasRoi;
@@ -771,11 +792,10 @@ namespace BrakeDiscInspector_GUI_ROI
             else
             {
                 double diameter = Math.Max(canvasRoi.Width, canvasRoi.R * 2.0);
-                height = canvasRoi.Shape == RoiShape.Annulus && canvasRoi.Height > 0 ? canvasRoi.Height : diameter;
-                width = Math.Max(1.0, diameter);
-                height = Math.Max(1.0, height);
+                width  = Math.Max(1.0, diameter);
+                height = Math.Max(1.0, diameter);
                 left = canvasRoi.CX - width / 2.0;
-                top = canvasRoi.CY - height / 2.0;
+                top  = canvasRoi.CY - height / 2.0;
             }
 
             Canvas.SetLeft(_heatmapOverlayImage, left);
