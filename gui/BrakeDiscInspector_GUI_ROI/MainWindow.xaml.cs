@@ -583,6 +583,10 @@ namespace BrakeDiscInspector_GUI_ROI
                     ann.InnerRadius = Math.Min(inner, Math.Max(0.0, maxInner - 1.0));
                     canvasRoi.RInner = ann.InnerRadius;
                 }
+
+                // Alinear también X,Y con el centro actual
+                canvasRoi.X = canvasRoi.CX;
+                canvasRoi.Y = canvasRoi.CY;
             }
 
             shape.Tag = canvasRoi;
@@ -2814,22 +2818,36 @@ namespace BrakeDiscInspector_GUI_ROI
                 roiCanvas.Height = h;
                 roiCanvas.Left = x;
                 roiCanvas.Top = y;
-                roiCanvas.CX = roiCanvas.X;
-                roiCanvas.CY = roiCanvas.Y;
+
+                // Centro correcto del bounding box
+                double cx = x + w / 2.0;
+                double cy = y + h / 2.0;
+                roiCanvas.CX = cx;
+                roiCanvas.CY = cy;
+                roiCanvas.X = cx;   // En este proyecto X,Y representan el centro
+                roiCanvas.Y = cy;
+
                 roiCanvas.R = Math.Max(roiCanvas.Width, roiCanvas.Height) / 2.0;
                 roiCanvas.RInner = 0;
             }
             else if (shape is AnnulusShape annulusShape)
             {
                 double radius = Math.Max(w, h) / 2.0;
+
                 roiCanvas.Shape = RoiShape.Annulus;
                 roiCanvas.Width = w;
                 roiCanvas.Height = h;
                 roiCanvas.R = radius;
                 roiCanvas.Left = x;
                 roiCanvas.Top = y;
-                roiCanvas.CX = roiCanvas.X;
-                roiCanvas.CY = roiCanvas.Y;
+
+                // Centro correcto del bounding box
+                double cx = x + w / 2.0;
+                double cy = y + h / 2.0;
+                roiCanvas.CX = cx;
+                roiCanvas.CY = cy;
+                roiCanvas.X = cx;   // X,Y = centro
+                roiCanvas.Y = cy;
 
                 double inner = annulusShape.InnerRadius;
                 double maxInner = radius > 0 ? radius : Math.Max(w, h) / 2.0;
@@ -2840,14 +2858,22 @@ namespace BrakeDiscInspector_GUI_ROI
             else if (shape is System.Windows.Shapes.Ellipse)
             {
                 double radius = Math.Max(w, h) / 2.0;
+
                 roiCanvas.Shape = RoiShape.Circle;
                 roiCanvas.Width = w;
                 roiCanvas.Height = h;
                 roiCanvas.R = radius;
                 roiCanvas.Left = x;
                 roiCanvas.Top = y;
-                roiCanvas.CX = roiCanvas.X;
-                roiCanvas.CY = roiCanvas.Y;
+
+                // Centro correcto del bounding box
+                double cx = x + w / 2.0;
+                double cy = y + h / 2.0;
+                roiCanvas.CX = cx;
+                roiCanvas.CY = cy;
+                roiCanvas.X = cx;   // X,Y = centro
+                roiCanvas.Y = cy;
+
                 roiCanvas.RInner = 0;
             }
 
