@@ -141,7 +141,8 @@ namespace BrakeDiscInspector_GUI_ROI
         private void UpdateRoiLabelPosition(Shape shape)
         {
             if (shape?.Tag is not ROI roi) return;
-            string labelName = $"roiLabel_{roi.Id}";
+            string keyBase = !string.IsNullOrWhiteSpace(roi.Label) ? roi.Label : "ROI";
+            string labelName = $"roiLabel_{keyBase}_{shape.GetHashCode()}";
             var label = CanvasROI.Children.OfType<TextBlock>().FirstOrDefault(tb => tb.Name == labelName);
             if (label == null) return;
 
@@ -151,7 +152,7 @@ namespace BrakeDiscInspector_GUI_ROI
             if (double.IsNaN(top))  top  = 0;
 
             // place text just above the ROI bbox (4 px gap)
-            label.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+            label.Measure(new System.Windows.Size(double.PositiveInfinity, double.PositiveInfinity));
             double textH = label.DesiredSize.Height;
             Canvas.SetLeft(label, left);
             Canvas.SetTop(label,  top - (textH + 4));
@@ -497,7 +498,8 @@ namespace BrakeDiscInspector_GUI_ROI
             {
                 if (shape.Tag is RoiModel roiModel)
                 {
-                    var labelName = $"roiLabel_{roiModel.Id}";
+                    string keyBase = !string.IsNullOrWhiteSpace(roiModel.Label) ? roiModel.Label : "ROI";
+                    string labelName = $"roiLabel_{keyBase}_{shape.GetHashCode()}";
                     var label = CanvasROI.Children.OfType<TextBlock>().FirstOrDefault(tb => tb.Name == labelName);
                     if (label != null)
                     {
@@ -529,10 +531,9 @@ namespace BrakeDiscInspector_GUI_ROI
 
             _roiShapesById.Clear();
 
-            // Remove orphan labels for ROIs not present anymore
-            var validIds = new HashSet<string>(SavedRois.Select(r => r.Id));
+            // Remove any existing ROI labels before re-adding
             var orphanLabels = CanvasROI.Children.OfType<TextBlock>()
-                .Where(tb => tb.Name.StartsWith("roiLabel_") && !validIds.Contains(tb.Name.Substring("roiLabel_".Length)))
+                .Where(tb => tb.Name.StartsWith("roiLabel_"))
                 .ToList();
             foreach (var tb in orphanLabels) CanvasROI.Children.Remove(tb);
 
@@ -566,35 +567,23 @@ namespace BrakeDiscInspector_GUI_ROI
                 shape.Tag = roi;
 
                 // 4) Create or update the label TextBlock for this ROI
-                string labelName = $"roiLabel_{roi.Id}";
+                string keyBase = !string.IsNullOrWhiteSpace(roi.Label) ? roi.Label : "ROI";
+                string labelName = $"roiLabel_{keyBase}_{shape.GetHashCode()}";
                 var existing = CanvasROI.Children.OfType<TextBlock>().FirstOrDefault(tb => tb.Name == labelName);
                 var label = existing ?? new TextBlock { Name = labelName };
 
                 // Label text: prefer roi.Label if set; else derive from role
-                string labelText = !string.IsNullOrWhiteSpace(roi.Label) ? roi.Label : roi.Role switch
-                {
-                    RoiRole.Master1Pattern => "Master 1",
-                    RoiRole.Master2Pattern => "Master 2",
-                    RoiRole.Inspection     => "Inspection",
-                    _                      => "ROI"
-                };
+                string labelText = !string.IsNullOrWhiteSpace(roi.Label) ? roi.Label : "ROI";
                 label.Text = labelText;
 
-                // Style: readable and colored by role (reuse GetRoiStyle strokes if available)
+                // Style: readable label rendering
                 label.FontFamily = new FontFamily("Segoe UI");
                 label.FontSize = 12;
                 label.FontWeight = FontWeights.SemiBold;
                 label.IsHitTestVisible = false; // the text should not block mouse events
 
-                // Optional color mapping (keeps prior color semantics)
-                SolidColorBrush roleBrush = Brushes.White;
-                try
-                {
-                    var style = GetRoiStyle(roi); // existing method returning (stroke, fill)
-                    if (style.stroke is SolidColorBrush scb) roleBrush = scb;
-                }
-                catch { /* ignore, fallback to white */ }
-                label.Foreground = roleBrush;
+                // Use a neutral white foreground for readability
+                label.Foreground = Brushes.White;
 
                 // Add label if new
                 if (existing == null)
