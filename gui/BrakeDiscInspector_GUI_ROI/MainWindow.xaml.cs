@@ -147,13 +147,11 @@ namespace BrakeDiscInspector_GUI_ROI
             if (shape == null) return;
 
             // Accept both ROI (Legend) and RoiModel (Label)
-            object tag = shape?.Tag;
-            string legendOrLabel = tag switch
-            {
-                ROI r      => r.Legend,
-                RoiModel m => m.Label,
-                _          => null
-            };
+            object tag = shape.Tag;
+            string legendOrLabel = null;
+            if (tag is ROI rTag)        legendOrLabel = rTag.Legend;
+            else if (tag is RoiModel m) legendOrLabel = m.Label;
+
             string labelName = "roiLabel_" + ((legendOrLabel ?? string.Empty).Replace(" ", "_"));
             var label = CanvasROI.Children.OfType<TextBlock>().FirstOrDefault(tb => tb.Name == labelName);
             if (label == null) return;
@@ -609,6 +607,23 @@ namespace BrakeDiscInspector_GUI_ROI
             if (CanvasROI == null || _imgW <= 0 || _imgH <= 0)
                 return;
 
+            // Remove orphan labels whose ROI no longer exists
+            try
+            {
+                var validKeys = new HashSet<string>(SavedRois.Select(rm =>
+                {
+                    string lbl = (!string.IsNullOrWhiteSpace(rm.Label)) ? rm.Label : ResolveRoiLabelText(rm);
+                    lbl = string.IsNullOrWhiteSpace(lbl) ? "ROI" : lbl;
+                    return "roiLabel_" + lbl.Replace(" ", "_");
+                }));
+
+                var toRemove = CanvasROI.Children.OfType<TextBlock>()
+                    .Where(tb => tb.Name.StartsWith("roiLabel_") && !validKeys.Contains(tb.Name))
+                    .ToList();
+                foreach (var tb in toRemove) CanvasROI.Children.Remove(tb);
+            }
+            catch { /* ignore */ }
+
             var activeRois = SavedRois.Where(roi => roi != null).ToList();
             var activeIds = new HashSet<string>(activeRois.Select(roi => roi.Id));
 
@@ -650,15 +665,41 @@ namespace BrakeDiscInspector_GUI_ROI
                     }
                 }
 
-                shape.Stroke = Brushes.Transparent;
-                shape.Fill = Brushes.Transparent;
-                shape.StrokeThickness = 0;
-                shape.IsHitTestVisible = true;
+                // Keep SAVED ROI visible (stroke/fill), do NOT hide shapes here
+                try
+                {
+                    var style = GetRoiStyle(roi.Role);
+                    shape.Stroke = style.stroke;
+                    shape.Fill = style.fill;
+                    shape.StrokeThickness = Math.Max(1.0, style.thickness);
+                    if (style.dash != null)
+                        shape.StrokeDashArray = style.dash;
+                    else
+                        shape.StrokeDashArray = null;
+                    shape.IsHitTestVisible = true;
+                    Panel.SetZIndex(shape, style.zIndex);
+                }
+                catch
+                {
+                    // Fallback if style not available
+                    shape.Stroke = Brushes.White;
+                    shape.Fill = Brushes.Transparent;
+                    shape.StrokeThickness = 1.0;
+                    shape.StrokeDashArray = null;
+                    shape.IsHitTestVisible = true;
+                    Panel.SetZIndex(shape, 5);
+                }
 
                 if (shape.Tag is not RoiModel canvasRoi)
                 {
                     canvasRoi = roi.Clone();
                     shape.Tag = canvasRoi;
+                }
+
+                // Ensure the saved ROI label is synced to the canvas clone
+                if (canvasRoi is RoiModel)
+                {
+                    canvasRoi.Label = roi.Label;
                 }
 
                 canvasRoi.Role = roi.Role;
@@ -755,17 +796,45 @@ namespace BrakeDiscInspector_GUI_ROI
                         }
                 }
 
-                // Create/update label on Canvas for this ROI
-                // Build label text from either ROI (Legend) or RoiModel (Label) without invalid pattern on RoiModel-typed vars
-                object src = (object)roi ?? (shape != null ? shape.Tag : null);
-                string _lbl = src switch
-                {
-                    ROI r      => string.IsNullOrWhiteSpace(r.Legend) ? "ROI" : r.Legend,
-                    RoiModel m => string.IsNullOrWhiteSpace(m.Label)  ? "ROI" : m.Label,
-                    _          => "ROI"
-                };
-                string _labelName = "roiLabel_" + _lbl.Replace(" ", "_");
+                // Ensure shape.Tag references the ROI clone for downstream logic
+                shape.Tag = canvasRoi;
 
+                // Build label text: prefer ResolveRoiLabelText(roi) if available; else use roi.Label or "ROI"
+                string _lbl;
+                try
+                {
+                    // If ResolveRoiLabelText is defined for RoiModel, prefer it
+                    if (roi is RoiModel rm)
+                    {
+                        string resolved = ResolveRoiLabelText(rm);
+                        _lbl = !string.IsNullOrWhiteSpace(resolved) ? resolved
+                              : (!string.IsNullOrWhiteSpace(rm.Label) ? rm.Label : "ROI");
+                        // Persist back so future redraws reuse the same text/key
+                        if (string.IsNullOrWhiteSpace(rm.Label) && !string.IsNullOrWhiteSpace(resolved))
+                            rm.Label = resolved;
+                    }
+                    else if (roi is ROI rlegacy)
+                    {
+                        _lbl = !string.IsNullOrWhiteSpace(rlegacy.Legend) ? rlegacy.Legend : "ROI";
+                    }
+                    else
+                    {
+                        _lbl = "ROI";
+                    }
+                }
+                catch
+                {
+                    // Fallback
+                    _lbl = (roi is RoiModel m2 && !string.IsNullOrWhiteSpace(m2.Label)) ? m2.Label : "ROI";
+                }
+
+                if (canvasRoi is RoiModel)
+                {
+                    canvasRoi.Label = _lbl;
+                }
+
+                // Use unique TextBlock name derived from label text
+                string _labelName = "roiLabel_" + (_lbl ?? string.Empty).Replace(" ", "_");
                 var _existing = CanvasROI.Children.OfType<TextBlock>().FirstOrDefault(tb => tb.Name == _labelName);
                 var _label = _existing ?? new TextBlock { Name = _labelName };
                 _label.Text = string.IsNullOrWhiteSpace(_lbl) ? "ROI" : _lbl;
@@ -781,7 +850,7 @@ namespace BrakeDiscInspector_GUI_ROI
                     Panel.SetZIndex(_label, int.MaxValue);
                 }
 
-                // Place label next to the ROI shape (this call may defer via Dispatcher if not ready)
+                // Place label next to the ROI shape (may defer via Dispatcher if geometry not ready)
                 UpdateRoiLabelPosition(shape);
 
                 if (shape != null)
@@ -2010,9 +2079,21 @@ namespace BrakeDiscInspector_GUI_ROI
                     break;
             }
 
-            var masterRoi = savedRoi;
+            var savedRoiModel = savedRoi;
 
-            // Clear preview safely (so it doesn't overlay)
+            // Ensure saved ROI has a stable Label for unique TextBlock names
+            try
+            {
+                if (savedRoiModel != null)
+                {
+                    string resolved = ResolveRoiLabelText(savedRoiModel);
+                    if (!string.IsNullOrWhiteSpace(resolved))
+                        savedRoiModel.Label = resolved;
+                }
+            }
+            catch { /* ignore */ }
+
+            // Clear preview if present (so it doesn’t overlay)
             try
             {
                 if (_previewShape != null)
@@ -2023,48 +2104,17 @@ namespace BrakeDiscInspector_GUI_ROI
             }
             catch { /* ignore */ }
 
-            // Redraw saved ROIs (labels are created/updated there)
+            // Redraw saved ROIs (now with visible stroke/fill and unique labels)
             RedrawOverlay();
 
-            // Ensure the label for the just-saved Master ROI is created and positioned
+            // If we can find the shape for this saved ROI, position its label explicitly
             try
             {
-                // Find the canvas shape that corresponds to the just-saved Master
-                // 'masterRoi' should be your saved ROI instance (type ROI or RoiModel).
-                // If your variable has a different name, use it below.
-                var shape = CanvasROI.Children.OfType<Shape>()
-                    .FirstOrDefault(s => ReferenceEquals(s.Tag, masterRoi));
-
-                if (shape != null)
+                if (savedRoiModel != null)
                 {
-                    // Create/update the label if your RedrawOverlay didn’t already do it
-                    object src = (object)masterRoi ?? (shape != null ? shape.Tag : null);
-                    string _lbl = src switch
-                    {
-                        ROI r      => string.IsNullOrWhiteSpace(r.Legend) ? "ROI" : r.Legend,
-                        RoiModel m => string.IsNullOrWhiteSpace(m.Label)  ? "ROI" : m.Label,
-                        _          => "ROI"
-                    };
-                    string labelName = "roiLabel_" + _lbl.Replace(" ", "_");
-                    var label = CanvasROI.Children.OfType<TextBlock>().FirstOrDefault(tb => tb.Name == labelName);
-                    if (label == null)
-                    {
-                        label = new TextBlock
-                        {
-                            Name = labelName,
-                            Text = string.IsNullOrWhiteSpace(_lbl) ? "ROI" : _lbl,
-                            FontFamily = new FontFamily("Segoe UI"),
-                            FontSize = 12,
-                            FontWeight = FontWeights.SemiBold,
-                            Foreground = Brushes.White,
-                            IsHitTestVisible = false
-                        };
-                        CanvasROI.Children.Add(label);
-                        Panel.SetZIndex(label, int.MaxValue);
-                    }
-
-                    // Now position the label next to the ROI shape (after geometry is valid)
-                    UpdateRoiLabelPosition(shape);
+                    var shape = CanvasROI.Children.OfType<Shape>()
+                        .FirstOrDefault(s => s.Tag is RoiModel rm && rm.Id == savedRoiModel.Id);
+                    if (shape != null) UpdateRoiLabelPosition(shape);
                 }
             }
             catch { /* ignore */ }
