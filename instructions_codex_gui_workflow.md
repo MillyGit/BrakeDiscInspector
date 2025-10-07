@@ -1,3 +1,14 @@
+
+# 📌 Actualización — 2025-10-07
+
+**Cambios clave (GUI):**
+- Corrección de salto del frame al clicar adorner (círculo/annulus): cálculo y propagación del centro reales en `SyncModelFromShape` y sincronización `X,Y = CX,CY` en `CreateLayoutShape`.
+- Bbox SIEMPRE cuadrado para circle/annulus; overlay heatmap alineado.
+- Decisiones del proyecto y parámetros vigentes documentados.
+
+**Cambios clave (Backend):**
+- PatchCore + DINOv2 ViT-S/14; endpoints `/health`, `/fit_ok`, `/calibrate_ng`, `/infer`; persistencia por `(role_id, roi_id)`.
+
 # Instructions for Codex — WPF GUI: Dataset → Train (fit_ok) → Calibrate → Infer (backend PatchCore+DINOv2)
 
 **Goal**: Implement in the existing WPF GUI a complete workflow to (1) collect ROI samples, (2) train the model memory on the backend, (3) optionally calibrate thresholds, and (4) run inference — all **without changing adorner/ROI drawing logic** or the backend service contract.
