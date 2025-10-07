@@ -141,8 +141,7 @@ namespace BrakeDiscInspector_GUI_ROI
         private void UpdateRoiLabelPosition(Shape shape)
         {
             if (shape?.Tag is not ROI roi) return;
-            string keyBase = !string.IsNullOrWhiteSpace(roi.Label) ? roi.Label : "ROI";
-            string labelName = $"roiLabel_{keyBase}_{shape.GetHashCode()}";
+            string labelName = $"roiLabel_ROI_{shape.GetHashCode()}";
             var label = CanvasROI.Children.OfType<TextBlock>().FirstOrDefault(tb => tb.Name == labelName);
             if (label == null) return;
 
@@ -573,7 +572,7 @@ namespace BrakeDiscInspector_GUI_ROI
                 var label = existing ?? new TextBlock { Name = labelName };
 
                 // Label text: prefer roi.Label if set; else derive from role
-                string labelText = !string.IsNullOrWhiteSpace(roi.Label) ? roi.Label : "ROI";
+                string labelText = "ROI";
                 label.Text = labelText;
 
                 // Style: readable label rendering
@@ -731,7 +730,7 @@ namespace BrakeDiscInspector_GUI_ROI
 
         private (WBrush stroke, WBrush fill, double thickness, DoubleCollection? dash, int zIndex) GetRoiStyle(ROI roi)
         {
-            return GetRoiStyle(roi.Role);
+            return GetRoiStyle(RoiRole.Inspection);
         }
 
         private void AttachRoiAdorner(Shape shape)
