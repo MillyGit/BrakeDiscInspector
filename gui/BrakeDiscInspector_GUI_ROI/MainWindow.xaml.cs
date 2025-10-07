@@ -568,6 +568,12 @@ namespace BrakeDiscInspector_GUI_ROI
             }
 
             var (sx, sy, ox, oy) = GetImageToCanvasTransform();
+            if (sx <= 0.0 || sy <= 0.0)
+            {
+                AppendLog("[overlay] skipped redraw (transform invalid)");
+                return;
+            }
+
             double k = Math.Min(sx, sy);
 
             foreach (var roi in activeRois)
@@ -615,6 +621,8 @@ namespace BrakeDiscInspector_GUI_ROI
                             double top = oy + roi.Top * sy;
                             double width = Math.Max(1.0, roi.Width * sx);
                             double height = Math.Max(1.0, roi.Height * sy);
+                            double centerX = left + width / 2.0;
+                            double centerY = top + height / 2.0;
 
                             Canvas.SetLeft(shape, left);
                             Canvas.SetTop(shape, top);
@@ -625,8 +633,10 @@ namespace BrakeDiscInspector_GUI_ROI
                             canvasRoi.Height = height;
                             canvasRoi.Left = left;
                             canvasRoi.Top = top;
-                            canvasRoi.CX = canvasRoi.X;
-                            canvasRoi.CY = canvasRoi.Y;
+                            canvasRoi.X = centerX;
+                            canvasRoi.Y = centerY;
+                            canvasRoi.CX = centerX;
+                            canvasRoi.CY = centerY;
                             canvasRoi.R = Math.Max(width, height) / 2.0;
                             canvasRoi.RInner = 0;
                             break;
