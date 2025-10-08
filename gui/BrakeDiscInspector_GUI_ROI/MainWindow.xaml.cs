@@ -545,6 +545,13 @@ namespace BrakeDiscInspector_GUI_ROI
             }
 
             // 🔧 clave: forzar reprogramación aunque el scheduler se hubiera quedado “true”
+
+            ClearCanvasShapesAndLabels();   // remove all shapes & labels from previous image
+            _roiShapesById.Clear();
+            _roiLabels.Clear();
+            try { if (_previewShape != null) { CanvasROI.Children.Remove(_previewShape); _previewShape = null; } } catch { }
+            RedrawOverlay();
+
             ScheduleSyncOverlay(force: true);
 
             AppendLog($"Imagen cargada: {_imgW}x{_imgH}  (Canvas: {CanvasROI.ActualWidth:0}x{CanvasROI.ActualHeight:0})");
@@ -589,6 +596,18 @@ namespace BrakeDiscInspector_GUI_ROI
             RemoveRoiAdorners(shape);
             RemoveRoiLabel(shape);
             CanvasROI.Children.Remove(shape);
+        }
+
+        private void ClearCanvasShapesAndLabels()
+        {
+            try
+            {
+                var toRemoveShapes = CanvasROI.Children.OfType<System.Windows.Shapes.Shape>().ToList();
+                foreach (var s in toRemoveShapes) CanvasROI.Children.Remove(s);
+                var toRemoveLabels = CanvasROI.Children.OfType<System.Windows.Controls.TextBlock>().ToList();
+                foreach (var t in toRemoveLabels) CanvasROI.Children.Remove(t);
+            }
+            catch { /* ignore */ }
         }
 
         private void ClearPersistedRoisFromCanvas()
@@ -674,13 +693,13 @@ namespace BrakeDiscInspector_GUI_ROI
                     }
                 }
 
-                // Keep SAVED ROI visible (stroke/fill), do NOT hide shapes here
+                // Keep saved ROI visible (do not hide stroke/fill)
                 try
                 {
                     var style = GetRoiStyle(roi.Role);
                     shape.Stroke = style.stroke;
                     shape.Fill = style.fill;
-                    shape.StrokeThickness = Math.Max(1.0, style.thickness);
+                    shape.StrokeThickness = Math.Max(1.0, shape.StrokeThickness);
                     if (style.dash != null)
                         shape.StrokeDashArray = style.dash;
                     else
@@ -2179,21 +2198,45 @@ namespace BrakeDiscInspector_GUI_ROI
             }
 
             var savedRoiModel = savedRoi;
-            bool skipOverlayRedraw = savedRole is RoiRole.Master1Pattern or RoiRole.Master1Search or RoiRole.Master2Pattern or RoiRole.Master2Search;
 
-            if (skipOverlayRedraw)
+            if (savedRoiModel != null)
             {
-                // Remove all shapes (ROI outlines, analysis crosses, etc.) and labels from the canvas overlay
-                try
+                // After persisting 'saved' RoiModel, decide clear timing by role:
+                switch (savedRoiModel.Role)
                 {
-                    var shapes = CanvasROI.Children.OfType<Shape>().ToList();
-                    foreach (var s in shapes) CanvasROI.Children.Remove(s);
-                    var labels = CanvasROI.Children.OfType<TextBlock>().ToList();
-                    foreach (var l in labels) CanvasROI.Children.Remove(l);
-                }
-                catch { /* ignore */ }
+                    case RoiRole.Master1Pattern:
+                        // RULE 1: Keep Master 1 visible until Master 1 inspection is saved
+                        // No canvas clear here
+                        RedrawOverlay();
+                        break;
 
-                RedrawAnalysisCrosses();
+                    case RoiRole.Master1Search:
+                        // RULE 2: Clear after saving Master 1 inspection
+                        ClearCanvasShapesAndLabels();
+                        _roiShapesById.Clear();
+                        _roiLabels.Clear();
+                        RedrawOverlay();
+                        break;
+
+                    case RoiRole.Master2Pattern:
+                        // RULE 3: Keep Master 2 visible until Master 2 inspection is saved
+                        // No canvas clear here
+                        RedrawOverlay();
+                        break;
+
+                    case RoiRole.Master2Search:
+                        // RULE 4: Clear after saving Master 2 inspection
+                        ClearCanvasShapesAndLabels();
+                        _roiShapesById.Clear();
+                        _roiLabels.Clear();
+                        RedrawOverlay();
+                        break;
+
+                    case RoiRole.Inspection:
+                        // RULE 5: Do NOT clear; stays until loading a new image
+                        RedrawOverlay();
+                        break;
+                }
             }
 
             // Ensure saved ROI has a stable Label for unique TextBlock names
@@ -2249,11 +2292,7 @@ namespace BrakeDiscInspector_GUI_ROI
                 AppendLog($"[wizard] layout save FAILED => {layoutPath} :: {ex}");
             }
 
-            ClearPersistedRoisFromCanvas();
-            if (!skipOverlayRedraw)
-            {
-                RedrawOverlaySafe();
-            }
+            RedrawOverlaySafe();
             RedrawAnalysisCrosses();
 
             // IMPORTANTE: recalcula habilitaciones (esto ya deja el botón "Analizar Master" activo si M1+M2 están listos)
