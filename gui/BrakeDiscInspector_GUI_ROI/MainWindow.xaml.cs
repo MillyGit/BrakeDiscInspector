@@ -41,6 +41,11 @@ using WSize = System.Windows.Size;
 using LegacyROI = BrakeDiscInspector_GUI_ROI.ROI;
 using ROI = BrakeDiscInspector_GUI_ROI.RoiModel;
 
+using CvPoint  = OpenCvSharp.Point;
+using CvRect   = OpenCvSharp.Rect;
+using WpfPoint = System.Windows.Point;
+using WpfRect  = System.Windows.Rect;
+
 namespace BrakeDiscInspector_GUI_ROI
 {
     public partial class MainWindow : System.Windows.Window
@@ -65,8 +70,8 @@ namespace BrakeDiscInspector_GUI_ROI
         private BitmapSource _lastHeatmapBmp;          // heatmap image in image space
         private RoiModel _lastHeatmapRoi;              // ROI (image-space) that defines the heatmap clipping area
 
-        private Point? _lastM1CenterPx;   // image-space pixel coords of Master 1 center
-        private Point? _lastM2CenterPx;   // image-space pixel coords of Master 2 center
+        private WpfPoint? _lastM1CenterPx;   // canvas-space WPF point for Master 1 center
+        private WpfPoint? _lastM2CenterPx;   // canvas-space WPF point for Master 2 center
 
         private Shape? _previewShape;
         private bool _isDrawing;
@@ -1022,7 +1027,7 @@ namespace BrakeDiscInspector_GUI_ROI
             var roiCanvas = ImageToCanvas(_lastHeatmapRoi);
             double clipX = roiCanvas.Left - displayRect.X;
             double clipY = roiCanvas.Top  - displayRect.Y;
-            var clipRect = new Rect(clipX, clipY, roiCanvas.Width, roiCanvas.Height);
+            var clipRect = new WpfRect(clipX, clipY, roiCanvas.Width, roiCanvas.Height);
             HeatmapOverlay.Clip = new RectangleGeometry(clipRect);
         }
 
@@ -1226,7 +1231,7 @@ namespace BrakeDiscInspector_GUI_ROI
             foreach (var s in toRemove) CanvasROI.Children.Remove(s);
 
             // Helper to draw a cross at a canvas point
-            void DrawCrossAt(Point canvasPt, double size = 12.0, double thickness = 2.0)
+            void DrawCrossAt(WpfPoint canvasPt, double size = 12.0, double thickness = 2.0)
             {
                 double x = canvasPt.X, y = canvasPt.Y;
                 var h = new Line
@@ -2399,8 +2404,8 @@ namespace BrakeDiscInspector_GUI_ROI
 
             EnterAnalysisView();
 
-            _lastM1CenterPx = new Point(c1.Value.X, c1.Value.Y);
-            _lastM2CenterPx = new Point(c2.Value.X, c2.Value.Y);
+            _lastM1CenterPx = new WpfPoint(c1.Value.X, c1.Value.Y);
+            _lastM2CenterPx = new WpfPoint(c2.Value.X, c2.Value.Y);
             RedrawAnalysisCrosses();
 
             // 5) Reubicar inspección si existe
