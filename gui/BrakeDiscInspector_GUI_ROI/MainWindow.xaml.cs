@@ -995,6 +995,7 @@ namespace BrakeDiscInspector_GUI_ROI
                 HeatmapOverlay.Source = null;
                 HeatmapOverlay.Visibility = Visibility.Collapsed;
                 HeatmapOverlay.Clip = null;
+                HeatmapOverlay.RenderTransform = Transform.Identity;
                 return;
             }
 
@@ -1006,24 +1007,58 @@ namespace BrakeDiscInspector_GUI_ROI
             HeatmapOverlay.VerticalAlignment = VerticalAlignment.Top;
             HeatmapOverlay.Opacity = _heatmapOverlayOpacity;
 
-            // Align heatmap overlay to the displayed image rect
-            var displayRect = GetImageDisplayRect(); // returns Rect in window/canvas coordinates
-            if (displayRect.Width <= 0 || displayRect.Height <= 0)
+            // Align the overlay to the ROI bounds (image-space → canvas-space)
+            var roiCanvas = ImageToCanvas(_lastHeatmapRoi);
+            if (roiCanvas.Width <= 0 || roiCanvas.Height <= 0)
             {
                 HeatmapOverlay.Visibility = Visibility.Collapsed;
                 HeatmapOverlay.Clip = null;
+                HeatmapOverlay.RenderTransform = Transform.Identity;
                 return;
             }
-            HeatmapOverlay.Width  = Math.Max(1.0, displayRect.Width);
-            HeatmapOverlay.Height = Math.Max(1.0, displayRect.Height);
-            HeatmapOverlay.Margin = new Thickness(displayRect.X, displayRect.Y, 0, 0);
 
-            // Clip heatmap to the ROI area (convert ROI img-space → canvas-space, then to overlay-local)
-            var roiCanvas = ImageToCanvas(_lastHeatmapRoi);
-            double clipX = roiCanvas.Left - displayRect.X;
-            double clipY = roiCanvas.Top  - displayRect.Y;
-            var clipRect = new Rect(clipX, clipY, roiCanvas.Width, roiCanvas.Height);
-            HeatmapOverlay.Clip = new RectangleGeometry(clipRect);
+            HeatmapOverlay.Width = Math.Max(1.0, roiCanvas.Width);
+            HeatmapOverlay.Height = Math.Max(1.0, roiCanvas.Height);
+            HeatmapOverlay.Margin = new Thickness(roiCanvas.Left, roiCanvas.Top, 0, 0);
+            HeatmapOverlay.RenderTransformOrigin = new System.Windows.Point(0.5, 0.5);
+            HeatmapOverlay.RenderTransform = new RotateTransform(_lastHeatmapRoi.AngleDeg);
+
+            Geometry? clipGeometry = null;
+            switch (_lastHeatmapRoi.Shape)
+            {
+                case RoiShape.Rectangle:
+                    {
+                        // No clip needed; the rotated bitmap already matches the ROI bounds.
+                        break;
+                    }
+                case RoiShape.Circle:
+                    {
+                        double rx = roiCanvas.Width / 2.0;
+                        double ry = roiCanvas.Height / 2.0;
+                        clipGeometry = new EllipseGeometry(new System.Windows.Point(rx, ry), rx, ry);
+                        break;
+                    }
+                case RoiShape.Annulus:
+                    {
+                        double rx = roiCanvas.Width / 2.0;
+                        double ry = roiCanvas.Height / 2.0;
+                        var center = new System.Windows.Point(rx, ry);
+                        var outer = new EllipseGeometry(center, rx, ry);
+                        double inner = Math.Max(0.0, Math.Min(roiCanvas.RInner, Math.Min(rx, ry)));
+                        if (inner > 0)
+                        {
+                            var innerGeom = new EllipseGeometry(center, inner, inner);
+                            clipGeometry = new CombinedGeometry(GeometryCombineMode.Exclude, outer, innerGeom);
+                        }
+                        else
+                        {
+                            clipGeometry = outer;
+                        }
+                        break;
+                    }
+            }
+
+            HeatmapOverlay.Clip = clipGeometry;
         }
 
         private async Task ShowHeatmapOverlayAsync(Workflow.RoiExportResult export, byte[] heatmapBytes, double opacity)
