@@ -67,11 +67,12 @@ namespace BrakeDiscInspector_GUI_ROI
         private WorkflowViewModel? _workflowViewModel;
         private double _heatmapOverlayOpacity = 0.6;
 
-        private BitmapSource _lastHeatmapBmp;          // heatmap image in image space
+        private System.Windows.Media.Imaging.BitmapSource _lastHeatmapBmp;          // heatmap image in image space
         private RoiModel _lastHeatmapRoi;              // ROI (image-space) that defines the heatmap clipping area
 
-        private WpfPoint? _lastM1CenterPx;   // canvas-space WPF point for Master 1 center
-        private WpfPoint? _lastM2CenterPx;   // canvas-space WPF point for Master 2 center
+        // IMAGE-space centers (pixels) of found masters
+        private CvPoint? _lastM1CenterPx;
+        private CvPoint? _lastM2CenterPx;
 
         private Shape? _previewShape;
         private bool _isDrawing;
@@ -994,7 +995,6 @@ namespace BrakeDiscInspector_GUI_ROI
         {
             if (HeatmapOverlay == null) return;
 
-            // No heatmap to show
             if (_lastHeatmapBmp == null || _lastHeatmapRoi == null)
             {
                 HeatmapOverlay.Source = null;
@@ -1003,32 +1003,54 @@ namespace BrakeDiscInspector_GUI_ROI
                 return;
             }
 
-            // Set image source
-            HeatmapOverlay.Source = _lastHeatmapBmp;
-            HeatmapOverlay.Visibility = Visibility.Visible;
-
-            HeatmapOverlay.HorizontalAlignment = HorizontalAlignment.Left;
-            HeatmapOverlay.VerticalAlignment = VerticalAlignment.Top;
-            HeatmapOverlay.Opacity = _heatmapOverlayOpacity;
-
-            // Align heatmap overlay to the displayed image rect
-            var displayRect = GetImageDisplayRect(); // returns Rect in window/canvas coordinates
-            if (displayRect.Width <= 0 || displayRect.Height <= 0)
+            var disp = GetImageDisplayRect();
+            if (disp.Width <= 0 || disp.Height <= 0)
             {
+                HeatmapOverlay.Source = null;
                 HeatmapOverlay.Visibility = Visibility.Collapsed;
                 HeatmapOverlay.Clip = null;
                 return;
             }
-            HeatmapOverlay.Width  = Math.Max(1.0, displayRect.Width);
-            HeatmapOverlay.Height = Math.Max(1.0, displayRect.Height);
-            HeatmapOverlay.Margin = new Thickness(displayRect.X, displayRect.Y, 0, 0);
 
-            // Clip heatmap to the ROI area (convert ROI img-space → canvas-space, then to overlay-local)
-            var roiCanvas = ImageToCanvas(_lastHeatmapRoi);
-            double clipX = roiCanvas.Left - displayRect.X;
-            double clipY = roiCanvas.Top  - displayRect.Y;
-            var clipRect = new WpfRect(clipX, clipY, roiCanvas.Width, roiCanvas.Height);
-            HeatmapOverlay.Clip = new RectangleGeometry(clipRect);
+            HeatmapOverlay.Source = _lastHeatmapBmp;
+            HeatmapOverlay.HorizontalAlignment = HorizontalAlignment.Left;
+            HeatmapOverlay.VerticalAlignment = VerticalAlignment.Top;
+            HeatmapOverlay.Opacity = _heatmapOverlayOpacity;
+            HeatmapOverlay.Width = System.Math.Max(1.0, disp.Width);
+            HeatmapOverlay.Height = System.Math.Max(1.0, disp.Height);
+            HeatmapOverlay.Margin = new Thickness(disp.X, disp.Y, 0, 0);
+            HeatmapOverlay.Visibility = Visibility.Visible;
+
+            var rc = ImageToCanvas(_lastHeatmapRoi);
+            double ox = rc.Left - disp.X;
+            double oy = rc.Top - disp.Y;
+
+            System.Windows.Media.Geometry clipGeo;
+
+            if (_lastHeatmapRoi.Shape == RoiShape.Annulus)
+            {
+                double cx = (rc.Left + rc.Width / 2.0) - disp.X;
+                double cy = (rc.Top + rc.Height / 2.0) - disp.Y;
+                double outerR = System.Math.Max(rc.Width, rc.Height) / 2.0;
+                double innerR = System.Math.Max(0.0, System.Math.Min(rc.RInner, outerR));
+
+                var outer = new System.Windows.Media.EllipseGeometry(new WpfPoint(cx, cy), outerR, outerR);
+                var inner = new System.Windows.Media.EllipseGeometry(new WpfPoint(cx, cy), innerR, innerR);
+                clipGeo = new System.Windows.Media.CombinedGeometry(System.Windows.Media.GeometryCombineMode.Exclude, outer, inner);
+            }
+            else if (_lastHeatmapRoi.Shape == RoiShape.Circle)
+            {
+                double cx = (rc.Left + rc.Width / 2.0) - disp.X;
+                double cy = (rc.Top + rc.Height / 2.0) - disp.Y;
+                double r = System.Math.Max(rc.Width, rc.Height) / 2.0;
+                clipGeo = new System.Windows.Media.EllipseGeometry(new WpfPoint(cx, cy), r, r);
+            }
+            else
+            {
+                clipGeo = new System.Windows.Media.RectangleGeometry(new WpfRect(ox, oy, rc.Width, rc.Height));
+            }
+
+            HeatmapOverlay.Clip = clipGeo;
         }
 
         private async Task ShowHeatmapOverlayAsync(Workflow.RoiExportResult export, byte[] heatmapBytes, double opacity)
@@ -1224,49 +1246,48 @@ namespace BrakeDiscInspector_GUI_ROI
             if (CanvasROI == null)
                 return;
 
-            // Remove old crosses
-            var toRemove = CanvasROI.Children.OfType<Shape>()
-                .Where(s => (s.Tag as string) == "AnalysisCross")
-                .ToList();
-            foreach (var s in toRemove) CanvasROI.Children.Remove(s);
+            // 1) Remove previous crosses
+            var old = CanvasROI.Children.OfType<System.Windows.Shapes.Shape>()
+                      .Where(s => (s.Tag as string) == "AnalysisCross")
+                      .ToList();
+            foreach (var s in old) CanvasROI.Children.Remove(s);
 
-            // Helper to draw a cross at a canvas point
-            void DrawCrossAt(WpfPoint canvasPt, double size = 12.0, double thickness = 2.0)
+            // 2) Helper to draw a cross at a canvas point
+            void DrawCrossAt(WpfPoint p, double size = 12.0, double th = 2.0)
             {
-                double x = canvasPt.X, y = canvasPt.Y;
-                var h = new Line
+                var h = new System.Windows.Shapes.Line
                 {
-                    X1 = x - size, Y1 = y,
-                    X2 = x + size, Y2 = y,
-                    Stroke = Brushes.Lime,
-                    StrokeThickness = thickness,
+                    X1 = p.X - size, Y1 = p.Y,
+                    X2 = p.X + size, Y2 = p.Y,
+                    Stroke = System.Windows.Media.Brushes.Lime,
+                    StrokeThickness = th,
                     IsHitTestVisible = false,
                     Tag = "AnalysisCross"
                 };
-                var v = new Line
+                var v = new System.Windows.Shapes.Line
                 {
-                    X1 = x, Y1 = y - size,
-                    X2 = x, Y2 = y + size,
-                    Stroke = Brushes.Lime,
-                    StrokeThickness = thickness,
+                    X1 = p.X, Y1 = p.Y - size,
+                    X2 = p.X, Y2 = p.Y + size,
+                    Stroke = System.Windows.Media.Brushes.Lime,
+                    StrokeThickness = th,
                     IsHitTestVisible = false,
                     Tag = "AnalysisCross"
                 };
                 CanvasROI.Children.Add(h);
                 CanvasROI.Children.Add(v);
-                Panel.SetZIndex(h, int.MaxValue - 1);
-                Panel.SetZIndex(v, int.MaxValue - 1);
+                System.Windows.Controls.Panel.SetZIndex(h, int.MaxValue - 1);
+                System.Windows.Controls.Panel.SetZIndex(v, int.MaxValue - 1);
             }
 
-            // Convert stored image-space points to canvas and draw
+            // 3) Convert IMAGE-space → CANVAS and draw
             if (_lastM1CenterPx.HasValue)
             {
-                var p = ImagePxToCanvasPt(_lastM1CenterPx.Value.X, _lastM1CenterPx.Value.Y);
+                var p = ImagePxToCanvasPt(_lastM1CenterPx.Value);
                 DrawCrossAt(p);
             }
             if (_lastM2CenterPx.HasValue)
             {
-                var p = ImagePxToCanvasPt(_lastM2CenterPx.Value.X, _lastM2CenterPx.Value.Y);
+                var p = ImagePxToCanvasPt(_lastM2CenterPx.Value);
                 DrawCrossAt(p);
             }
         }
@@ -1308,6 +1329,7 @@ namespace BrakeDiscInspector_GUI_ROI
         {
             ScheduleSyncOverlay(force: true);
             UpdateHeatmapOverlayLayoutAndClip();
+            RedrawAnalysisCrosses();
         }
 
         private void MainWindow_SizeChanged(object sender, SizeChangedEventArgs e)
@@ -1315,6 +1337,7 @@ namespace BrakeDiscInspector_GUI_ROI
             AppendResizeLog($"[window] SizeChanged: window={ActualWidth:0}x{ActualHeight:0} ImgMain={ImgMain.ActualWidth:0}x{ImgMain.ActualHeight:0}");
             ScheduleSyncOverlay(force: true);
             UpdateHeatmapOverlayLayoutAndClip();
+            RedrawAnalysisCrosses();
         }
 
         private void ImgMain_SizeChanged(object sender, SizeChangedEventArgs e)
@@ -1322,6 +1345,7 @@ namespace BrakeDiscInspector_GUI_ROI
             AppendResizeLog($"[image] SizeChanged: ImgMain={ImgMain.ActualWidth:0}x{ImgMain.ActualHeight:0}");
             ScheduleSyncOverlay(force: true);
             UpdateHeatmapOverlayLayoutAndClip();
+            RedrawAnalysisCrosses();
         }
 
 
@@ -1387,6 +1411,47 @@ namespace BrakeDiscInspector_GUI_ROI
                 _previewShape.Height = 0;
                 Panel.SetZIndex(_previewShape, 20);
                 CanvasROI.Children.Add(_previewShape);
+
+                string lbl;
+                RoiModel previewModel;
+                try
+                {
+                    var role = GetCurrentStateRole() ?? RoiRole.Inspection;
+                    previewModel = new RoiModel { Shape = shape, Role = role };
+                    lbl = ResolveRoiLabelText(previewModel) ?? "ROI";
+                    previewModel.Label = lbl;
+                }
+                catch
+                {
+                    lbl = "ROI";
+                    previewModel = new RoiModel { Shape = shape, Role = GetCurrentStateRole() ?? RoiRole.Inspection, Label = lbl };
+                }
+
+                string labelName = "roiLabel_" + lbl.Replace(" ", "_");
+                var tb = CanvasROI.Children.OfType<TextBlock>()
+                    .FirstOrDefault(t => t.Name == labelName);
+                if (tb == null)
+                {
+                    tb = new TextBlock
+                    {
+                        Name = labelName,
+                        Text = lbl,
+                        FontFamily = new FontFamily("Segoe UI"),
+                        FontSize = 12,
+                        FontWeight = FontWeights.SemiBold,
+                        Foreground = Brushes.White,
+                        IsHitTestVisible = false
+                    };
+                    CanvasROI.Children.Add(tb);
+                    Panel.SetZIndex(tb, int.MaxValue);
+                }
+                else
+                {
+                    tb.Text = lbl;
+                }
+
+                _previewShape.Tag = previewModel;
+                UpdateRoiLabelPosition(_previewShape);
             }
         }
 
@@ -1439,46 +1504,49 @@ namespace BrakeDiscInspector_GUI_ROI
                 Canvas.SetTop(_previewShape, y);
                 _previewShape.Width = w;
                 _previewShape.Height = h;
-                return;
             }
-
-            // === Círculo / Annulus ===
-            // Mantén el mismo sistema de coordenadas que el modelo/adorners:
-            // usa radio = max(|dx|, |dy|) (norma L∞), no la distancia euclídea.
-            var dx = p1.X - p0.X;
-            var dy = p1.Y - p0.Y;
-
-            double radius = Math.Max(Math.Abs(dx), Math.Abs(dy));
-
-            // Evita que el preview se "vaya" fuera del canvas mientras dibujas
-            radius = ClampRadiusToCanvasBounds(p0, radius);
-
-            var diameter = radius * 2.0;
-            var left = p0.X - radius;
-            var top = p0.Y - radius;
-
-            Canvas.SetLeft(_previewShape, left);
-            Canvas.SetTop(_previewShape, top);
-            _previewShape.Width = diameter;
-            _previewShape.Height = diameter;
-
-            if (shape == RoiShape.Annulus && _previewShape is AnnulusShape annulus)
+            else
             {
-                // Outer radius = radius (canvas)
-                var outer = radius;
-                if (ShouldLogAnnulusValue(ref _lastLoggedAnnulusOuterRadius, outer))
-                    AppendLog($"[annulus] outer radius preview={outer:0.##} px");
+                // === Círculo / Annulus ===
+                // Mantén el mismo sistema de coordenadas que el modelo/adorners:
+                // usa radio = max(|dx|, |dy|) (norma L∞), no la distancia euclídea.
+                var dx = p1.X - p0.X;
+                var dy = p1.Y - p0.Y;
 
-                // Conserva proporción si el usuario ya la ha cambiado; si no, usa el default & clamp.
-                double proposedInner = annulus.InnerRadius;
-                double resolvedInner = AnnulusDefaults.ResolveInnerRadius(proposedInner, outer);
-                double finalInner = AnnulusDefaults.ClampInnerRadius(resolvedInner, outer);
+                double radius = Math.Max(Math.Abs(dx), Math.Abs(dy));
 
-                if (ShouldLogAnnulusInner(proposedInner, finalInner))
-                    AppendLog($"[annulus] outer={outer:0.##} px, proposed inner={proposedInner:0.##} px -> final inner={finalInner:0.##} px");
+                // Evita que el preview se "vaya" fuera del canvas mientras dibujas
+                radius = ClampRadiusToCanvasBounds(p0, radius);
 
-                annulus.InnerRadius = finalInner;
+                var diameter = radius * 2.0;
+                var left = p0.X - radius;
+                var top = p0.Y - radius;
+
+                Canvas.SetLeft(_previewShape, left);
+                Canvas.SetTop(_previewShape, top);
+                _previewShape.Width = diameter;
+                _previewShape.Height = diameter;
+
+                if (shape == RoiShape.Annulus && _previewShape is AnnulusShape annulus)
+                {
+                    // Outer radius = radius (canvas)
+                    var outer = radius;
+                    if (ShouldLogAnnulusValue(ref _lastLoggedAnnulusOuterRadius, outer))
+                        AppendLog($"[annulus] outer radius preview={outer:0.##} px");
+
+                    // Conserva proporción si el usuario ya la ha cambiado; si no, usa el default & clamp.
+                    double proposedInner = annulus.InnerRadius;
+                    double resolvedInner = AnnulusDefaults.ResolveInnerRadius(proposedInner, outer);
+                    double finalInner = AnnulusDefaults.ClampInnerRadius(resolvedInner, outer);
+
+                    if (ShouldLogAnnulusInner(proposedInner, finalInner))
+                        AppendLog($"[annulus] outer={outer:0.##} px, proposed inner={proposedInner:0.##} px -> final inner={finalInner:0.##} px");
+
+                    annulus.InnerRadius = finalInner;
+                }
             }
+
+            UpdateRoiLabelPosition(_previewShape);
         }
 
         private double ClampRadiusToCanvasBounds(System.Windows.Point center, double desiredRadius)
@@ -1630,6 +1698,12 @@ namespace BrakeDiscInspector_GUI_ROI
         {
             if (_previewShape == null) return;
 
+            string? previewLabel = null;
+            if (_previewShape.Tag is RoiModel existingTag && !string.IsNullOrWhiteSpace(existingTag.Label))
+            {
+                previewLabel = existingTag.Label;
+            }
+
             RoiModel canvasDraft;
             if (shape == RoiShape.Rectangle)
             {
@@ -1671,7 +1745,16 @@ namespace BrakeDiscInspector_GUI_ROI
                 canvasDraft.Top = y;
             }
 
+            if (!string.IsNullOrWhiteSpace(previewLabel))
+            {
+                canvasDraft.Label = previewLabel;
+            }
+
             var pixelDraft = CanvasToImage(canvasDraft);
+            if (!string.IsNullOrWhiteSpace(previewLabel) && pixelDraft != null)
+            {
+                pixelDraft.Label = previewLabel;
+            }
             var activeRole = GetCurrentStateRole();
             _tmpBuffer = pixelDraft;
             if (activeRole.HasValue)
@@ -1686,6 +1769,7 @@ namespace BrakeDiscInspector_GUI_ROI
 
             _previewShape.Tag = canvasDraft;
             ApplyRoiRotationToShape(_previewShape, canvasDraft.AngleDeg);
+            UpdateRoiLabelPosition(_previewShape);
             if (_state == MasterState.DrawInspection)
             {
                 if (_tmpBuffer != null)
@@ -2108,6 +2192,8 @@ namespace BrakeDiscInspector_GUI_ROI
                     foreach (var l in labels) CanvasROI.Children.Remove(l);
                 }
                 catch { /* ignore */ }
+
+                RedrawAnalysisCrosses();
             }
 
             // Ensure saved ROI has a stable Label for unique TextBlock names
@@ -2168,6 +2254,7 @@ namespace BrakeDiscInspector_GUI_ROI
             {
                 RedrawOverlaySafe();
             }
+            RedrawAnalysisCrosses();
 
             // IMPORTANTE: recalcula habilitaciones (esto ya deja el botón "Analizar Master" activo si M1+M2 están listos)
             UpdateWizardState();
@@ -2404,8 +2491,8 @@ namespace BrakeDiscInspector_GUI_ROI
 
             EnterAnalysisView();
 
-            _lastM1CenterPx = new WpfPoint(c1.Value.X, c1.Value.Y);
-            _lastM2CenterPx = new WpfPoint(c2.Value.X, c2.Value.Y);
+            _lastM1CenterPx = new CvPoint((int)System.Math.Round(c1.Value.X), (int)System.Math.Round(c1.Value.Y));
+            _lastM2CenterPx = new CvPoint((int)System.Math.Round(c2.Value.X), (int)System.Math.Round(c2.Value.Y));
             RedrawAnalysisCrosses();
 
             // 5) Reubicar inspección si existe
@@ -3792,6 +3879,11 @@ namespace BrakeDiscInspector_GUI_ROI
             return new System.Windows.Point(x, y);
         }
 
+        private System.Windows.Point ImagePxToCanvasPt(CvPoint px)
+        {
+            return ImagePxToCanvasPt(px.X, px.Y);
+        }
+
 
 
 
@@ -4047,8 +4139,8 @@ namespace BrakeDiscInspector_GUI_ROI
 
             RedrawOverlay();            // saved ROIs
             RecomputePreviewShapeAfterSync(); // PREVIEW ROI (unsaved)
-            RedrawAnalysisCrosses();
             UpdateHeatmapOverlayLayoutAndClip();
+            RedrawAnalysisCrosses();
             _overlayNeedsRedraw = false;
             return;
         }
