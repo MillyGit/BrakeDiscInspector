@@ -24,14 +24,20 @@
                 <Grid Background="#111">
                     <Grid>
                         <Image x:Name="ImgMain" Stretch="Uniform" Panel.ZIndex="0" />
+                        <Image x:Name="HeatmapOverlay"
+                               IsHitTestVisible="False"
+                               Stretch="Fill"
+                               Opacity="0.75"
+                               Visibility="Collapsed"
+                               Panel.ZIndex="1"/>
                         <Canvas x:Name="CanvasROI"
                                 Background="Transparent"
                                 IsHitTestVisible="True"
-                                Panel.ZIndex="1"/>
+                                Panel.ZIndex="2"/>
                         <local:RoiOverlay x:Name="RoiOverlay"
                                           Visibility="Collapsed"
                                           IsHitTestVisible="False"
-                                          Panel.ZIndex="2"
+                                          Panel.ZIndex="3"
                                           HorizontalAlignment="Stretch"
                                           VerticalAlignment="Stretch"/>
                     </Grid>
@@ -143,22 +149,14 @@
                 </TabItem>
             </TabControl>
 
-            <!-- === Resultado de análisis (label/score + heatmap) === -->
-            <GroupBox Header="Resultado" Margin="0,8,0,0">
-                <StackPanel Margin="8">
-                    <TextBlock x:Name="ResultLabel"
-                               Text="Sin resultado"
-                               FontSize="16"
-                               FontWeight="Bold"
-                               Foreground="#ddd"
-                               Margin="0,0,0,8"/>
-                    <Border BorderThickness="1" BorderBrush="#333" Background="#111" Padding="4">
-                        <Image x:Name="HeatmapImage"
-                               Stretch="Uniform"
-                               Height="220"/>
-                    </Border>
-                </StackPanel>
-            </GroupBox>
+            <!-- === Resultado de análisis (solo score) === -->
+            <StackPanel Margin="0,8,0,0">
+                <TextBlock x:Name="ResultLabel"
+                           Text="Sin resultado"
+                           FontSize="16"
+                           FontWeight="Bold"
+                           Foreground="#ddd"/>
+            </StackPanel>
 
             <GroupBox Header="Log" Margin="0,8,0,0">
                 <ScrollViewer VerticalScrollBarVisibility="Auto" Height="300">
