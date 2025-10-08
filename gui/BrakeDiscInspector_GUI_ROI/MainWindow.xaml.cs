@@ -60,10 +60,13 @@ namespace BrakeDiscInspector_GUI_ROI
         private int _imgW, _imgH;
 
         private WorkflowViewModel? _workflowViewModel;
-        private System.Windows.Controls.Image? _heatmapOverlayImage;
-        private BitmapSource? _heatmapBitmap;
-        private RoiModel? _heatmapRoiImage;
         private double _heatmapOverlayOpacity = 0.6;
+
+        private BitmapSource _lastHeatmapBmp;          // heatmap image in image space
+        private RoiModel _lastHeatmapRoi;              // ROI (image-space) that defines the heatmap clipping area
+
+        private Point? _lastM1CenterPx;   // image-space pixel coords of Master 1 center
+        private Point? _lastM2CenterPx;   // image-space pixel coords of Master 2 center
 
         private Shape? _previewShape;
         private bool _isDrawing;
@@ -982,6 +985,47 @@ namespace BrakeDiscInspector_GUI_ROI
         }
 
 
+        private void UpdateHeatmapOverlayLayoutAndClip()
+        {
+            if (HeatmapOverlay == null) return;
+
+            // No heatmap to show
+            if (_lastHeatmapBmp == null || _lastHeatmapRoi == null)
+            {
+                HeatmapOverlay.Source = null;
+                HeatmapOverlay.Visibility = Visibility.Collapsed;
+                HeatmapOverlay.Clip = null;
+                return;
+            }
+
+            // Set image source
+            HeatmapOverlay.Source = _lastHeatmapBmp;
+            HeatmapOverlay.Visibility = Visibility.Visible;
+
+            HeatmapOverlay.HorizontalAlignment = HorizontalAlignment.Left;
+            HeatmapOverlay.VerticalAlignment = VerticalAlignment.Top;
+            HeatmapOverlay.Opacity = _heatmapOverlayOpacity;
+
+            // Align heatmap overlay to the displayed image rect
+            var displayRect = GetImageDisplayRect(); // returns Rect in window/canvas coordinates
+            if (displayRect.Width <= 0 || displayRect.Height <= 0)
+            {
+                HeatmapOverlay.Visibility = Visibility.Collapsed;
+                HeatmapOverlay.Clip = null;
+                return;
+            }
+            HeatmapOverlay.Width  = Math.Max(1.0, displayRect.Width);
+            HeatmapOverlay.Height = Math.Max(1.0, displayRect.Height);
+            HeatmapOverlay.Margin = new Thickness(displayRect.X, displayRect.Y, 0, 0);
+
+            // Clip heatmap to the ROI area (convert ROI img-space → canvas-space, then to overlay-local)
+            var roiCanvas = ImageToCanvas(_lastHeatmapRoi);
+            double clipX = roiCanvas.Left - displayRect.X;
+            double clipY = roiCanvas.Top  - displayRect.Y;
+            var clipRect = new Rect(clipX, clipY, roiCanvas.Width, roiCanvas.Height);
+            HeatmapOverlay.Clip = new RectangleGeometry(clipRect);
+        }
+
         private async Task ShowHeatmapOverlayAsync(Workflow.RoiExportResult export, byte[] heatmapBytes, double opacity)
         {
             if (export == null || heatmapBytes == null || heatmapBytes.Length == 0)
@@ -999,34 +1043,12 @@ namespace BrakeDiscInspector_GUI_ROI
 
                 await Dispatcher.InvokeAsync(() =>
                 {
-                    _heatmapBitmap = heatmapSource;
-                    _heatmapRoiImage = export.RoiImage.Clone();
+                    _lastHeatmapBmp = heatmapSource;
+                    _lastHeatmapRoi = export.RoiImage.Clone();
                     _heatmapOverlayOpacity = Math.Clamp(opacity, 0.0, 1.0);
-
-                    if (HeatmapImage != null)
-                    {
-                        HeatmapImage.Source = _heatmapBitmap;
-                    }
-
                     EnterAnalysisView();
 
-                    if (CanvasROI != null)
-                    {
-                        if (_heatmapOverlayImage == null)
-                        {
-                            _heatmapOverlayImage = new System.Windows.Controls.Image
-                            {
-                                Stretch = Stretch.Fill,
-                                IsHitTestVisible = false
-                            };
-                            Panel.SetZIndex(_heatmapOverlayImage, 20);
-                            CanvasROI.Children.Add(_heatmapOverlayImage);
-                        }
-
-                        _heatmapOverlayImage.Source = _heatmapBitmap;
-                        _heatmapOverlayImage.Opacity = _heatmapOverlayOpacity;
-                        RefreshHeatmapOverlay();
-                    }
+                    UpdateHeatmapOverlayLayoutAndClip();
                 }, DispatcherPriority.Render);
             }
             catch (Exception ex)
@@ -1043,19 +1065,9 @@ namespace BrakeDiscInspector_GUI_ROI
                 return;
             }
 
-            _heatmapBitmap = null;
-            _heatmapRoiImage = null;
-
-            if (_heatmapOverlayImage != null && CanvasROI != null)
-            {
-                CanvasROI.Children.Remove(_heatmapOverlayImage);
-                _heatmapOverlayImage = null;
-            }
-
-            if (HeatmapImage != null)
-            {
-                HeatmapImage.Source = null;
-            }
+            _lastHeatmapBmp = null;
+            _lastHeatmapRoi = null;
+            UpdateHeatmapOverlayLayoutAndClip();
         }
 
         private void RefreshHeatmapOverlay()
@@ -1065,59 +1077,16 @@ namespace BrakeDiscInspector_GUI_ROI
                 Dispatcher.Invoke(RefreshHeatmapOverlay);
                 return;
             }
-
-            if (_heatmapOverlayImage == null || _heatmapBitmap == null || _heatmapRoiImage == null || CanvasROI == null)
-                return;
-
-            if (!CanvasROI.Children.Contains(_heatmapOverlayImage))
-            {
-                CanvasROI.Children.Add(_heatmapOverlayImage);
-            }
-
-            var canvasRoi = ImageToCanvas(_heatmapRoiImage);
-
-            double width;
-            double height;
-            double left;
-            double top;
-
-            if (canvasRoi.Shape == RoiShape.Rectangle)
-            {
-                left = canvasRoi.Left;
-                top = canvasRoi.Top;
-                width = Math.Max(1.0, canvasRoi.Width);
-                height = Math.Max(1.0, canvasRoi.Height);
-            }
-            else
-            {
-                double diameter = Math.Max(canvasRoi.Width, canvasRoi.R * 2.0);
-                width  = Math.Max(1.0, diameter);
-                height = Math.Max(1.0, diameter);
-                left = canvasRoi.CX - width / 2.0;
-                top  = canvasRoi.CY - height / 2.0;
-            }
-
-            Canvas.SetLeft(_heatmapOverlayImage, left);
-            Canvas.SetTop(_heatmapOverlayImage, top);
-            _heatmapOverlayImage.Width = width;
-            _heatmapOverlayImage.Height = height;
-            _heatmapOverlayImage.Opacity = _heatmapOverlayOpacity;
-            _heatmapOverlayImage.RenderTransformOrigin = new WPoint(0.5, 0.5);
-
-            if (_heatmapOverlayImage.RenderTransform is RotateTransform rotate)
-            {
-                rotate.Angle = canvasRoi.AngleDeg;
-            }
-            else
-            {
-                _heatmapOverlayImage.RenderTransform = new RotateTransform(canvasRoi.AngleDeg);
-            }
+            UpdateHeatmapOverlayLayoutAndClip();
         }
 
 
         private void ResetAnalysisMarks()
         {
             RemoveAnalysisMarks();
+            _lastM1CenterPx = null;
+            _lastM2CenterPx = null;
+            RedrawAnalysisCrosses();
             ClearHeatmapOverlay();
             RedrawOverlaySafe();
             _analysisViewActive = false;
@@ -1245,6 +1214,58 @@ namespace BrakeDiscInspector_GUI_ROI
             }
         }
 
+        private void RedrawAnalysisCrosses()
+        {
+            if (CanvasROI == null)
+                return;
+
+            // Remove old crosses
+            var toRemove = CanvasROI.Children.OfType<Shape>()
+                .Where(s => (s.Tag as string) == "AnalysisCross")
+                .ToList();
+            foreach (var s in toRemove) CanvasROI.Children.Remove(s);
+
+            // Helper to draw a cross at a canvas point
+            void DrawCrossAt(Point canvasPt, double size = 12.0, double thickness = 2.0)
+            {
+                double x = canvasPt.X, y = canvasPt.Y;
+                var h = new Line
+                {
+                    X1 = x - size, Y1 = y,
+                    X2 = x + size, Y2 = y,
+                    Stroke = Brushes.Lime,
+                    StrokeThickness = thickness,
+                    IsHitTestVisible = false,
+                    Tag = "AnalysisCross"
+                };
+                var v = new Line
+                {
+                    X1 = x, Y1 = y - size,
+                    X2 = x, Y2 = y + size,
+                    Stroke = Brushes.Lime,
+                    StrokeThickness = thickness,
+                    IsHitTestVisible = false,
+                    Tag = "AnalysisCross"
+                };
+                CanvasROI.Children.Add(h);
+                CanvasROI.Children.Add(v);
+                Panel.SetZIndex(h, int.MaxValue - 1);
+                Panel.SetZIndex(v, int.MaxValue - 1);
+            }
+
+            // Convert stored image-space points to canvas and draw
+            if (_lastM1CenterPx.HasValue)
+            {
+                var p = ImagePxToCanvasPt(_lastM1CenterPx.Value.X, _lastM1CenterPx.Value.Y);
+                DrawCrossAt(p);
+            }
+            if (_lastM2CenterPx.HasValue)
+            {
+                var p = ImagePxToCanvasPt(_lastM2CenterPx.Value.X, _lastM2CenterPx.Value.Y);
+                DrawCrossAt(p);
+            }
+        }
+
         private void EnterAnalysisView()
         {
             if (!Dispatcher.CheckAccess())
@@ -1281,21 +1302,21 @@ namespace BrakeDiscInspector_GUI_ROI
         private void MainWindow_Loaded(object sender, RoutedEventArgs e)
         {
             ScheduleSyncOverlay(force: true);
-            RefreshHeatmapOverlay();
+            UpdateHeatmapOverlayLayoutAndClip();
         }
 
         private void MainWindow_SizeChanged(object sender, SizeChangedEventArgs e)
         {
             AppendResizeLog($"[window] SizeChanged: window={ActualWidth:0}x{ActualHeight:0} ImgMain={ImgMain.ActualWidth:0}x{ImgMain.ActualHeight:0}");
             ScheduleSyncOverlay(force: true);
-            RefreshHeatmapOverlay();
+            UpdateHeatmapOverlayLayoutAndClip();
         }
 
         private void ImgMain_SizeChanged(object sender, SizeChangedEventArgs e)
         {
             AppendResizeLog($"[image] SizeChanged: ImgMain={ImgMain.ActualWidth:0}x{ImgMain.ActualHeight:0}");
             ScheduleSyncOverlay(force: true);
-            RefreshHeatmapOverlay();
+            UpdateHeatmapOverlayLayoutAndClip();
         }
 
 
@@ -2069,6 +2090,20 @@ namespace BrakeDiscInspector_GUI_ROI
             }
 
             var savedRoiModel = savedRoi;
+            bool skipOverlayRedraw = savedRole is RoiRole.Master1Pattern or RoiRole.Master1Search or RoiRole.Master2Pattern or RoiRole.Master2Search;
+
+            if (skipOverlayRedraw)
+            {
+                // Remove all shapes (ROI outlines, analysis crosses, etc.) and labels from the canvas overlay
+                try
+                {
+                    var shapes = CanvasROI.Children.OfType<Shape>().ToList();
+                    foreach (var s in shapes) CanvasROI.Children.Remove(s);
+                    var labels = CanvasROI.Children.OfType<TextBlock>().ToList();
+                    foreach (var l in labels) CanvasROI.Children.Remove(l);
+                }
+                catch { /* ignore */ }
+            }
 
             // Ensure saved ROI has a stable Label for unique TextBlock names
             try
@@ -2124,7 +2159,10 @@ namespace BrakeDiscInspector_GUI_ROI
             }
 
             ClearPersistedRoisFromCanvas();
-            RedrawOverlaySafe();
+            if (!skipOverlayRedraw)
+            {
+                RedrawOverlaySafe();
+            }
 
             // IMPORTANTE: recalcula habilitaciones (esto ya deja el botón "Analizar Master" activo si M1+M2 están listos)
             UpdateWizardState();
@@ -2361,11 +2399,9 @@ namespace BrakeDiscInspector_GUI_ROI
 
             EnterAnalysisView();
 
-            string master1Caption = ResolveRoiLabelText(_layout.Master1Pattern!) ?? "Master 1";
-            string master2Caption = ResolveRoiLabelText(_layout.Master2Pattern!) ?? "Master 2";
-
-            DrawMasterMatch(_layout.Master1Pattern!, c1.Value, $"{master1Caption} match", WBrushes.LimeGreen, withLabel: true);
-            DrawMasterMatch(_layout.Master2Pattern!, c2.Value, $"{master2Caption} match", WBrushes.Red, withLabel: true);
+            _lastM1CenterPx = new Point(c1.Value.X, c1.Value.Y);
+            _lastM2CenterPx = new Point(c2.Value.X, c2.Value.Y);
+            RedrawAnalysisCrosses();
 
             // 5) Reubicar inspección si existe
             if (_layout.Inspection == null)
@@ -3364,7 +3400,7 @@ namespace BrakeDiscInspector_GUI_ROI
             UpdateInspectionShapeRotation(CurrentRoi.AngleDeg);
             // RoiOverlay disabled: labels are now drawn on Canvas only
             // UpdateOverlayFromCurrentRoi();
-            RefreshHeatmapOverlay();
+            UpdateHeatmapOverlayLayoutAndClip();
         }
 
         private void InvalidateAdornerFor(Shape shape)
@@ -3525,12 +3561,17 @@ namespace BrakeDiscInspector_GUI_ROI
                     var heatBytes = Convert.FromBase64String(resp.heatmap_png_base64);
                     using var heat = OpenCvSharp.Cv2.ImDecode(heatBytes, OpenCvSharp.ImreadModes.Color);
 
-                    if (HeatmapImage != null)
-                        HeatmapImage.Source = WriteableBitmapConverter.ToWriteableBitmap(heat);
+                    var heatBmp = WriteableBitmapConverter.ToWriteableBitmap(heat);
+                    heatBmp.Freeze();
+                    _lastHeatmapBmp = heatBmp;
+                    _lastHeatmapRoi = BuildCurrentRoiModel();
+                    UpdateHeatmapOverlayLayoutAndClip();
                 }
-                else if (HeatmapImage != null)
+                else
                 {
-                    HeatmapImage.Source = null;
+                    _lastHeatmapBmp = null;
+                    _lastHeatmapRoi = null;
+                    UpdateHeatmapOverlayLayoutAndClip();
                 }
 
                 // (Opcional) Log
@@ -3940,6 +3981,8 @@ namespace BrakeDiscInspector_GUI_ROI
             var disp = GetImageDisplayRect();
             AppendLog($"[sync] set width/height=({disp.Width:0}x{disp.Height:0}) margin=({CanvasROI.Margin.Left:0},{CanvasROI.Margin.Top:0})");
             AppendLog($"[sync] AFTER layout? canvasActual=({CanvasROI.ActualWidth:0}x{CanvasROI.ActualHeight:0}) imgActual=({ImgMain.ActualWidth:0}x{ImgMain.ActualHeight:0})");
+
+            UpdateHeatmapOverlayLayoutAndClip();
         }
 
         private void ScheduleSyncOverlay(bool force = false)
@@ -3999,8 +4042,8 @@ namespace BrakeDiscInspector_GUI_ROI
 
             RedrawOverlay();            // saved ROIs
             RecomputePreviewShapeAfterSync(); // PREVIEW ROI (unsaved)
-
-            RefreshHeatmapOverlay();
+            RedrawAnalysisCrosses();
+            UpdateHeatmapOverlayLayoutAndClip();
             _overlayNeedsRedraw = false;
             return;
         }
