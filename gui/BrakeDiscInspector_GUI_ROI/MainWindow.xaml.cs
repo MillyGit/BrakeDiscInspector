@@ -1277,10 +1277,10 @@ namespace BrakeDiscInspector_GUI_ROI
             {
                 double t = i / 255.0;
                 double r = 0.13572138 + 4.61539260*t - 42.66032258*t*t + 132.13108234*t*t*t - 152.94239396*t*t*t*t + 59.28637943*t*t*t*t*t;
-                double g = 0.09140261 + 2.19418839*t + 4.84296658*t*t - 14.18503333*t*t*t + 14.13815831*t*t*t*t - 4.21519726*t*t*t*t*t;
+                double gg = 0.09140261 + 2.19418839*t + 4.84296658*t*t - 14.18503333*t*t*t + 14.13815831*t*t*t*t - 4.21519726*t*t*t*t*t;
                 double b = 0.10667330 + 12.64194608*t - 60.58204836*t*t + 139.27510080*t*t*t - 150.21747690*t*t*t*t + 59.17006120*t*t*t*t*t;
                 int R = (int)System.Math.Round(255.0 * System.Math.Clamp(r, 0.0, 1.0));
-                int G = (int)System.Math.Round(255.0 * System.Math.Clamp(g, 0.0, 1.0));
+                int G = (int)System.Math.Round(255.0 * System.Math.Clamp(gg, 0.0, 1.0));
                 int B = (int)System.Math.Round(255.0 * System.Math.Clamp(b, 0.0, 1.0));
                 turboR[i] = (byte)R; turboG[i] = (byte)G; turboB[i] = (byte)B;
             }
