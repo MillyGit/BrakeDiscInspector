@@ -634,10 +634,10 @@ namespace BrakeDiscInspector_GUI_ROI
         {
             try
             {
-                var toRemoveShapes = CanvasROI.Children.OfType<System.Windows.Shapes.Shape>().ToList();
-                foreach (var s in toRemoveShapes) CanvasROI.Children.Remove(s);
-                var toRemoveLabels = CanvasROI.Children.OfType<System.Windows.Controls.TextBlock>().ToList();
-                foreach (var t in toRemoveLabels) CanvasROI.Children.Remove(t);
+                var shapes = CanvasROI.Children.OfType<System.Windows.Shapes.Shape>().ToList();
+                foreach (var s in shapes) CanvasROI.Children.Remove(s);
+                var labels = CanvasROI.Children.OfType<System.Windows.Controls.TextBlock>().ToList();
+                foreach (var l in labels) CanvasROI.Children.Remove(l);
             }
             catch { /* ignore */ }
         }
@@ -1123,22 +1123,31 @@ namespace BrakeDiscInspector_GUI_ROI
 
                 await Dispatcher.InvokeAsync(() =>
                 {
-                    var bmpSrc = heatmapSource;
-
-                    // If your heatmap is grayscale, optionally colorize first for higher contrast.
-                    // Uncomment next line if needed:
-                    // bmpSrc = ColorizeTurbo(bmpSrc);
-
-                    // Robust percentile stretch + optional gamma (adjust params if desired)
-                    _lastHeatmapBmp = EnhanceHeatmap(bmpSrc, lowPercent: 2.0, highPercent: 98.0, gamma: 1.0);
-
-                    // Keep existing flow
                     _lastHeatmapRoi = HeatmapRoiModel.From(export.RoiImage.Clone());
                     _heatmapOverlayOpacity = Math.Clamp(opacity, 0.0, 1.0);
-                    HeatmapOverlay.Opacity = _heatmapOverlayOpacity;
                     EnterAnalysisView();
 
+                    var bmpSrc = heatmapSource;
+
+                    // If your heatmap is grayscale and you want vivid colors, you may enable this line:
+                    // bmpSrc = ColorizeTurbo(bmpSrc);
+
+                    // Apply robust percentile stretch with gamma for visible boost
+                    _lastHeatmapBmp = EnhanceHeatmap(
+                        bmpSrc,
+                        lowPercent: 1.0,
+                        highPercent: 99.0,
+                        gamma: 0.85);
+
+                    // Ensure overlay is sufficiently visible (do not modify placement/alignment)
+                    if (HeatmapOverlay != null)
+                    {
+                        HeatmapOverlay.Opacity = 0.90; // increase visibility without changing position
+                    }
+
                     UpdateHeatmapOverlayLayoutAndClip();
+
+                    _heatmapOverlayOpacity = HeatmapOverlay?.Opacity ?? _heatmapOverlayOpacity;
                 }, DispatcherPriority.Render);
             }
             catch (Exception ex)
@@ -2319,6 +2328,27 @@ namespace BrakeDiscInspector_GUI_ROI
 
                     _layout.Master1Search = _tmpBuffer.Clone();
                     savedRoi = _layout.Master1Search;
+
+                    var saved = _layout.Master1Search;
+                    if (saved != null)
+                    {
+                        // Decide whether to clear the canvas based on ROI role
+                        switch (saved.Role)
+                        {
+                            case RoiRole.Master1Search:    // "Master 1 inspection"
+                            case RoiRole.Master2Search:    // "Master 2 inspection"
+                                // Clear shapes + labels so next step starts with a clean canvas
+                                ClearCanvasShapesAndLabels();
+                                _roiShapesById.Clear();
+                                _roiLabels.Clear();
+                                break;
+
+                            default:
+                                // Do nothing (Master patterns and final Inspection stay visible)
+                                break;
+                        }
+                    }
+
                     SaveRoiCropPreview(_layout.Master1Search, "M1_search");
 
                     _tmpBuffer = null;
@@ -2350,6 +2380,27 @@ namespace BrakeDiscInspector_GUI_ROI
 
                     _layout.Master2Search = _tmpBuffer.Clone();
                     savedRoi = _layout.Master2Search;
+
+                    var savedM2 = _layout.Master2Search;
+                    if (savedM2 != null)
+                    {
+                        // Decide whether to clear the canvas based on ROI role
+                        switch (savedM2.Role)
+                        {
+                            case RoiRole.Master1Search:    // "Master 1 inspection"
+                            case RoiRole.Master2Search:    // "Master 2 inspection"
+                                // Clear shapes + labels so next step starts with a clean canvas
+                                ClearCanvasShapesAndLabels();
+                                _roiShapesById.Clear();
+                                _roiLabels.Clear();
+                                break;
+
+                            default:
+                                // Do nothing (Master patterns and final Inspection stay visible)
+                                break;
+                        }
+                    }
+
                     SaveRoiCropPreview(_layout.Master2Search, "M2_search");
 
                     _tmpBuffer = null;
@@ -2377,46 +2428,6 @@ namespace BrakeDiscInspector_GUI_ROI
             }
 
             var savedRoiModel = savedRoi;
-
-            if (savedRoiModel != null)
-            {
-                // After persisting 'saved' RoiModel, decide clear timing by role:
-                switch (savedRoiModel.Role)
-                {
-                    case RoiRole.Master1Pattern:
-                        // RULE 1: Keep Master 1 visible until Master 1 inspection is saved
-                        // No canvas clear here
-                        RedrawOverlay();
-                        break;
-
-                    case RoiRole.Master1Search:
-                        // RULE 2: Clear after saving Master 1 inspection
-                        ClearCanvasShapesAndLabels();
-                        _roiShapesById.Clear();
-                        _roiLabels.Clear();
-                        RedrawOverlay();
-                        break;
-
-                    case RoiRole.Master2Pattern:
-                        // RULE 3: Keep Master 2 visible until Master 2 inspection is saved
-                        // No canvas clear here
-                        RedrawOverlay();
-                        break;
-
-                    case RoiRole.Master2Search:
-                        // RULE 4: Clear after saving Master 2 inspection
-                        ClearCanvasShapesAndLabels();
-                        _roiShapesById.Clear();
-                        _roiLabels.Clear();
-                        RedrawOverlay();
-                        break;
-
-                    case RoiRole.Inspection:
-                        // RULE 5: Do NOT clear; stays until loading a new image
-                        RedrawOverlay();
-                        break;
-                }
-            }
 
             // Ensure saved ROI has a stable Label for unique TextBlock names
             try
@@ -3873,18 +3884,29 @@ namespace BrakeDiscInspector_GUI_ROI
 
                     var heatBmp = WriteableBitmapConverter.ToWriteableBitmap(heat);
                     heatBmp.Freeze();
+                    _lastHeatmapRoi = HeatmapRoiModel.From(BuildCurrentRoiModel());
+
                     var bmpSrc = heatBmp;
 
-                    // If your heatmap is grayscale, optionally colorize first for higher contrast.
-                    // Uncomment next line if needed:
+                    // If your heatmap is grayscale and you want vivid colors, you may enable this line:
                     // bmpSrc = ColorizeTurbo(bmpSrc);
 
-                    // Robust percentile stretch + optional gamma (adjust params if desired)
-                    _lastHeatmapBmp = EnhanceHeatmap(bmpSrc, lowPercent: 2.0, highPercent: 98.0, gamma: 1.0);
+                    // Apply robust percentile stretch with gamma for visible boost
+                    _lastHeatmapBmp = EnhanceHeatmap(
+                        bmpSrc,
+                        lowPercent: 1.0,
+                        highPercent: 99.0,
+                        gamma: 0.85);
 
-                    // Keep existing flow
-                    _lastHeatmapRoi = HeatmapRoiModel.From(BuildCurrentRoiModel());
+                    // Ensure overlay is sufficiently visible (do not modify placement/alignment)
+                    if (HeatmapOverlay != null)
+                    {
+                        HeatmapOverlay.Opacity = 0.90; // increase visibility without changing position
+                    }
+
                     UpdateHeatmapOverlayLayoutAndClip();
+
+                    _heatmapOverlayOpacity = HeatmapOverlay?.Opacity ?? _heatmapOverlayOpacity;
                 }
                 else
                 {
