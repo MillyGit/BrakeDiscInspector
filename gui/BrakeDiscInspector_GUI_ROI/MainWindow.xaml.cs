@@ -1123,7 +1123,16 @@ namespace BrakeDiscInspector_GUI_ROI
 
                 await Dispatcher.InvokeAsync(() =>
                 {
-                    _lastHeatmapBmp = heatmapSource;
+                    var bmpSrc = heatmapSource;
+
+                    // If your heatmap is grayscale, optionally colorize first for higher contrast.
+                    // Uncomment next line if needed:
+                    // bmpSrc = ColorizeTurbo(bmpSrc);
+
+                    // Robust percentile stretch + optional gamma (adjust params if desired)
+                    _lastHeatmapBmp = EnhanceHeatmap(bmpSrc, lowPercent: 2.0, highPercent: 98.0, gamma: 1.0);
+
+                    // Keep existing flow
                     _lastHeatmapRoi = HeatmapRoiModel.From(export.RoiImage.Clone());
                     _heatmapOverlayOpacity = Math.Clamp(opacity, 0.0, 1.0);
                     HeatmapOverlay.Opacity = _heatmapOverlayOpacity;
@@ -1159,6 +1168,141 @@ namespace BrakeDiscInspector_GUI_ROI
                 return;
             }
             UpdateHeatmapOverlayLayoutAndClip();
+        }
+
+        // Fast percentile finder (0..255) on a single-channel histogram
+        private static byte PercentileFromHistogram(int[] hist, double pct)
+        {
+            if (hist == null || hist.Length != 256) return 0;
+            if (pct <= 0) return 0; if (pct >= 100) return 255;
+            long total = 0; for (int i = 0; i < 256; i++) total += hist[i];
+            if (total <= 0) return 0;
+            long target = (long)System.Math.Round((pct / 100.0) * (total - 1));
+            long cum = 0;
+            for (int i = 0; i < 256; i++)
+            {
+                cum += hist[i];
+                if (cum > target) return (byte)i;
+            }
+            return 255;
+        }
+
+        // Enhance heatmap contrast with percentile stretch + gamma on intensity.
+        // Accepts grayscale (8bpp) or color (BGRA32). Returns BGRA32 WriteableBitmap.
+        private static System.Windows.Media.Imaging.WriteableBitmap EnhanceHeatmap(
+            System.Windows.Media.Imaging.BitmapSource src,
+            double lowPercent = 2.0, double highPercent = 98.0, double gamma = 1.0)
+        {
+            if (src == null) return null;
+
+            // Ensure BGRA32
+            var fmt = src.Format;
+            var conv = (fmt != System.Windows.Media.PixelFormats.Bgra32)
+                ? new System.Windows.Media.Imaging.FormatConvertedBitmap(src, System.Windows.Media.PixelFormats.Bgra32, null, 0)
+                : src;
+
+            int w = conv.PixelWidth, h = conv.PixelHeight, stride = w * 4;
+            byte[] buf = new byte[h * stride];
+            conv.CopyPixels(buf, stride, 0);
+
+            // Build intensity histogram (perceived luminance from BGRA)
+            int[] hist = new int[256];
+            for (int y = 0, p = 0; y < h; y++)
+            {
+                for (int x = 0; x < w; x++, p += 4)
+                {
+                    byte b = buf[p + 0], g = buf[p + 1], r = buf[p + 2];
+                    // Rec. 709 luma approximation
+                    int lum = (int)System.Math.Round(0.2126 * r + 0.7152 * g + 0.0722 * b);
+                    if (lum < 0) lum = 0; if (lum > 255) lum = 255;
+                    hist[lum]++;
+                }
+            }
+
+            // Percentile bounds
+            byte lo = PercentileFromHistogram(hist, lowPercent);
+            byte hi = PercentileFromHistogram(hist, highPercent);
+            if (hi <= lo) { lo = 0; hi = 255; }
+
+            // Precompute LUT for contrast stretch + gamma
+            double inv = 1.0 / System.Math.Max(1, hi - lo);
+            byte[] lut = new byte[256];
+            for (int v = 0; v < 256; v++)
+            {
+                double t = (v - lo) * inv; if (t < 0) t = 0; if (t > 1) t = 1;
+                if (gamma != 1.0) t = System.Math.Pow(t, 1.0 / System.Math.Max(1e-6, gamma));
+                int u = (int)System.Math.Round(255.0 * t);
+                if (u < 0) u = 0; if (u > 255) u = 255;
+                lut[v] = (byte)u;
+            }
+
+            // Apply LUT to RGB channels (preserve alpha)
+            for (int y = 0, p = 0; y < h; y++)
+            {
+                for (int x = 0; x < w; x++, p += 4)
+                {
+                    buf[p + 0] = lut[buf[p + 0]]; // B
+                    buf[p + 1] = lut[buf[p + 1]]; // G
+                    buf[p + 2] = lut[buf[p + 2]]; // R
+                    // buf[p + 3] alpha untouched
+                }
+            }
+
+            var wb = new System.Windows.Media.Imaging.WriteableBitmap(w, h, conv.DpiX, conv.DpiY,
+                System.Windows.Media.PixelFormats.Bgra32, null);
+            wb.WritePixels(new System.Windows.Int32Rect(0, 0, w, h), buf, stride, 0);
+            wb.Freeze();
+            return wb;
+        }
+
+        // Optional: apply a vivid false-color LUT (Turbo) to a grayscale map for higher contrast.
+        // If src is already colored, you can skip this; otherwise call before EnhanceHeatmap.
+        private static System.Windows.Media.Imaging.WriteableBitmap ColorizeTurbo(
+            System.Windows.Media.Imaging.BitmapSource gray8)
+        {
+            if (gray8 == null) return null;
+            var conv = (gray8.Format != System.Windows.Media.PixelFormats.Gray8)
+                ? new System.Windows.Media.Imaging.FormatConvertedBitmap(gray8, System.Windows.Media.PixelFormats.Gray8, null, 0)
+                : gray8;
+
+            int w = conv.PixelWidth, h = conv.PixelHeight, stride = w;
+            byte[] g = new byte[h * stride];
+            conv.CopyPixels(g, stride, 0);
+
+            // Turbo colormap (approx) LUT (r,g,b)
+            byte[] turboR = new byte[256];
+            byte[] turboG = new byte[256];
+            byte[] turboB = new byte[256];
+            for (int i = 0; i < 256; i++)
+            {
+                double t = i / 255.0;
+                double r = 0.13572138 + 4.61539260*t - 42.66032258*t*t + 132.13108234*t*t*t - 152.94239396*t*t*t*t + 59.28637943*t*t*t*t*t;
+                double g = 0.09140261 + 2.19418839*t + 4.84296658*t*t - 14.18503333*t*t*t + 14.13815831*t*t*t*t - 4.21519726*t*t*t*t*t;
+                double b = 0.10667330 + 12.64194608*t - 60.58204836*t*t + 139.27510080*t*t*t - 150.21747690*t*t*t*t + 59.17006120*t*t*t*t*t;
+                int R = (int)System.Math.Round(255.0 * System.Math.Clamp(r, 0.0, 1.0));
+                int G = (int)System.Math.Round(255.0 * System.Math.Clamp(g, 0.0, 1.0));
+                int B = (int)System.Math.Round(255.0 * System.Math.Clamp(b, 0.0, 1.0));
+                turboR[i] = (byte)R; turboG[i] = (byte)G; turboB[i] = (byte)B;
+            }
+
+            byte[] bgra = new byte[w*h*4];
+            for (int y = 0, p = 0, q = 0; y < h; y++)
+            {
+                for (int x = 0; x < w; x++, p++, q += 4)
+                {
+                    byte v = g[p];
+                    bgra[q+0] = turboB[v];
+                    bgra[q+1] = turboG[v];
+                    bgra[q+2] = turboR[v];
+                    bgra[q+3] = 255;
+                }
+            }
+
+            var wb = new System.Windows.Media.Imaging.WriteableBitmap(w, h, conv.DpiX, conv.DpiY,
+                System.Windows.Media.PixelFormats.Bgra32, null);
+            wb.WritePixels(new System.Windows.Int32Rect(0, 0, w, h), bgra, w*4, 0);
+            wb.Freeze();
+            return wb;
         }
 
 
@@ -3729,7 +3873,16 @@ namespace BrakeDiscInspector_GUI_ROI
 
                     var heatBmp = WriteableBitmapConverter.ToWriteableBitmap(heat);
                     heatBmp.Freeze();
-                    _lastHeatmapBmp = heatBmp;
+                    var bmpSrc = heatBmp;
+
+                    // If your heatmap is grayscale, optionally colorize first for higher contrast.
+                    // Uncomment next line if needed:
+                    // bmpSrc = ColorizeTurbo(bmpSrc);
+
+                    // Robust percentile stretch + optional gamma (adjust params if desired)
+                    _lastHeatmapBmp = EnhanceHeatmap(bmpSrc, lowPercent: 2.0, highPercent: 98.0, gamma: 1.0);
+
+                    // Keep existing flow
                     _lastHeatmapRoi = HeatmapRoiModel.From(BuildCurrentRoiModel());
                     UpdateHeatmapOverlayLayoutAndClip();
                 }
