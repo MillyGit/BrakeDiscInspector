@@ -2339,8 +2339,6 @@ namespace BrakeDiscInspector_GUI_ROI
                             case RoiRole.Master2Search:    // "Master 2 inspection"
                                 // Clear shapes + labels so next step starts with a clean canvas
                                 ClearCanvasShapesAndLabels();
-                                _roiShapesById.Clear();
-                                _roiLabels.Clear();
                                 break;
 
                             default:
@@ -2391,8 +2389,6 @@ namespace BrakeDiscInspector_GUI_ROI
                             case RoiRole.Master2Search:    // "Master 2 inspection"
                                 // Clear shapes + labels so next step starts with a clean canvas
                                 ClearCanvasShapesAndLabels();
-                                _roiShapesById.Clear();
-                                _roiLabels.Clear();
                                 break;
 
                             default:
