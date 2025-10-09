@@ -40,6 +40,7 @@ using Path = System.IO.Path;
 using WSize = System.Windows.Size;
 using LegacyROI = BrakeDiscInspector_GUI_ROI.ROI;
 using ROI = BrakeDiscInspector_GUI_ROI.RoiModel;
+using RoiShapeType = BrakeDiscInspector_GUI_ROI.RoiShape;
 
 using CvPoint  = OpenCvSharp.Point;
 using CvRect   = OpenCvSharp.Rect;
@@ -68,7 +69,7 @@ namespace BrakeDiscInspector_GUI_ROI
         private double _heatmapOverlayOpacity = 0.6;
 
         private System.Windows.Media.Imaging.BitmapSource _lastHeatmapBmp;          // heatmap image in image space
-        private RoiModel _lastHeatmapRoi;              // ROI (image-space) that defines the heatmap clipping area
+        private HeatmapRoiModel _lastHeatmapRoi;              // ROI (image-space) that defines the heatmap clipping area
 
         // IMAGE-space centers (pixels) of found masters
         private CvPoint? _lastM1CenterPx;
@@ -150,6 +151,37 @@ namespace BrakeDiscInspector_GUI_ROI
             _layout.Master2Search,
             _layout.Inspection
         }.OfType<RoiModel>();
+
+        private sealed class HeatmapRoiModel : RoiModel
+        {
+            public static HeatmapRoiModel From(RoiModel src)
+            {
+                if (src == null)
+                    return null;
+
+                if (src is HeatmapRoiModel existing)
+                    return existing;
+
+                return new HeatmapRoiModel
+                {
+                    Id = src.Id,
+                    Label = src.Label,
+                    Shape = src.Shape,
+                    Role = src.Role,
+                    AngleDeg = src.AngleDeg,
+                    X = src.X,
+                    Y = src.Y,
+                    Width = src.Width,
+                    Height = src.Height,
+                    CX = src.CX,
+                    CY = src.CY,
+                    R = src.R,
+                    RInner = src.RInner
+                };
+            }
+
+            public RoiShapeType ShapeType => (RoiShapeType)Shape;
+        }
 
         private void UpdateRoiLabelPosition(Shape shape)
         {
@@ -1012,7 +1044,8 @@ namespace BrakeDiscInspector_GUI_ROI
 
         private void UpdateHeatmapOverlayLayoutAndClip()
         {
-            if (HeatmapOverlay == null) return;
+            if (HeatmapOverlay == null)
+                return;
 
             if (_lastHeatmapBmp == null || _lastHeatmapRoi == null)
             {
@@ -1022,51 +1055,52 @@ namespace BrakeDiscInspector_GUI_ROI
                 return;
             }
 
-            var disp = GetImageDisplayRect();
-            if (disp.Width <= 0 || disp.Height <= 0)
-            {
-                HeatmapOverlay.Source = null;
-                HeatmapOverlay.Visibility = Visibility.Collapsed;
-                HeatmapOverlay.Clip = null;
-                return;
-            }
-
+            // 1) Align overlay to the displayed image rectangle
+            var disp = GetImageDisplayRect(); // rectangle of the image on screen (canvas coords)
             HeatmapOverlay.Source = _lastHeatmapBmp;
-            HeatmapOverlay.HorizontalAlignment = HorizontalAlignment.Left;
-            HeatmapOverlay.VerticalAlignment = VerticalAlignment.Top;
-            HeatmapOverlay.Opacity = _heatmapOverlayOpacity;
-            HeatmapOverlay.Width = System.Math.Max(1.0, disp.Width);
+            HeatmapOverlay.Width  = System.Math.Max(1.0, disp.Width);
             HeatmapOverlay.Height = System.Math.Max(1.0, disp.Height);
-            HeatmapOverlay.Margin = new Thickness(disp.X, disp.Y, 0, 0);
-            HeatmapOverlay.Visibility = Visibility.Visible;
+            HeatmapOverlay.Margin = new System.Windows.Thickness(disp.X, disp.Y, 0, 0);
+            HeatmapOverlay.Visibility = System.Windows.Visibility.Visible;
 
-            var rc = ImageToCanvas(_lastHeatmapRoi);
-            double ox = rc.Left - disp.X;
-            double oy = rc.Top - disp.Y;
+            // 2) Build CLIP geometry in OVERLAY-LOCAL coords
+            // IMPORTANT: Use ROI CANVAS coordinates DIRECTLY. Do NOT subtract disp.X/disp.Y again.
+            var rc = ImageToCanvas(_lastHeatmapRoi); // ROI converted to canvas/UI space
 
+            // Rectangular fallback (used also by non-circular ROIs)
             System.Windows.Media.Geometry clipGeo;
 
-            if (_lastHeatmapRoi.Shape == RoiShape.Annulus)
+            // If your RoiModel exposes shape info, branch accordingly; otherwise, rectangular clip is fine.
+            // The key is to NOT subtract disp.X/disp.Y here.
+
+            if (_lastHeatmapRoi.ShapeType == RoiShapeType.Annulus)
             {
-                double cx = (rc.Left + rc.Width / 2.0) - disp.X;
-                double cy = (rc.Top + rc.Height / 2.0) - disp.Y;
+                // Center and radii in CANVAS space
+                double cx = rc.Left + rc.Width  / 2.0;
+                double cy = rc.Top  + rc.Height / 2.0;
+
+                // Outer radius from bbox (assumed square in canvas units)
                 double outerR = System.Math.Max(rc.Width, rc.Height) / 2.0;
+
+                // Inner radius already in canvas units if provided on rc; otherwise convert from image space earlier
                 double innerR = System.Math.Max(0.0, System.Math.Min(rc.RInner, outerR));
 
-                var outer = new System.Windows.Media.EllipseGeometry(new WpfPoint(cx, cy), outerR, outerR);
-                var inner = new System.Windows.Media.EllipseGeometry(new WpfPoint(cx, cy), innerR, innerR);
+                var outer = new System.Windows.Media.EllipseGeometry(new System.Windows.Point(cx, cy), outerR, outerR);
+                var inner = new System.Windows.Media.EllipseGeometry(new System.Windows.Point(cx, cy), innerR, innerR);
+
                 clipGeo = new System.Windows.Media.CombinedGeometry(System.Windows.Media.GeometryCombineMode.Exclude, outer, inner);
             }
-            else if (_lastHeatmapRoi.Shape == RoiShape.Circle)
+            else if (_lastHeatmapRoi.ShapeType == RoiShapeType.Circle)
             {
-                double cx = (rc.Left + rc.Width / 2.0) - disp.X;
-                double cy = (rc.Top + rc.Height / 2.0) - disp.Y;
-                double r = System.Math.Max(rc.Width, rc.Height) / 2.0;
-                clipGeo = new System.Windows.Media.EllipseGeometry(new WpfPoint(cx, cy), r, r);
+                double cx = rc.Left + rc.Width  / 2.0;
+                double cy = rc.Top  + rc.Height / 2.0;
+                double r  = System.Math.Max(rc.Width, rc.Height) / 2.0;
+                clipGeo = new System.Windows.Media.EllipseGeometry(new System.Windows.Point(cx, cy), r, r);
             }
             else
             {
-                clipGeo = new System.Windows.Media.RectangleGeometry(new WpfRect(ox, oy, rc.Width, rc.Height));
+                // Rectangular clip (ROI in canvas space)
+                clipGeo = new System.Windows.Media.RectangleGeometry(new System.Windows.Rect(rc.Left, rc.Top, rc.Width, rc.Height));
             }
 
             HeatmapOverlay.Clip = clipGeo;
@@ -1090,8 +1124,9 @@ namespace BrakeDiscInspector_GUI_ROI
                 await Dispatcher.InvokeAsync(() =>
                 {
                     _lastHeatmapBmp = heatmapSource;
-                    _lastHeatmapRoi = export.RoiImage.Clone();
+                    _lastHeatmapRoi = HeatmapRoiModel.From(export.RoiImage.Clone());
                     _heatmapOverlayOpacity = Math.Clamp(opacity, 0.0, 1.0);
+                    HeatmapOverlay.Opacity = _heatmapOverlayOpacity;
                     EnterAnalysisView();
 
                     UpdateHeatmapOverlayLayoutAndClip();
@@ -3695,7 +3730,7 @@ namespace BrakeDiscInspector_GUI_ROI
                     var heatBmp = WriteableBitmapConverter.ToWriteableBitmap(heat);
                     heatBmp.Freeze();
                     _lastHeatmapBmp = heatBmp;
-                    _lastHeatmapRoi = BuildCurrentRoiModel();
+                    _lastHeatmapRoi = HeatmapRoiModel.From(BuildCurrentRoiModel());
                     UpdateHeatmapOverlayLayoutAndClip();
                 }
                 else
