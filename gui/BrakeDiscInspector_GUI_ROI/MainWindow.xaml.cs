@@ -1165,23 +1165,13 @@ namespace BrakeDiscInspector_GUI_ROI
                     _heatmapOverlayOpacity = Math.Clamp(opacity, 0.0, 1.0);
                     EnterAnalysisView();
 
-                    var bmpSrc = heatmapSource;
+                    var heatmapBitmap = heatmapSource;
 
-                    // If your heatmap is grayscale and you want vivid colors, you may enable this line:
-                    // bmpSrc = ColorizeTurbo(bmpSrc);
+                    // Build robust, visible heatmap (keeps size; location/clipping code stays unchanged)
+                    _lastHeatmapBmp = BuildVisibleHeatmap(heatmapBitmap, useTurbo: true, gamma: 0.9);
 
-                    // Apply robust percentile stretch with gamma for visible boost
-                    _lastHeatmapBmp = EnhanceHeatmap(
-                        bmpSrc,
-                        lowPercent: 1.0,
-                        highPercent: 99.0,
-                        gamma: 0.85);
-
-                    // Ensure overlay is sufficiently visible (do not modify placement/alignment)
-                    if (HeatmapOverlay != null)
-                    {
-                        HeatmapOverlay.Opacity = 0.90; // increase visibility without changing position
-                    }
+                    // OPTIONAL: bump overlay opacity a bit (visual only)
+                    if (HeatmapOverlay != null) HeatmapOverlay.Opacity = 0.90;
 
                     UpdateHeatmapOverlayLayoutAndClip();
 
@@ -1217,139 +1207,177 @@ namespace BrakeDiscInspector_GUI_ROI
             UpdateHeatmapOverlayLayoutAndClip();
         }
 
-        // Fast percentile finder (0..255) on a single-channel histogram
-        private static byte PercentileFromHistogram(int[] hist, double pct)
+        // Map a [0,1] value to Turbo colormap (approx), returning (B,G,R) tuple
+        private static (byte B, byte G, byte R) TurboLUT(double t)
         {
-            if (hist == null || hist.Length != 256) return 0;
-            if (pct <= 0) return 0; if (pct >= 100) return 255;
-            long total = 0; for (int i = 0; i < 256; i++) total += hist[i];
-            if (total <= 0) return 0;
-            long target = (long)System.Math.Round((pct / 100.0) * (total - 1));
-            long cum = 0;
-            for (int i = 0; i < 256; i++)
-            {
-                cum += hist[i];
-                if (cum > target) return (byte)i;
-            }
-            return 255;
+            if (double.IsNaN(t)) t = 0;
+            if (t < 0) t = 0; if (t > 1) t = 1;
+            // Polynomial approximation of Turbo (McIlroy 2019), clamped
+            double r = 0.13572138 + 4.61539260*t - 42.66032258*t*t + 132.13108234*t*t*t - 152.94239396*t*t*t*t + 59.28637943*t*t*t*t*t;
+            double g = 0.09140261 + 2.19418839*t + 4.84296658*t*t - 14.18503333*t*t*t + 14.13815831*t*t*t*t - 4.21519726*t*t*t*t*t;
+            double b = 0.10667330 + 12.64194608*t - 60.58204836*t*t + 139.27510080*t*t*t - 150.21747690*t*t*t*t + 59.17006120*t*t*t*t*t;
+            r = System.Math.Clamp(r, 0.0, 1.0);
+            g = System.Math.Clamp(g, 0.0, 1.0);
+            b = System.Math.Clamp(b, 0.0, 1.0);
+            return ((byte)System.Math.Round(255*b), (byte)System.Math.Round(255*g), (byte)System.Math.Round(255*r));
         }
 
-        // Enhance heatmap contrast with percentile stretch + gamma on intensity.
-        // Accepts grayscale (8bpp) or color (BGRA32). Returns BGRA32 WriteableBitmap.
-        private static System.Windows.Media.Imaging.WriteableBitmap EnhanceHeatmap(
+        // Build a visible BGRA32 heatmap with robust min/max normalization and optional colorization
+        private static System.Windows.Media.Imaging.WriteableBitmap BuildVisibleHeatmap(
             System.Windows.Media.Imaging.BitmapSource src,
-            double lowPercent = 2.0, double highPercent = 98.0, double gamma = 1.0)
+            bool useTurbo = true,   // set true for vivid colors
+            double gamma = 0.9      // slight gamma to lift mid-tones
+        )
         {
             if (src == null) return null;
 
-            // Ensure BGRA32
             var fmt = src.Format;
-            var conv = (fmt != System.Windows.Media.PixelFormats.Bgra32)
-                ? new System.Windows.Media.Imaging.FormatConvertedBitmap(src, System.Windows.Media.PixelFormats.Bgra32, null, 0)
-                : src;
+            int w = src.PixelWidth, h = src.PixelHeight;
 
-            int w = conv.PixelWidth, h = conv.PixelHeight, stride = w * 4;
-            byte[] buf = new byte[h * stride];
-            conv.CopyPixels(buf, stride, 0);
-
-            // Build intensity histogram (perceived luminance from BGRA)
-            int[] hist = new int[256];
-            for (int y = 0, p = 0; y < h; y++)
+            // Extract raw buffer according to source format
+            if (fmt == System.Windows.Media.PixelFormats.Gray8)
             {
-                for (int x = 0; x < w; x++, p += 4)
+                int stride = w;
+                byte[] g8 = new byte[h * stride];
+                src.CopyPixels(g8, stride, 0);
+
+                // Compute min/max ignoring zeros
+                int minv = 255, maxv = 0, countNZ = 0;
+                for (int i = 0; i < g8.Length; i++)
                 {
-                    byte b = buf[p + 0], g = buf[p + 1], r = buf[p + 2];
-                    // Rec. 709 luma approximation
+                    int v = g8[i];
+                    if (v <= 0) continue;
+                    if (v < minv) minv = v;
+                    if (v > maxv) maxv = v;
+                    countNZ++;
+                }
+                if (countNZ == 0) { minv = 0; maxv = 0; }
+
+                double inv = (maxv > minv) ? 1.0 / (maxv - minv) : 0.0;
+
+                byte[] bgra = new byte[w*h*4];
+                for (int p = 0, q = 0; p < g8.Length; p++, q += 4)
+                {
+                    double t = (inv == 0.0) ? 0.0 : (g8[p] - minv) * inv;
+                    if (gamma != 1.0) t = System.Math.Pow(t, 1.0 / System.Math.Max(1e-6, gamma));
+                    if (useTurbo)
+                    {
+                        var (B,G,R) = TurboLUT(t);
+                        bgra[q+0] = B; bgra[q+1] = G; bgra[q+2] = R; bgra[q+3] = 255;
+                    }
+                    else
+                    {
+                        byte u = (byte)System.Math.Round(255.0 * t);
+                        bgra[q+0] = u; bgra[q+1] = u; bgra[q+2] = u; bgra[q+3] = 255;
+                    }
+                }
+
+                var wb = new System.Windows.Media.Imaging.WriteableBitmap(w, h, src.DpiX, src.DpiY,
+                    System.Windows.Media.PixelFormats.Bgra32, null);
+                wb.WritePixels(new System.Windows.Int32Rect(0, 0, w, h), bgra, w*4, 0);
+                wb.Freeze();
+                return wb;
+            }
+            else if (fmt == System.Windows.Media.PixelFormats.Gray16)
+            {
+                int stride = w * 2;
+                byte[] raw = new byte[h * stride];
+                src.CopyPixels(raw, stride, 0);
+
+                // Convert bytes→ushort (Little Endian)
+                int N = w*h;
+                ushort[] g16 = new ushort[N];
+                for (int i = 0, j = 0; i < N; i++, j += 2)
+                    g16[i] = (ushort)(raw[j] | (raw[j+1] << 8));
+
+                int minv = ushort.MaxValue, maxv = 0, countNZ = 0;
+                for (int i = 0; i < N; i++)
+                {
+                    int v = g16[i];
+                    if (v <= 0) continue;
+                    if (v < minv) minv = v;
+                    if (v > maxv) maxv = v;
+                    countNZ++;
+                }
+                if (countNZ == 0) { minv = 0; maxv = 0; }
+
+                double inv = (maxv > minv) ? 1.0 / (maxv - minv) : 0.0;
+
+                byte[] bgra = new byte[N*4];
+                for (int i = 0, q = 0; i < N; i++, q += 4)
+                {
+                    double t = (inv == 0.0) ? 0.0 : (g16[i] - minv) * inv;
+                    if (gamma != 1.0) t = System.Math.Pow(t, 1.0 / System.Math.Max(1e-6, gamma));
+                    if (useTurbo)
+                    {
+                        var (B,G,R) = TurboLUT(t);
+                        bgra[q+0] = B; bgra[q+1] = G; bgra[q+2] = R; bgra[q+3] = 255;
+                    }
+                    else
+                    {
+                        byte u = (byte)System.Math.Round(255.0 * t);
+                        bgra[q+0] = u; bgra[q+1] = u; bgra[q+2] = u; bgra[q+3] = 255;
+                    }
+                }
+
+                var wb = new System.Windows.Media.Imaging.WriteableBitmap(w, h, src.DpiX, src.DpiY,
+                    System.Windows.Media.PixelFormats.Bgra32, null);
+                wb.WritePixels(new System.Windows.Int32Rect(0, 0, w, h), bgra, w*4, 0);
+                wb.Freeze();
+                return wb;
+            }
+            else
+            {
+                // Convert to BGRA32 and compute luminance min/max ignoring zeros
+                var conv = (fmt != System.Windows.Media.PixelFormats.Bgra32)
+                    ? new System.Windows.Media.Imaging.FormatConvertedBitmap(src, System.Windows.Media.PixelFormats.Bgra32, null, 0)
+                    : src;
+
+                int stride = w * 4;
+                byte[] buf = new byte[h * stride];
+                conv.CopyPixels(buf, stride, 0);
+
+                int minv = 255, maxv = 0, countNZ = 0;
+                for (int q = 0; q < buf.Length; q += 4)
+                {
+                    // premultiplied alpha is fine: we treat zeros as background
+                    byte b = buf[q+0], g = buf[q+1], r = buf[q+2];
                     int lum = (int)System.Math.Round(0.2126 * r + 0.7152 * g + 0.0722 * b);
-                    if (lum < 0) lum = 0; if (lum > 255) lum = 255;
-                    hist[lum]++;
+                    if (lum <= 0) continue;
+                    if (lum < minv) minv = lum;
+                    if (lum > maxv) maxv = lum;
+                    countNZ++;
                 }
-            }
+                if (countNZ == 0) { minv = 0; maxv = 0; }
 
-            // Percentile bounds
-            byte lo = PercentileFromHistogram(hist, lowPercent);
-            byte hi = PercentileFromHistogram(hist, highPercent);
-            if (hi <= lo) { lo = 0; hi = 255; }
+                double inv = (maxv > minv) ? 1.0 / (maxv - minv) : 0.0;
 
-            // Precompute LUT for contrast stretch + gamma
-            double inv = 1.0 / System.Math.Max(1, hi - lo);
-            byte[] lut = new byte[256];
-            for (int v = 0; v < 256; v++)
-            {
-                double t = (v - lo) * inv; if (t < 0) t = 0; if (t > 1) t = 1;
-                if (gamma != 1.0) t = System.Math.Pow(t, 1.0 / System.Math.Max(1e-6, gamma));
-                int u = (int)System.Math.Round(255.0 * t);
-                if (u < 0) u = 0; if (u > 255) u = 255;
-                lut[v] = (byte)u;
-            }
-
-            // Apply LUT to RGB channels (preserve alpha)
-            for (int y = 0, p = 0; y < h; y++)
-            {
-                for (int x = 0; x < w; x++, p += 4)
+                byte[] bgra = new byte[h * stride];
+                for (int q = 0; q < buf.Length; q += 4)
                 {
-                    buf[p + 0] = lut[buf[p + 0]]; // B
-                    buf[p + 1] = lut[buf[p + 1]]; // G
-                    buf[p + 2] = lut[buf[p + 2]]; // R
-                    // buf[p + 3] alpha untouched
+                    byte b = buf[q+0], g = buf[q+1], r = buf[q+2];
+                    int lum = (int)System.Math.Round(0.2126 * r + 0.7152 * g + 0.0722 * b);
+                    double t = (inv == 0.0) ? 0.0 : (lum - minv) * inv;
+                    if (t < 0) t = 0; if (t > 1) t = 1;
+                    if (gamma != 1.0) t = System.Math.Pow(t, 1.0 / System.Math.Max(1e-6, gamma));
+                    if (useTurbo)
+                    {
+                        var (B,G,R) = TurboLUT(t);
+                        bgra[q+0] = B; bgra[q+1] = G; bgra[q+2] = R; bgra[q+3] = 255;
+                    }
+                    else
+                    {
+                        byte u = (byte)System.Math.Round(255.0 * t);
+                        bgra[q+0] = u; bgra[q+1] = u; bgra[q+2] = u; bgra[q+3] = 255;
+                    }
                 }
+
+                var wb = new System.Windows.Media.Imaging.WriteableBitmap(w, h, conv.DpiX, conv.DpiY,
+                    System.Windows.Media.PixelFormats.Bgra32, null);
+                wb.WritePixels(new System.Windows.Int32Rect(0, 0, w, h), bgra, w*4, 0);
+                wb.Freeze();
+                return wb;
             }
-
-            var wb = new System.Windows.Media.Imaging.WriteableBitmap(w, h, conv.DpiX, conv.DpiY,
-                System.Windows.Media.PixelFormats.Bgra32, null);
-            wb.WritePixels(new System.Windows.Int32Rect(0, 0, w, h), buf, stride, 0);
-            wb.Freeze();
-            return wb;
-        }
-
-        // Optional: apply a vivid false-color LUT (Turbo) to a grayscale map for higher contrast.
-        // If src is already colored, you can skip this; otherwise call before EnhanceHeatmap.
-        private static System.Windows.Media.Imaging.WriteableBitmap ColorizeTurbo(
-            System.Windows.Media.Imaging.BitmapSource gray8)
-        {
-            if (gray8 == null) return null;
-            var conv = (gray8.Format != System.Windows.Media.PixelFormats.Gray8)
-                ? new System.Windows.Media.Imaging.FormatConvertedBitmap(gray8, System.Windows.Media.PixelFormats.Gray8, null, 0)
-                : gray8;
-
-            int w = conv.PixelWidth, h = conv.PixelHeight, stride = w;
-            byte[] g = new byte[h * stride];
-            conv.CopyPixels(g, stride, 0);
-
-            // Turbo colormap (approx) LUT (r,g,b)
-            byte[] turboR = new byte[256];
-            byte[] turboG = new byte[256];
-            byte[] turboB = new byte[256];
-            for (int i = 0; i < 256; i++)
-            {
-                double t = i / 255.0;
-                double r = 0.13572138 + 4.61539260*t - 42.66032258*t*t + 132.13108234*t*t*t - 152.94239396*t*t*t*t + 59.28637943*t*t*t*t*t;
-                double gg = 0.09140261 + 2.19418839*t + 4.84296658*t*t - 14.18503333*t*t*t + 14.13815831*t*t*t*t - 4.21519726*t*t*t*t*t;
-                double b = 0.10667330 + 12.64194608*t - 60.58204836*t*t + 139.27510080*t*t*t - 150.21747690*t*t*t*t + 59.17006120*t*t*t*t*t;
-                int R = (int)System.Math.Round(255.0 * System.Math.Clamp(r, 0.0, 1.0));
-                int G = (int)System.Math.Round(255.0 * System.Math.Clamp(gg, 0.0, 1.0));
-                int B = (int)System.Math.Round(255.0 * System.Math.Clamp(b, 0.0, 1.0));
-                turboR[i] = (byte)R; turboG[i] = (byte)G; turboB[i] = (byte)B;
-            }
-
-            byte[] bgra = new byte[w*h*4];
-            for (int y = 0, p = 0, q = 0; y < h; y++)
-            {
-                for (int x = 0; x < w; x++, p++, q += 4)
-                {
-                    byte v = g[p];
-                    bgra[q+0] = turboB[v];
-                    bgra[q+1] = turboG[v];
-                    bgra[q+2] = turboR[v];
-                    bgra[q+3] = 255;
-                }
-            }
-
-            var wb = new System.Windows.Media.Imaging.WriteableBitmap(w, h, conv.DpiX, conv.DpiY,
-                System.Windows.Media.PixelFormats.Bgra32, null);
-            wb.WritePixels(new System.Windows.Int32Rect(0, 0, w, h), bgra, w*4, 0);
-            wb.Freeze();
-            return wb;
         }
 
 
@@ -3904,23 +3932,13 @@ namespace BrakeDiscInspector_GUI_ROI
                     heatBmp.Freeze();
                     _lastHeatmapRoi = HeatmapRoiModel.From(BuildCurrentRoiModel());
 
-                    var bmpSrc = heatBmp;
+                    var heatmapBitmap = heatBmp;
 
-                    // If your heatmap is grayscale and you want vivid colors, you may enable this line:
-                    // bmpSrc = ColorizeTurbo(bmpSrc);
+                    // Build robust, visible heatmap (keeps size; location/clipping code stays unchanged)
+                    _lastHeatmapBmp = BuildVisibleHeatmap(heatmapBitmap, useTurbo: true, gamma: 0.9);
 
-                    // Apply robust percentile stretch with gamma for visible boost
-                    _lastHeatmapBmp = EnhanceHeatmap(
-                        bmpSrc,
-                        lowPercent: 1.0,
-                        highPercent: 99.0,
-                        gamma: 0.85);
-
-                    // Ensure overlay is sufficiently visible (do not modify placement/alignment)
-                    if (HeatmapOverlay != null)
-                    {
-                        HeatmapOverlay.Opacity = 0.90; // increase visibility without changing position
-                    }
+                    // OPTIONAL: bump overlay opacity a bit (visual only)
+                    if (HeatmapOverlay != null) HeatmapOverlay.Opacity = 0.90;
 
                     UpdateHeatmapOverlayLayoutAndClip();
 
