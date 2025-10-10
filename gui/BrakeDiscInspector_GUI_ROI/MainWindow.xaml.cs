@@ -182,6 +182,31 @@ namespace BrakeDiscInspector_GUI_ROI
 
             public RoiShapeType ShapeType => (RoiShapeType)Shape;
         }
+        // ---------- Logging helpers ----------
+        private static readonly string HeatmapLogPath = @"C:\BDI\logs\gui_heatmap.log";
+
+        private static void LogHeatmap(string msg)
+        {
+            try
+            {
+                var dir = System.IO.Path.GetDirectoryName(HeatmapLogPath);
+                if (!System.IO.Directory.Exists(dir)) System.IO.Directory.CreateDirectory(dir!);
+                System.IO.File.AppendAllText(HeatmapLogPath,
+                    $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}] {msg}\r\n");
+            }
+            catch { /* swallow logging errors */ }
+        }
+
+        private static string RoiDebug(RoiModel r)
+        {
+            if (r == null) return "<null>";
+            return $"Role={r.Role}, Shape={r.ShapeType}, Img(L={r.Left},T={r.Top},W={r.Width},H={r.Height},CX={r.CX},CY={r.CY},R={r.R},Rin={r.RInner})";
+        }
+
+        private static string RectDbg(System.Windows.Rect rc)
+            => $"(X={rc.X:F2},Y={rc.Y:F2},W={rc.Width:F2},H={rc.Height:F2})";
+        // ---------- End helpers ----------
+
 
         private void UpdateRoiLabelPosition(Shape shape)
         {
@@ -1082,28 +1107,53 @@ namespace BrakeDiscInspector_GUI_ROI
 
         private void UpdateHeatmapOverlayLayoutAndClip()
         {
+            LogHeatmap("---- UpdateHeatmapOverlayLayoutAndClip BEGIN ----");
+
             if (HeatmapOverlay == null)
+            {
+                LogHeatmap("HeatmapOverlay control is null.");
+                LogHeatmap("---- UpdateHeatmapOverlayLayoutAndClip END ----");
                 return;
+            }
 
             if (_lastHeatmapBmp == null || _lastHeatmapRoi == null)
             {
+                LogHeatmap("No heatmap or ROI to overlay.");
                 HeatmapOverlay.Source = null;
                 HeatmapOverlay.Visibility = Visibility.Collapsed;
                 HeatmapOverlay.Clip = null;
+                LogHeatmap("Clip is null (no clipping).");
+                LogHeatmap("---- UpdateHeatmapOverlayLayoutAndClip END ----");
                 return;
+            }
+
+            if (_layout?.Master1Pattern != null && _lastHeatmapRoi != null)
+            {
+                bool mismatch = _layout.Master1Pattern.Shape != _lastHeatmapRoi.ShapeType;
+                LogHeatmap($"Model vs Heatmap ROI shape mismatch? {mismatch} (Model={_layout.Master1Pattern.Shape}, HeatmapROI={_lastHeatmapRoi.ShapeType})");
+            }
+            if (_layout?.Master2Pattern != null && _lastHeatmapRoi != null)
+            {
+                bool mismatch = _layout.Master2Pattern.Shape != _lastHeatmapRoi.ShapeType;
+                LogHeatmap($"Model vs Heatmap ROI shape mismatch? {mismatch} (Model={_layout.Master2Pattern.Shape}, HeatmapROI={_lastHeatmapRoi.ShapeType})");
             }
 
             // 1) Align overlay to the displayed image rectangle
             var disp = GetImageDisplayRect(); // rectangle of the image on screen (canvas coords)
+            LogHeatmap($"DisplayRect = {RectDbg(disp)}");
             HeatmapOverlay.Source = _lastHeatmapBmp;
             HeatmapOverlay.Width  = System.Math.Max(1.0, disp.Width);
             HeatmapOverlay.Height = System.Math.Max(1.0, disp.Height);
             HeatmapOverlay.Margin = new System.Windows.Thickness(disp.X, disp.Y, 0, 0);
             HeatmapOverlay.Visibility = System.Windows.Visibility.Visible;
 
+            LogHeatmap("ROI (image space): " + RoiDebug(_lastHeatmapRoi));
+
             // 2) Build CLIP geometry in OVERLAY-LOCAL coords
             // IMPORTANT: Use ROI CANVAS coordinates DIRECTLY. Do NOT subtract disp.X/disp.Y again.
+            LogHeatmap("Converting ROI to canvas space...");
             var rc = ImageToCanvas(_lastHeatmapRoi); // ROI converted to canvas/UI space
+            LogHeatmap($"ROI (canvas space) rc = {RectDbg(new System.Windows.Rect(rc.Left, rc.Top, rc.Width, rc.Height))}");
 
             // Rectangular fallback (used also by non-circular ROIs)
             System.Windows.Media.Geometry clipGeo;
@@ -1122,6 +1172,7 @@ namespace BrakeDiscInspector_GUI_ROI
 
                 // Inner radius already in canvas units if provided on rc; otherwise convert from image space earlier
                 double innerR = System.Math.Max(0.0, System.Math.Min(rc.RInner, outerR));
+                LogHeatmap($"Clip center=(cx={cx:F2},cy={cy:F2}), outerR={outerR:F2}, innerR={rc.RInner:F2}");
 
                 var outer = new System.Windows.Media.EllipseGeometry(new System.Windows.Point(cx, cy), outerR, outerR);
                 var inner = new System.Windows.Media.EllipseGeometry(new System.Windows.Point(cx, cy), innerR, innerR);
@@ -1133,6 +1184,8 @@ namespace BrakeDiscInspector_GUI_ROI
                 double cx = rc.Left + rc.Width  / 2.0;
                 double cy = rc.Top  + rc.Height / 2.0;
                 double r  = System.Math.Max(rc.Width, rc.Height) / 2.0;
+                double outerR = r;
+                LogHeatmap($"Clip center=(cx={cx:F2},cy={cy:F2}), outerR={outerR:F2}, innerR={rc.RInner:F2}");
                 clipGeo = new System.Windows.Media.EllipseGeometry(new System.Windows.Point(cx, cy), r, r);
             }
             else
@@ -1142,6 +1195,18 @@ namespace BrakeDiscInspector_GUI_ROI
             }
 
             HeatmapOverlay.Clip = clipGeo;
+
+            if (HeatmapOverlay?.Clip != null)
+            {
+                var bounds = HeatmapOverlay.Clip.Bounds;
+                LogHeatmap($"Clip.Bounds = {RectDbg(bounds)}");
+            }
+            else
+            {
+                LogHeatmap("Clip is null (no clipping).");
+            }
+
+            LogHeatmap("---- UpdateHeatmapOverlayLayoutAndClip END ----");
         }
 
         private async Task ShowHeatmapOverlayAsync(Workflow.RoiExportResult export, byte[] heatmapBytes, double opacity)
@@ -1170,6 +1235,15 @@ namespace BrakeDiscInspector_GUI_ROI
                     // Build robust, visible heatmap (keeps size; location/clipping code stays unchanged)
                     _lastHeatmapBmp = BuildVisibleHeatmap(heatmapBitmap, useTurbo: true, gamma: 0.9);
 
+                    if (_lastHeatmapBmp != null)
+                    {
+                        LogHeatmap($"Heatmap Source: {_lastHeatmapBmp.PixelWidth}x{_lastHeatmapBmp.PixelHeight}, Fmt={_lastHeatmapBmp.Format}");
+                    }
+                    else
+                    {
+                        LogHeatmap("Heatmap Source: <null>");
+                    }
+
                     // OPTIONAL: bump overlay opacity a bit (visual only)
                     if (HeatmapOverlay != null) HeatmapOverlay.Opacity = 0.90;
 
@@ -1194,6 +1268,7 @@ namespace BrakeDiscInspector_GUI_ROI
 
             _lastHeatmapBmp = null;
             _lastHeatmapRoi = null;
+            LogHeatmap("Heatmap Source: <null>");
             UpdateHeatmapOverlayLayoutAndClip();
         }
 
@@ -3937,6 +4012,15 @@ namespace BrakeDiscInspector_GUI_ROI
                     // Build robust, visible heatmap (keeps size; location/clipping code stays unchanged)
                     _lastHeatmapBmp = BuildVisibleHeatmap(heatmapBitmap, useTurbo: true, gamma: 0.9);
 
+                    if (_lastHeatmapBmp != null)
+                    {
+                        LogHeatmap($"Heatmap Source: {_lastHeatmapBmp.PixelWidth}x{_lastHeatmapBmp.PixelHeight}, Fmt={_lastHeatmapBmp.Format}");
+                    }
+                    else
+                    {
+                        LogHeatmap("Heatmap Source: <null>");
+                    }
+
                     // OPTIONAL: bump overlay opacity a bit (visual only)
                     if (HeatmapOverlay != null) HeatmapOverlay.Opacity = 0.90;
 
@@ -3948,6 +4032,7 @@ namespace BrakeDiscInspector_GUI_ROI
                 {
                     _lastHeatmapBmp = null;
                     _lastHeatmapRoi = null;
+                    LogHeatmap("Heatmap Source: <null>");
                     UpdateHeatmapOverlayLayoutAndClip();
                 }
 
