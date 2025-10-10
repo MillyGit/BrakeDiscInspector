@@ -200,7 +200,32 @@ namespace BrakeDiscInspector_GUI_ROI
         private static string RoiDebug(RoiModel r)
         {
             if (r == null) return "<null>";
-            return $"Role={r.Role}, Shape={r.ShapeType}, Img(L={r.Left},T={r.Top},W={r.Width},H={r.Height},CX={r.CX},CY={r.CY},R={r.R},Rin={r.RInner})";
+            string shape = InferShapeName(r);
+            return $"Role={r.Role}, Shape={shape}, Img(L={r.Left},T={r.Top},W={r.Width},H={r.Height},CX={r.CX},CY={r.CY},R={r.R},Rin={r.RInner})";
+        }
+
+        private static string InferShapeName(RoiModel r)
+        {
+            try
+            {
+                // Annulus if both outer and inner radii are present/positive
+                if (r.RInner > 0 && r.R > 0) return "Annulus";
+
+                // Circle if we have a positive radius OR bbox looks square-ish
+                if (r.R > 0) return "Circle";
+
+                // As a fallback, detect square-ish bbox as circle, else rectangle
+                // (Tolerance = 2% of the larger side)
+                double w = r.Width, h = r.Height;
+                double tol = 0.02 * System.Math.Max(System.Math.Abs(w), System.Math.Abs(h));
+                if (System.Math.Abs(w - h) <= tol && w > 0 && h > 0) return "Circle";
+
+                return "Rectangle";
+            }
+            catch
+            {
+                return "Unknown";
+            }
         }
 
         private static string RectDbg(System.Windows.Rect rc)
@@ -1129,13 +1154,17 @@ namespace BrakeDiscInspector_GUI_ROI
 
             if (_layout?.Master1Pattern != null && _lastHeatmapRoi != null)
             {
-                bool mismatch = _layout.Master1Pattern.Shape != _lastHeatmapRoi.ShapeType;
-                LogHeatmap($"Model vs Heatmap ROI shape mismatch? {mismatch} (Model={_layout.Master1Pattern.Shape}, HeatmapROI={_lastHeatmapRoi.ShapeType})");
+                string modelShape = InferShapeName(_layout.Master1Pattern);
+                string heatmapShape = InferShapeName(_lastHeatmapRoi);
+                bool mismatch = modelShape != heatmapShape;
+                LogHeatmap($"Model vs Heatmap ROI shape mismatch? {mismatch} (Model={modelShape}, HeatmapROI={heatmapShape})");
             }
             if (_layout?.Master2Pattern != null && _lastHeatmapRoi != null)
             {
-                bool mismatch = _layout.Master2Pattern.Shape != _lastHeatmapRoi.ShapeType;
-                LogHeatmap($"Model vs Heatmap ROI shape mismatch? {mismatch} (Model={_layout.Master2Pattern.Shape}, HeatmapROI={_lastHeatmapRoi.ShapeType})");
+                string modelShape = InferShapeName(_layout.Master2Pattern);
+                string heatmapShape = InferShapeName(_lastHeatmapRoi);
+                bool mismatch = modelShape != heatmapShape;
+                LogHeatmap($"Model vs Heatmap ROI shape mismatch? {mismatch} (Model={modelShape}, HeatmapROI={heatmapShape})");
             }
 
             // 1) Align overlay to the displayed image rectangle
