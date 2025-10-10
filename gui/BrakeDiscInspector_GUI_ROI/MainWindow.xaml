@@ -26,7 +26,10 @@
                         <Image x:Name="ImgMain" Stretch="Uniform" Panel.ZIndex="0" />
                         <Image x:Name="HeatmapOverlay"
                                IsHitTestVisible="False"
-                               Stretch="Uniform"
+                               Stretch="Fill"
+                               HorizontalAlignment="Left"
+                               VerticalAlignment="Top"
+                               SnapsToDevicePixels="True"
                                Opacity="0.75"
                                Visibility="Collapsed"
                                Panel.ZIndex="1"/>

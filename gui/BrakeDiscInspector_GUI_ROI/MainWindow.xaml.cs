@@ -1152,24 +1152,26 @@ namespace BrakeDiscInspector_GUI_ROI
                 return;
             }
 
-            // 1) Align overlay to the displayed image rectangle
-            var disp = GetImageDisplayRect(); // rectangle of the image on screen (canvas coords)
-            LogHeatmap($"DisplayRect = {RectDbg(disp)}");
-            HeatmapOverlay.Source = _lastHeatmapBmp;
-            HeatmapOverlay.Width  = System.Math.Max(1.0, disp.Width);
-            HeatmapOverlay.Height = System.Math.Max(1.0, disp.Height);
-            HeatmapOverlay.Visibility = System.Windows.Visibility.Visible;
-
             LogHeatmap("ROI (image space): " + RoiDebug(_lastHeatmapRoi));
 
-            // 2) Build CLIP geometry in OVERLAY-LOCAL coords
-            // IMPORTANT: Use ROI CANVAS coordinates DIRECTLY. Do NOT subtract disp.X/disp.Y again.
+            // 1) Convert ROI to CANVAS-space rectangle
             LogHeatmap("Converting ROI to canvas space...");
-            var rc = ImageToCanvas(_lastHeatmapRoi); // ROI converted to canvas/UI space
+            var rc = ImageToCanvas(_lastHeatmapRoi); // rc.Left/Top/Width/Height in canvas units
             LogHeatmap($"ROI (canvas space) rc = {RectDbg(new System.Windows.Rect(rc.Left, rc.Top, rc.Width, rc.Height))}");
 
-            // --- begin mismatch detection block ---
-            bool skipClip = false;
+            // 2) Anchor overlay to ROI rect (canvas absolute via Margin)
+            HeatmapOverlay.Source = _lastHeatmapBmp;
+            HeatmapOverlay.Width  = rc.Width;
+            HeatmapOverlay.Height = rc.Height;
+            HeatmapOverlay.Margin = new System.Windows.Thickness(rc.Left, rc.Top, 0, 0);
+            HeatmapOverlay.Visibility = System.Windows.Visibility.Visible;
+
+            // 3) Build Clip in OVERLAY-LOCAL coordinates (0..Width, 0..Height)
+            //    Determine shape ratios from ROI model
+            System.Windows.Media.Geometry clipGeo = null;
+
+            // Optional: role-based mismatch detection (keep existing skipClip logic if you already added it)
+            bool skipClip = false; // keep your previous mismatch logic if present to possibly set this true
             string heatmapShape = InferShapeName(_lastHeatmapRoi);
             string modelShape = null;
             RoiModel modelRoi = null;
@@ -1207,58 +1209,48 @@ namespace BrakeDiscInspector_GUI_ROI
             }
             // --- end mismatch detection block ---
 
-            // Rectangular fallback (used also by non-circular ROIs)
-            System.Windows.Media.Geometry clipGeo;
+            // Compute outer ellipse based on the overlay bounds:
+            // Note: overlay is exactly the ROI bounding box. "Outer radius" is half of the max side.
+            double ow = HeatmapOverlay.Width;
+            double oh = HeatmapOverlay.Height;
+            double outerR = System.Math.Max(ow, oh) * 0.5;
+            var center = new System.Windows.Point(ow * 0.5, oh * 0.5);
 
-            // If your RoiModel exposes shape info, branch accordingly; otherwise, rectangular clip is fine.
-            // The key is to NOT subtract disp.X/disp.Y here.
-
-            if (_lastHeatmapRoi.ShapeType == RoiShapeType.Annulus)
+            // If ROI has both R and RInner > 0 => Annulus
+            if (!skipClip && _lastHeatmapRoi.R > 0 && _lastHeatmapRoi.RInner > 0)
             {
-                // Center and radii in CANVAS space
-                double cx = rc.Left + rc.Width  / 2.0;
-                double cy = rc.Top  + rc.Height / 2.0;
+                // Inner radius is proportional to outer radius by model ratio
+                double innerR = outerR * (_lastHeatmapRoi.RInner / _lastHeatmapRoi.R);
 
-                // Outer radius from bbox (assumed square in canvas units)
-                double outerR = System.Math.Max(rc.Width, rc.Height) / 2.0;
-
-                // Inner radius already in canvas units if provided on rc; otherwise convert from image space earlier
-                double innerR = System.Math.Max(0.0, System.Math.Min(rc.RInner, outerR));
-                LogHeatmap($"Clip center=(cx={cx:F2},cy={cy:F2}), outerR={outerR:F2}, innerR={rc.RInner:F2}");
-
-                var outer = new System.Windows.Media.EllipseGeometry(new System.Windows.Point(cx, cy), outerR, outerR);
-                var inner = new System.Windows.Media.EllipseGeometry(new System.Windows.Point(cx, cy), innerR, innerR);
-
+                var outer = new System.Windows.Media.EllipseGeometry(center, outerR, outerR);
+                var inner = new System.Windows.Media.EllipseGeometry(center, innerR, innerR);
                 clipGeo = new System.Windows.Media.CombinedGeometry(System.Windows.Media.GeometryCombineMode.Exclude, outer, inner);
             }
-            else if (_lastHeatmapRoi.ShapeType == RoiShapeType.Circle)
+            // If ROI has only R > 0 => Circle
+            else if (!skipClip && _lastHeatmapRoi.R > 0)
             {
-                double cx = rc.Left + rc.Width  / 2.0;
-                double cy = rc.Top  + rc.Height / 2.0;
-                double r  = System.Math.Max(rc.Width, rc.Height) / 2.0;
-                double outerR = r;
-                LogHeatmap($"Clip center=(cx={cx:F2},cy={cy:F2}), outerR={outerR:F2}, innerR={rc.RInner:F2}");
-                clipGeo = new System.Windows.Media.EllipseGeometry(new System.Windows.Point(cx, cy), r, r);
+                clipGeo = new System.Windows.Media.EllipseGeometry(center, outerR, outerR);
             }
+            // Otherwise treat as rectangle ROI (no need to clip; the overlay bounds already match)
             else
             {
-                // Rectangular clip (ROI in canvas space)
-                clipGeo = new System.Windows.Media.RectangleGeometry(new System.Windows.Rect(rc.Left, rc.Top, rc.Width, rc.Height));
+                // leave clipGeo = null
+                // clipGeo = new System.Windows.Media.RectangleGeometry(new System.Windows.Rect(0, 0, ow, oh));
             }
 
-            if (skipClip)
-                HeatmapOverlay.Clip = null; // show full heatmap; clipping disabled due to mismatch
-            else
-                HeatmapOverlay.Clip = clipGeo;
+            // 4) Apply Clip (or disable if mismatch logic set skipClip)
+            HeatmapOverlay.Clip = skipClip ? null : clipGeo;
 
-            if (HeatmapOverlay?.Clip != null)
+            // 5) (Optional) Log overlay rect in canvas space & local clip bounds
+            LogHeatmap($"Overlay anchored to ROI: Left={rc.Left:F2}, Top={rc.Top:F2}, W={rc.Width:F2}, H={rc.Height:F2}");
+            if (HeatmapOverlay.Clip != null)
             {
-                var bounds = HeatmapOverlay.Clip.Bounds;
-                LogHeatmap($"Clip.Bounds = (X={bounds.X:F2},Y={bounds.Y:F2},W={bounds.Width:F2},H={bounds.Height:F2})");
+                var b = HeatmapOverlay.Clip.Bounds;
+                LogHeatmap($"Overlay-local Clip.Bounds = (X={b.X:F2},Y={b.Y:F2},W={b.Width:F2},H={b.Height:F2})");
             }
             else
             {
-                LogHeatmap("Clip disabled (null) — full heatmap shown.");
+                LogHeatmap("Overlay Clip = null");
             }
 
             LogHeatmap("---- UpdateHeatmapOverlayLayoutAndClip END ----");
