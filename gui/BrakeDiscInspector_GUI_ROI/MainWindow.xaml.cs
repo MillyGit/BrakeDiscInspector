@@ -1152,21 +1152,6 @@ namespace BrakeDiscInspector_GUI_ROI
                 return;
             }
 
-            if (_layout?.Master1Pattern != null && _lastHeatmapRoi != null)
-            {
-                string modelShape = InferShapeName(_layout.Master1Pattern);
-                string heatmapShape = InferShapeName(_lastHeatmapRoi);
-                bool mismatch = modelShape != heatmapShape;
-                LogHeatmap($"Model vs Heatmap ROI shape mismatch? {mismatch} (Model={modelShape}, HeatmapROI={heatmapShape})");
-            }
-            if (_layout?.Master2Pattern != null && _lastHeatmapRoi != null)
-            {
-                string modelShape = InferShapeName(_layout.Master2Pattern);
-                string heatmapShape = InferShapeName(_lastHeatmapRoi);
-                bool mismatch = modelShape != heatmapShape;
-                LogHeatmap($"Model vs Heatmap ROI shape mismatch? {mismatch} (Model={modelShape}, HeatmapROI={heatmapShape})");
-            }
-
             // 1) Align overlay to the displayed image rectangle
             var disp = GetImageDisplayRect(); // rectangle of the image on screen (canvas coords)
             LogHeatmap($"DisplayRect = {RectDbg(disp)}");
@@ -1183,6 +1168,45 @@ namespace BrakeDiscInspector_GUI_ROI
             LogHeatmap("Converting ROI to canvas space...");
             var rc = ImageToCanvas(_lastHeatmapRoi); // ROI converted to canvas/UI space
             LogHeatmap($"ROI (canvas space) rc = {RectDbg(new System.Windows.Rect(rc.Left, rc.Top, rc.Width, rc.Height))}");
+
+            // --- begin mismatch detection block ---
+            bool skipClip = false;
+            string heatmapShape = InferShapeName(_lastHeatmapRoi);
+            string modelShape = null;
+            RoiModel modelRoi = null;
+
+            // Choose the expected model ROI by role
+            try
+            {
+                // If the heatmap is for Master 1 inspection, compare against Master1Pattern
+                if (_lastHeatmapRoi.Role == RoiRole.Master1Search)
+                    modelRoi = _layout?.Master1Pattern;
+                // If for Master 2 inspection, compare against Master2Pattern
+                else if (_lastHeatmapRoi.Role == RoiRole.Master2Search)
+                    modelRoi = _layout?.Master2Pattern;
+                // For final Inspection, we may not have a single model to compare; leave null
+            }
+            catch { /* ignore */ }
+
+            if (modelRoi != null)
+            {
+                modelShape = InferShapeName(modelRoi);
+                if (!string.Equals(modelShape, heatmapShape, StringComparison.OrdinalIgnoreCase))
+                {
+                    skipClip = true;
+                    LogHeatmap($"[WARN] ROI shape mismatch — model={modelShape}, heatmap={heatmapShape}. " +
+                               "Skipping clip to show full heatmap.");
+                }
+                else
+                {
+                    LogHeatmap($"ROI shape match — {heatmapShape}.");
+                }
+            }
+            else
+            {
+                LogHeatmap($"No model ROI available for mismatch check (heatmap shape={heatmapShape}).");
+            }
+            // --- end mismatch detection block ---
 
             // Rectangular fallback (used also by non-circular ROIs)
             System.Windows.Media.Geometry clipGeo;
@@ -1223,16 +1247,19 @@ namespace BrakeDiscInspector_GUI_ROI
                 clipGeo = new System.Windows.Media.RectangleGeometry(new System.Windows.Rect(rc.Left, rc.Top, rc.Width, rc.Height));
             }
 
-            HeatmapOverlay.Clip = clipGeo;
+            if (skipClip)
+                HeatmapOverlay.Clip = null; // show full heatmap; clipping disabled due to mismatch
+            else
+                HeatmapOverlay.Clip = clipGeo;
 
             if (HeatmapOverlay?.Clip != null)
             {
                 var bounds = HeatmapOverlay.Clip.Bounds;
-                LogHeatmap($"Clip.Bounds = {RectDbg(bounds)}");
+                LogHeatmap($"Clip.Bounds = (X={bounds.X:F2},Y={bounds.Y:F2},W={bounds.Width:F2},H={bounds.Height:F2})");
             }
             else
             {
-                LogHeatmap("Clip is null (no clipping).");
+                LogHeatmap("Clip disabled (null) — full heatmap shown.");
             }
 
             LogHeatmap("---- UpdateHeatmapOverlayLayoutAndClip END ----");
