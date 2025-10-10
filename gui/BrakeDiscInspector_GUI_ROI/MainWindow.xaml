@@ -4,7 +4,8 @@
         xmlns:local="clr-namespace:BrakeDiscInspector_GUI_ROI"
         xmlns:workflow="clr-namespace:BrakeDiscInspector_GUI_ROI.Workflow"
         Title="Inspector — Masters &amp; ROI" Height="900" Width="1400"
-        WindowStartupLocation="CenterScreen" Background="#0E0E10">
+        WindowStartupLocation="CenterScreen" Background="#0E0E10"
+        UseLayoutRounding="True">
 
     <Grid>
         <Grid.ColumnDefinitions>
