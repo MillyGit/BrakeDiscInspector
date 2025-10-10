@@ -1159,12 +1159,32 @@ namespace BrakeDiscInspector_GUI_ROI
             var rc = ImageToCanvas(_lastHeatmapRoi); // rc.Left/Top/Width/Height in canvas units
             LogHeatmap($"ROI (canvas space) rc = {RectDbg(new System.Windows.Rect(rc.Left, rc.Top, rc.Width, rc.Height))}");
 
-            // 2) Anchor overlay to ROI rect (canvas absolute via Margin)
+            // 2) Anchor overlay to ROI rect (canvas absolute via Canvas coords when available)
+            // Size to ROI rect
             HeatmapOverlay.Source = _lastHeatmapBmp;
             HeatmapOverlay.Width  = rc.Width;
             HeatmapOverlay.Height = rc.Height;
-            HeatmapOverlay.Margin = new System.Windows.Thickness(rc.Left, rc.Top, 0, 0);
+
+            // Prefer Canvas positioning to avoid Margin rounding drift. Fallback to Margin
+            // only if parent is not a Canvas.
+            bool parentIsCanvas = System.Windows.Media.VisualTreeHelper.GetParent(HeatmapOverlay) is System.Windows.Controls.Canvas;
+            if (parentIsCanvas)
+            {
+                // Clear Margin so Canvas.Left/Top are not compounded
+                HeatmapOverlay.Margin = new System.Windows.Thickness(0);
+                System.Windows.Controls.Canvas.SetLeft(HeatmapOverlay, rc.Left);
+                System.Windows.Controls.Canvas.SetTop(HeatmapOverlay,  rc.Top);
+            }
+            else
+            {
+                // Fallback for non-Canvas parent
+                HeatmapOverlay.Margin = new System.Windows.Thickness(rc.Left, rc.Top, 0, 0);
+            }
+
             HeatmapOverlay.Visibility = System.Windows.Visibility.Visible;
+            LogHeatmap($"ParentIsCanvas={parentIsCanvas}, rc=({rc.Left:F2},{rc.Top:F2},{rc.Width:F2},{rc.Height:F2})");
+            var offset = System.Windows.Media.VisualTreeHelper.GetOffset(HeatmapOverlay);
+            LogHeatmap($"HeatmapOverlay offset (VisualTreeHelper) = (X={offset.X:F2}, Y={offset.Y:F2})");
 
             // 3) Build Clip in OVERLAY-LOCAL coordinates (0..Width, 0..Height)
             //    Determine shape ratios from ROI model
