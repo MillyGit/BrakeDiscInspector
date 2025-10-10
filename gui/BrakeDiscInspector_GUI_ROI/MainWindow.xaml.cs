@@ -1158,7 +1158,6 @@ namespace BrakeDiscInspector_GUI_ROI
             HeatmapOverlay.Source = _lastHeatmapBmp;
             HeatmapOverlay.Width  = System.Math.Max(1.0, disp.Width);
             HeatmapOverlay.Height = System.Math.Max(1.0, disp.Height);
-            HeatmapOverlay.Margin = new System.Windows.Thickness(disp.X, disp.Y, 0, 0);
             HeatmapOverlay.Visibility = System.Windows.Visibility.Visible;
 
             LogHeatmap("ROI (image space): " + RoiDebug(_lastHeatmapRoi));
@@ -4615,8 +4614,8 @@ namespace BrakeDiscInspector_GUI_ROI
                 AppendLog($"[sync] escala no uniforme detectada canvas=({canvasWidth:0.###}x{canvasHeight:0.###}) px=({pw}x{ph}) scaleX={scaleX:0.#####} scaleY={scaleY:0.#####}");
             }
 
-            const double offsetX = 0.0;
-            const double offsetY = 0.0;
+            double offsetX = displayRect.X;
+            double offsetY = displayRect.Y;
 
             return (scaleX, scaleY, offsetX, offsetY);
         }
