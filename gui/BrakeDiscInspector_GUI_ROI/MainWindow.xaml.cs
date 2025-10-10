@@ -1177,14 +1177,20 @@ namespace BrakeDiscInspector_GUI_ROI
             }
             else
             {
-                // Fallback for non-Canvas parent
-                HeatmapOverlay.Margin = new System.Windows.Thickness(rc.Left, rc.Top, 0, 0);
+                // Round offsets to match CanvasROI pixel rounding and remove subpixel drift
+                double leftRounded = System.Math.Round(rc.Left);
+                double topRounded  = System.Math.Round(rc.Top);
+                HeatmapOverlay.Margin = new System.Windows.Thickness(leftRounded, topRounded, 0, 0);
             }
 
             HeatmapOverlay.Visibility = System.Windows.Visibility.Visible;
             LogHeatmap($"ParentIsCanvas={parentIsCanvas}, rc=({rc.Left:F2},{rc.Top:F2},{rc.Width:F2},{rc.Height:F2})");
             var offset = System.Windows.Media.VisualTreeHelper.GetOffset(HeatmapOverlay);
             LogHeatmap($"HeatmapOverlay offset (VisualTreeHelper) = (X={offset.X:F2}, Y={offset.Y:F2})");
+
+            LogHeatmap($"Heatmap place: rc=({rc.Left:F4},{rc.Top:F4}) -> rounded=({System.Math.Round(rc.Left):F0},{System.Math.Round(rc.Top):F0}), parentIsCanvas={parentIsCanvas}");
+            var ofs = System.Windows.Media.VisualTreeHelper.GetOffset(HeatmapOverlay);
+            LogHeatmap($"Overlay offset: ({ofs.X:F4},{ofs.Y:F4})");
 
             // 3) Build Clip in OVERLAY-LOCAL coordinates (0..Width, 0..Height)
             //    Determine shape ratios from ROI model
