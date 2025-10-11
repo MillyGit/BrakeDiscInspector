@@ -348,6 +348,14 @@ namespace BrakeDiscInspector_GUI_ROI
         {
             InitializeComponent();
 
+            try
+            {
+                var ps = System.Windows.PresentationSource.FromVisual(this);
+                var m  = ps?.CompositionTarget?.TransformToDevice;
+                if (m != null) LogHeatmap($"DPI Scale = ({m.M11:F3}, {m.M22:F3})");
+            }
+            catch {}
+
             // RoiOverlay disabled: labels are now drawn on Canvas only
             // RoiOverlay.BindToImage(ImgMain);
 
@@ -1132,12 +1140,12 @@ namespace BrakeDiscInspector_GUI_ROI
 
         private void UpdateHeatmapOverlayLayoutAndClip()
         {
-            LogHeatmap("---- UpdateHeatmapOverlayLayoutAndClip BEGIN ----");
+            LogHeatmap("---- UpdateHeatmapOverlayLayoutAndClip: BEGIN ----");
 
             if (HeatmapOverlay == null)
             {
                 LogHeatmap("HeatmapOverlay control is null.");
-                LogHeatmap("---- UpdateHeatmapOverlayLayoutAndClip END ----");
+                LogHeatmap("---- UpdateHeatmapOverlayLayoutAndClip: END ----");
                 return;
             }
 
@@ -1147,17 +1155,39 @@ namespace BrakeDiscInspector_GUI_ROI
                 HeatmapOverlay.Source = null;
                 HeatmapOverlay.Visibility = Visibility.Collapsed;
                 HeatmapOverlay.Clip = null;
-                LogHeatmap("Clip is null (no clipping).");
-                LogHeatmap("---- UpdateHeatmapOverlayLayoutAndClip END ----");
+                LogHeatmap("Clip = null");
+                LogHeatmap("---- UpdateHeatmapOverlayLayoutAndClip: END ----");
                 return;
             }
 
-            LogHeatmap("ROI (image space): " + RoiDebug(_lastHeatmapRoi));
+            // 1) Rectángulo de la imagen en pantalla (letterboxing)
+            var disp = GetImageDisplayRect();
+            LogHeatmap($"DisplayRect = (X={disp.X:F2},Y={disp.Y:F2},W={disp.Width:F2},H={disp.Height:F2})");
 
-            // 1) Convert ROI to CANVAS-space rectangle
-            LogHeatmap("Converting ROI to canvas space...");
-            var rc = ImageToCanvas(_lastHeatmapRoi); // rc.Left/Top/Width/Height in canvas units
-            LogHeatmap($"ROI (canvas space) rc = {RectDbg(new System.Windows.Rect(rc.Left, rc.Top, rc.Width, rc.Height))}");
+            // 2) Transformación imagen→canvas actualmente en uso
+            var (sx, sy, offX, offY) = GetImageToCanvasTransform();
+            LogHeatmap($"Transform Img→Canvas: sx={sx:F6}, sy={sy:F6}, offX={offX:F4}, offY={offY:F4}]");
+
+            // 3) ROI en espacio de imagen (si tienes RoiDebug)
+            try { LogHeatmap("ROI (image space): " + RoiDebug(_lastHeatmapRoi)); } catch {}
+
+            // 4) ROI en espacio de CANVAS
+            var rc = ImageToCanvas(_lastHeatmapRoi);
+            LogHeatmap($"ROI canvas rect rc = (L={rc.Left:F2},T={rc.Top:F2},W={rc.Width:F2},H={rc.Height:F2})");
+
+            // 5) Margen del Canvas de las ROI (CanvasROI) y su offset visual real
+            if (CanvasROI != null)
+            {
+                var cm = CanvasROI.Margin;
+                LogHeatmap($"CanvasROI.Margin = (L={cm.Left:F0},T={cm.Top:F0})");
+                var cofs = System.Windows.Media.VisualTreeHelper.GetOffset(CanvasROI);
+                LogHeatmap($"CanvasROI.VisualOffset = (X={cofs.X:F4},Y={cofs.Y:F4})");
+            }
+
+            // 6) Tipo de padre del heatmap y ruta de posicionamiento
+            var parent = System.Windows.Media.VisualTreeHelper.GetParent(HeatmapOverlay);
+            bool parentIsCanvas = parent is System.Windows.Controls.Canvas;
+            LogHeatmap($"HeatmapOverlay.Parent = {parent?.GetType().Name ?? "<null>"} ; ParentIsCanvas={parentIsCanvas}");
 
             // 2) Anchor overlay to ROI rect (canvas absolute via Canvas coords when available)
             // Size to ROI rect
@@ -1167,7 +1197,6 @@ namespace BrakeDiscInspector_GUI_ROI
 
             // Prefer Canvas positioning to avoid Margin rounding drift. Fallback to Margin
             // only if parent is not a Canvas.
-            bool parentIsCanvas = System.Windows.Media.VisualTreeHelper.GetParent(HeatmapOverlay) is System.Windows.Controls.Canvas;
             if (parentIsCanvas)
             {
                 // Clear Margin so Canvas.Left/Top are not compounded
@@ -1178,19 +1207,21 @@ namespace BrakeDiscInspector_GUI_ROI
             else
             {
                 // Round offsets to match CanvasROI pixel rounding and remove subpixel drift
-                double leftRounded = System.Math.Round(rc.Left);
-                double topRounded  = System.Math.Round(rc.Top);
-                HeatmapOverlay.Margin = new System.Windows.Thickness(leftRounded, topRounded, 0, 0);
+                double hmLeftRaw = rc.Left;
+                double hmTopRaw  = rc.Top;
+                double hmLeftRounded = System.Math.Round(hmLeftRaw);
+                double hmTopRounded  = System.Math.Round(hmTopRaw);
+
+                // Top esperado si hubiese que sumar el margen del CanvasROI (para detectar omisiones)
+                double expectedTop = (CanvasROI?.Margin.Top ?? 0) + hmTopRaw;
+                double deltaY_ifMissingCanvasMargin = expectedTop - hmTopRaw;
+
+                LogHeatmap($"Heatmap (Margin path): rc=({hmLeftRaw:F4},{hmTopRaw:F4}) -> rounded=({hmLeftRounded:F0},{hmTopRounded:F0}) ; ExpectedTop={expectedTop:F2} ; ΔY_ifMissingCanvasMargin≈{deltaY_ifMissingCanvasMargin:F2}");
+
+                HeatmapOverlay.Margin = new System.Windows.Thickness(hmLeftRounded, hmTopRounded, 0, 0);
             }
 
             HeatmapOverlay.Visibility = System.Windows.Visibility.Visible;
-            LogHeatmap($"ParentIsCanvas={parentIsCanvas}, rc=({rc.Left:F2},{rc.Top:F2},{rc.Width:F2},{rc.Height:F2})");
-            var offset = System.Windows.Media.VisualTreeHelper.GetOffset(HeatmapOverlay);
-            LogHeatmap($"HeatmapOverlay offset (VisualTreeHelper) = (X={offset.X:F2}, Y={offset.Y:F2})");
-
-            LogHeatmap($"Heatmap place: rc=({rc.Left:F4},{rc.Top:F4}) -> rounded=({System.Math.Round(rc.Left):F0},{System.Math.Round(rc.Top):F0}), parentIsCanvas={parentIsCanvas}");
-            var ofs = System.Windows.Media.VisualTreeHelper.GetOffset(HeatmapOverlay);
-            LogHeatmap($"Overlay offset: ({ofs.X:F4},{ofs.Y:F4})");
 
             // 3) Build Clip in OVERLAY-LOCAL coordinates (0..Width, 0..Height)
             //    Determine shape ratios from ROI model
@@ -1267,19 +1298,32 @@ namespace BrakeDiscInspector_GUI_ROI
             // 4) Apply Clip (or disable if mismatch logic set skipClip)
             HeatmapOverlay.Clip = skipClip ? null : clipGeo;
 
-            // 5) (Optional) Log overlay rect in canvas space & local clip bounds
-            LogHeatmap($"Overlay anchored to ROI: Left={rc.Left:F2}, Top={rc.Top:F2}, W={rc.Width:F2}, H={rc.Height:F2}");
-            if (HeatmapOverlay.Clip != null)
+            var hOfs = System.Windows.Media.VisualTreeHelper.GetOffset(HeatmapOverlay);
+            LogHeatmap($"HeatmapOverlay.VisualOffset = (X={hOfs.X:F4},Y={hOfs.Y:F4})");
+
+            if (HeatmapOverlay?.Clip != null)
             {
                 var b = HeatmapOverlay.Clip.Bounds;
-                LogHeatmap($"Overlay-local Clip.Bounds = (X={b.X:F2},Y={b.Y:F2},W={b.Width:F2},H={b.Height:F2})");
+                LogHeatmap($"Clip.Bounds = (X={b.X:F2},Y={b.Y:F2},W={b.Width:F2},H={b.Height:F2})");
             }
             else
             {
-                LogHeatmap("Overlay Clip = null");
+                LogHeatmap("Clip = null");
             }
 
-            LogHeatmap("---- UpdateHeatmapOverlayLayoutAndClip END ----");
+            // 5) (Optional) Log overlay rect in canvas space & local clip bounds
+            LogHeatmap($"Overlay anchored to ROI: Left={rc.Left:F2}, Top={rc.Top:F2}, W={rc.Width:F2}, H={rc.Height:F2}");
+            if (HeatmapOverlay?.Clip != null)
+            {
+                var b = HeatmapOverlay.Clip.Bounds;
+                LogHeatmap($"Clip.Bounds = (X={b.X:F2},Y={b.Y:F2},W={b.Width:F2},H={b.Height:F2})");
+            }
+            else
+            {
+                LogHeatmap("Clip = null");
+            }
+
+            LogHeatmap("---- UpdateHeatmapOverlayLayoutAndClip: END ----");
         }
 
         private async Task ShowHeatmapOverlayAsync(Workflow.RoiExportResult export, byte[] heatmapBytes, double opacity)
@@ -4494,6 +4538,7 @@ namespace BrakeDiscInspector_GUI_ROI
             CanvasROI.HorizontalAlignment = HorizontalAlignment.Left;
             CanvasROI.VerticalAlignment = VerticalAlignment.Top;
             CanvasROI.Margin = new Thickness(roundedLeft, roundedTop, 0, 0);
+            LogHeatmap($"SyncOverlayToImage: roundedLeft={roundedLeft:F0}, roundedTop={roundedTop:F0}");
             CanvasROI.Width = roundedWidth;
             CanvasROI.Height = roundedHeight;
 
