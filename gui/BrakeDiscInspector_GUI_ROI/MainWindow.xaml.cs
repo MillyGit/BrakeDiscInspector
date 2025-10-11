@@ -1209,20 +1209,14 @@ namespace BrakeDiscInspector_GUI_ROI
             }
             else
             {
-                // Round offsets to match CanvasROI pixel rounding and remove subpixel drift
-                double hmLeftRaw = rc.Left;
-                double hmTopRaw  = rc.Top;
-                double hmLeftRounded = System.Math.Round(hmLeftRaw);
-                double hmTopRounded  = System.Math.Round(hmTopRaw);
-
-                // Top esperado si hubiese que sumar el margen del CanvasROI (para detectar omisiones)
-                double expectedTop = (CanvasROI?.Margin.Top ?? 0) + hmTopRaw;
-                double deltaY_ifMissingCanvasMargin = expectedTop - hmTopRaw;
-
-                LogHeatmap($"Heatmap (Margin path): rc=({hmLeftRaw:F4},{hmTopRaw:F4}) -> rounded=({hmLeftRounded:F0},{hmTopRounded:F0}) ; ExpectedTop={expectedTop:F2} ; ΔY_ifMissingCanvasMargin≈{deltaY_ifMissingCanvasMargin:F2}");
-
-                HeatmapOverlay.Margin = new System.Windows.Thickness(hmLeftRounded, hmTopRounded, 0, 0);
+                // SUMAR el margen del Canvas de las ROI para alinear origen,
+                // y redondear a enteros para evitar subpíxeles (misma política que CanvasROI).
+                double leftRounded = System.Math.Round((CanvasROI?.Margin.Left ?? 0) + rc.Left);
+                double topRounded  = System.Math.Round((CanvasROI?.Margin.Top  ?? 0) + rc.Top);
+                HeatmapOverlay.Margin = new System.Windows.Thickness(leftRounded, topRounded, 0, 0);
             }
+
+            LogHeatmap($"Heatmap by Margin with CanvasROI.Margin sum: finalMargin=({HeatmapOverlay.Margin.Left},{HeatmapOverlay.Margin.Top})");
 
             HeatmapOverlay.Visibility = System.Windows.Visibility.Visible;
 
