@@ -351,8 +351,11 @@ namespace BrakeDiscInspector_GUI_ROI
             try
             {
                 var ps = System.Windows.PresentationSource.FromVisual(this);
-                var m  = ps?.CompositionTarget?.TransformToDevice;
-                if (m != null) LogHeatmap($"DPI Scale = ({m.M11:F3}, {m.M22:F3})");
+                if (ps?.CompositionTarget != null)
+                {
+                    Matrix m = ps.CompositionTarget.TransformToDevice;
+                    LogHeatmap($"DPI Scale = ({m.M11:F3}, {m.M22:F3})");
+                }
             }
             catch {}
 
