@@ -197,6 +197,28 @@ namespace BrakeDiscInspector_GUI_ROI
             catch { /* swallow logging errors */ }
         }
 
+        private void PruneCanvasKeepOnlyMaster2()
+        {
+            if (CanvasROI == null) return;
+
+            var toRemove = new System.Collections.Generic.List<System.Windows.UIElement>();
+
+            foreach (var child in CanvasROI.Children.Cast<System.Windows.UIElement>())
+            {
+                var fe = child as System.Windows.FrameworkElement;
+                if (fe?.Tag is RoiModel m)
+                {
+                    // Mantener ÚNICAMENTE Master 2 (patrón); elimina el resto
+                    if (m.Role != RoiRole.Master2Pattern)
+                        toRemove.Add(child);
+                }
+                // Si Tag no es RoiModel, no hacemos nada (conservador)
+            }
+
+            foreach (var el in toRemove)
+                CanvasROI.Children.Remove(el);
+        }
+
         private static string RoiDebug(RoiModel r)
         {
             if (r == null) return "<null>";
@@ -2600,6 +2622,9 @@ namespace BrakeDiscInspector_GUI_ROI
                     savedRoi = _layout.Master2Pattern;
                     SaveRoiCropPreview(_layout.Master2Pattern, "M2_pattern");
                     _layout.Master2PatternImagePath = SaveMasterPatternCanonical(_layout.Master2Pattern, "master2_pattern");
+
+                    PruneCanvasKeepOnlyMaster2();
+                    LogHeatmap("PruneCanvasKeepOnlyMaster2: applied after saving Master2Pattern.");
 
                     _tmpBuffer = null;
                     _state = MasterState.DrawM2_Search;
