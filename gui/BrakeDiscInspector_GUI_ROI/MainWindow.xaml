@@ -59,6 +59,44 @@
 
         <!-- Lado Derecho: Wizard/Stepper + Logs -->
         <DockPanel Grid.Column="1" Margin="10">
+            <GroupBox Header="Visibilidad ROI" DockPanel.Dock="Top" Margin="0,0,0,8">
+                <StackPanel>
+                    <CheckBox x:Name="ChkShowMaster1Pattern"
+                              Content="Master 1"
+                              IsEnabled="False"
+                              IsChecked="False"
+                              Checked="RoiVisibilityCheckChanged"
+                              Unchecked="RoiVisibilityCheckChanged"/>
+                    <CheckBox x:Name="ChkShowMaster1Inspection"
+                              Content="Inspection Master 1"
+                              IsEnabled="False"
+                              IsChecked="False"
+                              Margin="0,4,0,0"
+                              Checked="RoiVisibilityCheckChanged"
+                              Unchecked="RoiVisibilityCheckChanged"/>
+                    <CheckBox x:Name="ChkShowMaster2Pattern"
+                              Content="Master 2"
+                              IsEnabled="False"
+                              IsChecked="False"
+                              Margin="0,4,0,0"
+                              Checked="RoiVisibilityCheckChanged"
+                              Unchecked="RoiVisibilityCheckChanged"/>
+                    <CheckBox x:Name="ChkShowMaster2Inspection"
+                              Content="Inspection Master 2"
+                              IsEnabled="False"
+                              IsChecked="False"
+                              Margin="0,4,0,0"
+                              Checked="RoiVisibilityCheckChanged"
+                              Unchecked="RoiVisibilityCheckChanged"/>
+                    <CheckBox x:Name="ChkShowInspectionRoi"
+                              Content="Inspection ROI"
+                              IsEnabled="False"
+                              IsChecked="False"
+                              Margin="0,4,0,0"
+                              Checked="RoiVisibilityCheckChanged"
+                              Unchecked="RoiVisibilityCheckChanged"/>
+                </StackPanel>
+            </GroupBox>
             <TabControl x:Name="Tabs" DockPanel.Dock="Top">
                 <TabItem x:Name="TabMaster1" Header="1) Master 1">
                     <StackPanel Margin="10">
