@@ -3028,8 +3028,56 @@ namespace BrakeDiscInspector_GUI_ROI
             ClipInspectionROI(_layout.Inspection, _imgW, _imgH);
             AppendLog("[FLOW] Inspection movida y recortada");
 
+            try
+            {
+                // Si el flujo de inferencia ha dejado _lastHeatmapRoi, persiste en el layout según su rol.
+                if (_lastHeatmapRoi != null)
+                {
+                    switch (_lastHeatmapRoi.Role)
+                    {
+                        case RoiRole.Inspection:
+                            _layout.Inspection = _lastHeatmapRoi.Clone();
+                            break;
+                        case RoiRole.Master1Pattern:
+                            _layout.Master1Pattern = _lastHeatmapRoi.Clone();
+                            break;
+                        case RoiRole.Master1Search:
+                            _layout.Master1Search = _lastHeatmapRoi.Clone();
+                            break;
+                        case RoiRole.Master2Pattern:
+                            _layout.Master2Pattern = _lastHeatmapRoi.Clone();
+                            break;
+                        case RoiRole.Master2Search:
+                            _layout.Master2Search = _lastHeatmapRoi.Clone();
+                            break;
+                        default:
+                            // Si no encaja en roles conocidos, no sobrescribir nada
+                            break;
+                    }
+                    AppendLog("[UI] Persisted detected ROI into layout: " + _lastHeatmapRoi.Role.ToString());
+                }
+            }
+            catch (Exception ex)
+            {
+                AppendLog("[UI] Persist layout with detected ROI failed: " + ex.Message);
+            }
+
             MasterLayoutManager.Save(_preset, _layout);
             AppendLog("[FLOW] Layout guardado");
+
+            await Dispatcher.InvokeAsync(() =>
+            {
+                try
+                {
+                    // Lanza el pipeline: SyncOverlayToImage → RedrawOverlay → UpdateHeatmapOverlayLayoutAndClip → RedrawAnalysisCrosses
+                    ScheduleSyncOverlay(true);
+                    AppendLog("[UI] Post-Analyze refresh scheduled (ScheduleSyncOverlay(true)).");
+                }
+                catch (Exception ex)
+                {
+                    AppendLog("[UI] ScheduleSyncOverlay failed: " + ex.Message);
+                }
+            });
 
             Snack($"Masters OK. Scores: M1={s1:0.000}, M2={s2:0.000}. ROI inspección reubicado.");
             _state = MasterState.Ready;
