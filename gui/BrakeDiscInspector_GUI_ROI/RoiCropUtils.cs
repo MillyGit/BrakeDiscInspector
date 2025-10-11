@@ -161,8 +161,15 @@ namespace BrakeDiscInspector_GUI_ROI
                         // El recorte puede ser algo mayor que el ROI exacto por redondeos → escalamos
                         double scaleX = w / Math.Max(info.Width, 1.0);
                         double scaleY = h / Math.Max(info.Height, 1.0);
+                        int maxR = Math.Min(w, h) / 2;
+
+                        if (maxR < 1)
+                        {
+                            throw new InvalidOperationException($"ROI crop too small: w={w}, h={h}, maxR={maxR}. Need min(w,h) >= 2.");
+                        }
+
                         int rOuter = (int)Math.Round(baseOuter * Math.Min(scaleX, scaleY));
-                        rOuter = Math.Clamp(rOuter, 1, Math.Min(w, h) / 2);
+                        rOuter = Math.Clamp(rOuter, 1, maxR);
 
                         // Exterior
                         Cv2.Circle(mask, new Point(cx, cy), rOuter, Scalar.All(255), thickness: -1, lineType: LineTypes.AntiAlias);
