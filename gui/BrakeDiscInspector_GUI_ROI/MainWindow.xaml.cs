@@ -197,26 +197,54 @@ namespace BrakeDiscInspector_GUI_ROI
             catch { /* swallow logging errors */ }
         }
 
-        private void PruneCanvasKeepOnlyMaster2()
+        private void KeepOnlyMaster2InCanvas()
         {
             if (CanvasROI == null) return;
 
             var toRemove = new System.Collections.Generic.List<System.Windows.UIElement>();
+            int kept = 0, removed = 0;
 
-            foreach (var child in CanvasROI.Children.Cast<System.Windows.UIElement>())
+            foreach (var el in CanvasROI.Children.Cast<System.Windows.UIElement>())
             {
-                var fe = child as System.Windows.FrameworkElement;
-                if (fe?.Tag is RoiModel m)
+                switch (el)
                 {
-                    // Mantener ÚNICAMENTE Master 2 (patrón); elimina el resto
-                    if (m.Role != RoiRole.Master2Pattern)
-                        toRemove.Add(child);
+                    case System.Windows.Shapes.Shape s:
+                    {
+                        // Shapes de ROI llevan Tag = RoiModel; los de análisis suelen llevar string ("analysis-mark"/"AnalysisCross") o null
+                        if (s.Tag is RoiModel rm)
+                        {
+                            bool keep = (rm.Role == RoiRole.Master2Pattern) || (rm.Role == RoiRole.Master2Search);
+                            if (!keep) { toRemove.Add(s); removed++; } else { kept++; }
+                        }
+                        else
+                        {
+                            // Cualquier shape sin RoiModel en Tag NO pertenece a ROI Master 2 (líneas/analysis/etc.) → eliminar
+                            toRemove.Add(s); removed++;
+                        }
+                        break;
+                    }
+
+                    case System.Windows.Controls.TextBlock tb:
+                    {
+                        // Las etiquetas de ROI no usan Tag; se nombran como "roiLabel_<texto_sin_espacios>"
+                        // Para "Master 2" el Name es "roiLabel_Master_2"
+                        string name = tb.Name ?? string.Empty;
+                        bool keep = name.StartsWith("roiLabel_Master_2", System.StringComparison.OrdinalIgnoreCase);
+                        if (!keep) { toRemove.Add(tb); removed++; } else { kept++; }
+                        break;
+                    }
+
+                    default:
+                        // Cualquier otro UIElement (Borders de análisis, etc.) → eliminar
+                        toRemove.Add(el); removed++;
+                        break;
                 }
-                // Si Tag no es RoiModel, no hacemos nada (conservador)
             }
 
             foreach (var el in toRemove)
                 CanvasROI.Children.Remove(el);
+
+            try { LogHeatmap($"KeepOnlyMaster2InCanvas: kept={kept}, removed={removed}"); } catch {}
         }
 
         private static string RoiDebug(RoiModel r)
@@ -2623,8 +2651,8 @@ namespace BrakeDiscInspector_GUI_ROI
                     SaveRoiCropPreview(_layout.Master2Pattern, "M2_pattern");
                     _layout.Master2PatternImagePath = SaveMasterPatternCanonical(_layout.Master2Pattern, "master2_pattern");
 
-                    PruneCanvasKeepOnlyMaster2();
-                    LogHeatmap("PruneCanvasKeepOnlyMaster2: applied after saving Master2Pattern.");
+                    KeepOnlyMaster2InCanvas();
+                    LogHeatmap("KeepOnlyMaster2InCanvas called after saving Master2Pattern.");
 
                     _tmpBuffer = null;
                     _state = MasterState.DrawM2_Search;
@@ -2642,6 +2670,8 @@ namespace BrakeDiscInspector_GUI_ROI
                     savedRoi = _layout.Master2Search;
 
                     SaveRoiCropPreview(_layout.Master2Search, "M2_search");
+
+                    KeepOnlyMaster2InCanvas();
 
                     _tmpBuffer = null;
 
