@@ -142,6 +142,9 @@ namespace BrakeDiscInspector_GUI_ROI
 
         private readonly Dictionary<string, Shape> _roiShapesById = new();
         private readonly Dictionary<Shape, TextBlock> _roiLabels = new();
+        private readonly Dictionary<RoiRole, CheckBox> _roiVisibilityCheckboxes = new();
+        private readonly Dictionary<RoiRole, bool> _roiCheckboxHasRoi = new();
+        private bool _roiVisibilityRefreshPending;
 
         private IEnumerable<RoiModel> SavedRois => new[]
         {
@@ -487,9 +490,119 @@ namespace BrakeDiscInspector_GUI_ROI
             ComboM2Role.ItemsSource = new[] { "ROI Master 2", "ROI Inspección Master 2" };
             ComboM2Role.SelectedIndex = 0;
 
+            InitRoiVisibilityControls();
 
             UpdateWizardState();
             ApplyPresetToUI(_preset);
+        }
+
+        private void InitRoiVisibilityControls()
+        {
+            _roiVisibilityCheckboxes.Clear();
+            _roiCheckboxHasRoi.Clear();
+
+            MapRoiCheckbox(RoiRole.Master1Pattern, ChkShowMaster1Pattern);
+            MapRoiCheckbox(RoiRole.Master1Search, ChkShowMaster1Inspection);
+            MapRoiCheckbox(RoiRole.Master2Pattern, ChkShowMaster2Pattern);
+            MapRoiCheckbox(RoiRole.Master2Search, ChkShowMaster2Inspection);
+            MapRoiCheckbox(RoiRole.Inspection, ChkShowInspectionRoi);
+
+            UpdateRoiVisibilityControls();
+        }
+
+        private void MapRoiCheckbox(RoiRole role, CheckBox? checkbox)
+        {
+            if (checkbox == null)
+                return;
+
+            _roiVisibilityCheckboxes[role] = checkbox;
+            _roiCheckboxHasRoi[role] = false;
+            checkbox.IsEnabled = false;
+            checkbox.IsChecked = false;
+        }
+
+        private void UpdateRoiVisibilityControls()
+        {
+            if (_roiVisibilityCheckboxes.Count == 0)
+                return;
+
+            UpdateRoiVisibilityCheckbox(RoiRole.Master1Pattern, _layout.Master1Pattern);
+            UpdateRoiVisibilityCheckbox(RoiRole.Master1Search, _layout.Master1Search);
+            UpdateRoiVisibilityCheckbox(RoiRole.Master2Pattern, _layout.Master2Pattern);
+            UpdateRoiVisibilityCheckbox(RoiRole.Master2Search, _layout.Master2Search);
+            UpdateRoiVisibilityCheckbox(RoiRole.Inspection, _layout.Inspection);
+
+            RequestRoiVisibilityRefresh();
+        }
+
+        private void UpdateRoiVisibilityCheckbox(RoiRole role, RoiModel? model)
+        {
+            if (!_roiVisibilityCheckboxes.TryGetValue(role, out var checkbox) || checkbox == null)
+                return;
+
+            bool hasRoi = model != null;
+            bool prevHasRoi = _roiCheckboxHasRoi.TryGetValue(role, out var prev) && prev;
+
+            checkbox.IsEnabled = hasRoi;
+
+            if (!hasRoi)
+            {
+                checkbox.IsChecked = false;
+            }
+            else if (!prevHasRoi && checkbox.IsChecked != true)
+            {
+                checkbox.IsChecked = true;
+            }
+
+            _roiCheckboxHasRoi[role] = hasRoi;
+        }
+
+        private void RoiVisibilityCheckChanged(object sender, RoutedEventArgs e)
+        {
+            RequestRoiVisibilityRefresh();
+        }
+
+        private void RequestRoiVisibilityRefresh()
+        {
+            if (_roiVisibilityRefreshPending)
+                return;
+
+            _roiVisibilityRefreshPending = true;
+            Dispatcher.BeginInvoke(new Action(() =>
+            {
+                _roiVisibilityRefreshPending = false;
+                ApplyRoiVisibilityFromCheckboxes();
+            }), DispatcherPriority.Render);
+        }
+
+        private void ApplyRoiVisibilityFromCheckboxes()
+        {
+            if (CanvasROI == null)
+                return;
+
+            foreach (var shape in CanvasROI.Children.OfType<Shape>())
+            {
+                if (shape.Tag is not RoiModel roi)
+                    continue;
+
+                bool visible = IsRoiRoleVisible(roi.Role);
+                shape.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
+
+                if (_roiLabels.TryGetValue(shape, out var label) && label != null)
+                {
+                    label.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
+                }
+            }
+        }
+
+        private bool IsRoiRoleVisible(RoiRole role)
+        {
+            if (_roiVisibilityCheckboxes.TryGetValue(role, out var checkbox) && checkbox != null)
+            {
+                return checkbox.IsChecked != false;
+            }
+
+            return true;
         }
 
         private void UpdateWizardState()
@@ -532,6 +645,8 @@ namespace BrakeDiscInspector_GUI_ROI
 
             // Botón "Analizar Master" disponible en cuanto M1+M2 estén definidos
             BtnAnalyzeMaster.IsEnabled = mastersReady;
+
+            UpdateRoiVisibilityControls();
         }
 
         private RoiModel? GetCurrentStatePersistedRoi()
@@ -3055,6 +3170,7 @@ namespace BrakeDiscInspector_GUI_ROI
                             break;
                     }
                     AppendLog("[UI] Persisted detected ROI into layout: " + _lastHeatmapRoi.Role.ToString());
+                    UpdateRoiVisibilityControls();
                 }
             }
             catch (Exception ex)
@@ -3941,6 +4057,16 @@ namespace BrakeDiscInspector_GUI_ROI
         {
             var clone = roiPixel.Clone();
 
+            bool hadRoiBefore = roiPixel.Role switch
+            {
+                RoiRole.Master1Pattern => _layout.Master1Pattern != null,
+                RoiRole.Master1Search => _layout.Master1Search != null,
+                RoiRole.Master2Pattern => _layout.Master2Pattern != null,
+                RoiRole.Master2Search => _layout.Master2Search != null,
+                RoiRole.Inspection => _layout.Inspection != null,
+                _ => true
+            };
+
             switch (roiPixel.Role)
             {
                 case RoiRole.Master1Pattern:
@@ -3963,6 +4089,11 @@ namespace BrakeDiscInspector_GUI_ROI
                     }
                     SyncCurrentRoiFromInspection(clone);
                     break;
+            }
+
+            if (!hadRoiBefore)
+            {
+                UpdateRoiVisibilityControls();
             }
 
             var currentRole = GetCurrentStateRole();
