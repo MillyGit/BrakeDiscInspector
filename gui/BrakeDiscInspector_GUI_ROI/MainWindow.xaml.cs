@@ -146,6 +146,9 @@ namespace BrakeDiscInspector_GUI_ROI
         private readonly Dictionary<RoiRole, bool> _roiCheckboxHasRoi = new();
         private bool _roiVisibilityRefreshPending;
 
+        private System.Windows.Controls.StackPanel _roiChecksPanel;
+        private System.Windows.Controls.CheckBox _chkHeatmap;
+
         private IEnumerable<RoiModel> SavedRois => new[]
         {
             _layout.Master1Pattern,
@@ -337,6 +340,7 @@ namespace BrakeDiscInspector_GUI_ROI
             var label = existing ?? new TextBlock { Name = labelName };
 
             label.Text = _lbl;
+            EnsureRoiCheckbox(_lbl);
 
             if (existing == null)
             {
@@ -360,6 +364,107 @@ namespace BrakeDiscInspector_GUI_ROI
             }
 
             _roiLabels[shape] = label;
+        }
+
+        private System.Windows.Controls.StackPanel GetOrCreateRoiChecksHost()
+        {
+            if (_roiChecksPanel != null) return _roiChecksPanel;
+
+            // Intentar ubicar un panel de controles existente por nombre común
+            string[] knownHosts = { "ControlsPanel", "RightPanel", "SidebarPanel", "RightToolbar" };
+            foreach (var hostName in knownHosts)
+            {
+                if (this.FindName(hostName) is System.Windows.Controls.Panel p)
+                {
+                    var sp = new System.Windows.Controls.StackPanel
+                    {
+                        Orientation = System.Windows.Controls.Orientation.Vertical,
+                        Margin = new System.Windows.Thickness(6)
+                    };
+                    p.Children.Add(new System.Windows.Controls.GroupBox
+                    {
+                        Header = "Overlays",
+                        Content = sp,
+                        Margin = new System.Windows.Thickness(6,12,6,6)
+                    });
+                    _roiChecksPanel = sp;
+                    return _roiChecksPanel;
+                }
+            }
+
+            // Fallback: crear un host flotante en la esquina superior derecha del root Grid
+            if (this.Content is System.Windows.Controls.Grid rootGrid)
+            {
+                var sp = new System.Windows.Controls.StackPanel
+                {
+                    Orientation = System.Windows.Controls.Orientation.Vertical,
+                    Margin = new System.Windows.Thickness(8)
+                };
+                var box = new System.Windows.Controls.Border
+                {
+                    Background = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromArgb(180, 30, 30, 30)),
+                    CornerRadius = new System.Windows.CornerRadius(8),
+                    Padding = new System.Windows.Thickness(8),
+                    Child = new System.Windows.Controls.GroupBox
+                    {
+                        Header = "Overlays",
+                        Content = sp
+                    },
+                    HorizontalAlignment = System.Windows.HorizontalAlignment.Right,
+                    VerticalAlignment = System.Windows.VerticalAlignment.Top
+                };
+                System.Windows.Controls.Grid.SetRow(box, 0);
+                rootGrid.Children.Add(box);
+                System.Windows.Controls.Panel.SetZIndex(box, 9999);
+                _roiChecksPanel = sp;
+                return _roiChecksPanel;
+            }
+
+            // Último recurso: crear un panel local (no persistente visualmente si no hay contenedor)
+            _roiChecksPanel = new System.Windows.Controls.StackPanel();
+            return _roiChecksPanel;
+        }
+
+        private void EnsureHeatmapCheckbox()
+        {
+            var host = GetOrCreateRoiChecksHost();
+            if (_chkHeatmap != null) return;
+
+            _chkHeatmap = new System.Windows.Controls.CheckBox
+            {
+                Content = "Heatmap",
+                IsChecked = true,
+                Margin = new System.Windows.Thickness(2, 0, 2, 6)
+            };
+            _chkHeatmap.Checked += (s, e) => { if (HeatmapOverlay != null) HeatmapOverlay.Visibility = System.Windows.Visibility.Visible; };
+            _chkHeatmap.Unchecked += (s, e) => { if (HeatmapOverlay != null) HeatmapOverlay.Visibility = System.Windows.Visibility.Collapsed; };
+
+            host.Children.Insert(0, _chkHeatmap);
+        }
+
+        private void EnsureRoiCheckbox(string labelText)
+        {
+            if (string.IsNullOrWhiteSpace(labelText)) return;
+            var host = GetOrCreateRoiChecksHost();
+
+            // Buscar si ya existe un CheckBox con ese mismo texto
+            foreach (var child in host.Children)
+            {
+                if (child is System.Windows.Controls.CheckBox cb && cb.Content is string s && s.Equals(labelText, System.StringComparison.OrdinalIgnoreCase))
+                {
+                    // Ya existe; nada que hacer
+                    return;
+                }
+            }
+
+            // Crear nuevo checkbox (sin lógica de toggle sobre shapes; solo UI, según requisito)
+            var chk = new System.Windows.Controls.CheckBox
+            {
+                Content = labelText,
+                IsChecked = true,
+                Margin = new System.Windows.Thickness(2, 0, 2, 2)
+            };
+            host.Children.Add(chk);
         }
 
         private void RemoveRoiLabel(Shape shape)
@@ -400,6 +505,7 @@ namespace BrakeDiscInspector_GUI_ROI
         public MainWindow()
         {
             InitializeComponent();
+            EnsureHeatmapCheckbox();
 
             try
             {
