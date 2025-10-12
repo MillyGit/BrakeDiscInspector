@@ -64,6 +64,7 @@ namespace BrakeDiscInspector_GUI_ROI
         private string _currentImagePathBackend = "";
         private BitmapImage? _imgSourceBI;
         private int _imgW, _imgH;
+        private bool _hasLoadedImage;
 
         private WorkflowViewModel? _workflowViewModel;
         private double _heatmapOverlayOpacity = 0.6;
@@ -668,6 +669,12 @@ namespace BrakeDiscInspector_GUI_ROI
             ApplyPresetToUI(_preset);
         }
 
+        private void EnablePresetsTab(bool enable)
+        {
+            if (FindName("TabPresets") is System.Windows.Controls.TabItem t)
+                t.IsEnabled = enable;
+        }
+
         private void InitRoiVisibilityControls()
         {
             _roiVisibilityCheckboxes.Clear();
@@ -798,7 +805,7 @@ namespace BrakeDiscInspector_GUI_ROI
             TabMaster1.IsEnabled = true;
             TabMaster2.IsEnabled = m1Ready;           // puedes definir M2 cuando M1 está completo
             TabInspection.IsEnabled = mastersReady;     // puedes definir la inspección tras completar M1 y M2
-            TabAnalyze.IsEnabled = mastersReady;     // ahora Análisis disponible con M1+M2 (aunque no haya inspección)
+            EnablePresetsTab(mastersReady || _hasLoadedImage);     // permite presets tras cargar imagen o completar masters
 
             // Selección de tab acorde a estado
             if (_state == MasterState.DrawM1_Pattern || _state == MasterState.DrawM1_Search)
@@ -808,7 +815,7 @@ namespace BrakeDiscInspector_GUI_ROI
             else if (_state == MasterState.DrawInspection)
                 Tabs.SelectedItem = TabInspection;
             else
-                Tabs.SelectedItem = TabAnalyze;
+                Tabs.SelectedItem = TabPresets;
 
             if (_analysisViewActive && _state != MasterState.Ready)
             {
@@ -987,6 +994,9 @@ namespace BrakeDiscInspector_GUI_ROI
             AppendLog($"Imagen cargada: {_imgW}x{_imgH}  (Canvas: {CanvasROI.ActualWidth:0}x{CanvasROI.ActualHeight:0})");
             RedrawOverlaySafe();
             ClearHeatmapOverlay();
+
+            _hasLoadedImage = true;
+            EnablePresetsTab(true);
         }
 
         private bool IsOverlayAligned()
@@ -2222,9 +2232,9 @@ namespace BrakeDiscInspector_GUI_ROI
             }
 
             _analysisViewActive = true;
-            if (Tabs != null && TabAnalyze != null)
+            if (Tabs != null && TabPresets != null)
             {
-                Tabs.SelectedItem = TabAnalyze;
+                Tabs.SelectedItem = TabPresets;
             }
         }
 
