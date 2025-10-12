@@ -148,6 +148,13 @@ namespace BrakeDiscInspector_GUI_ROI
 
         private System.Windows.Controls.StackPanel _roiChecksPanel;
         private System.Windows.Controls.CheckBox _chkHeatmap;
+        private double _heatmapNormMax = 1.0; // Global heatmap scale (1.0 = default). Lower -> brighter, Higher -> darker.
+        private Slider? _sldHeatmapScale;
+        private TextBlock? _lblHeatmapScale;
+
+        // Cache of last gray heatmap to recolor on-the-fly
+        private byte[]? _lastHeatmapGray;
+        private int _lastHeatmapW, _lastHeatmapH;
 
         private IEnumerable<RoiModel> SavedRois => new[]
         {
@@ -425,6 +432,58 @@ namespace BrakeDiscInspector_GUI_ROI
             return _roiChecksPanel;
         }
 
+        private void EnsureHeatmapScaleSlider()
+        {
+            var host = GetOrCreateRoiChecksHost();
+
+            if (_sldHeatmapScale != null && _lblHeatmapScale != null)
+            {
+                _lblHeatmapScale.Text = $"Heatmap Scale: {_heatmapNormMax:0.00}";
+                return;
+            }
+
+            // Header label
+            _lblHeatmapScale = new TextBlock
+            {
+                Text = $"Heatmap Scale: {_heatmapNormMax:0.00}",
+                Margin = new Thickness(2, 6, 2, 2),
+                Foreground = Brushes.White,
+                FontWeight = FontWeights.SemiBold
+            };
+
+            // Slider: range 0.10 .. 2.00 (avoid zero)
+            _sldHeatmapScale = new Slider
+            {
+                Minimum = 0.10,
+                Maximum = 2.00,
+                Value = _heatmapNormMax,
+                TickFrequency = 0.05,
+                IsSnapToTickEnabled = false,
+                Margin = new Thickness(2, 0, 2, 8),
+                Width = 180
+            };
+
+            _sldHeatmapScale.ValueChanged += (s, e) =>
+            {
+                _heatmapNormMax = _sldHeatmapScale!.Value;
+                _lblHeatmapScale!.Text = $"Heatmap Scale: {_heatmapNormMax:0.00}";
+                try { RebuildHeatmapOverlayFromCache(); } catch {}
+            };
+
+            // Insert near the top (after Heatmap checkbox if present)
+            int insertAt = 0;
+            for (int i = 0; i < host.Children.Count; i++)
+            {
+                if (host.Children[i] is CheckBox cb && (cb.Content as string) == "Heatmap")
+                {
+                    insertAt = i + 1;
+                    break;
+                }
+            }
+            host.Children.Insert(insertAt, _lblHeatmapScale);
+            host.Children.Insert(insertAt + 1, _sldHeatmapScale);
+        }
+
         private void EnsureHeatmapCheckbox()
         {
             var host = GetOrCreateRoiChecksHost();
@@ -436,6 +495,8 @@ namespace BrakeDiscInspector_GUI_ROI
                 IsChecked = true,
                 Margin = new System.Windows.Thickness(2, 0, 2, 6)
             };
+            _chkHeatmap.Foreground = Brushes.White;
+            _chkHeatmap.FontSize = 13;
             _chkHeatmap.Checked += (s, e) => { if (HeatmapOverlay != null) HeatmapOverlay.Visibility = System.Windows.Visibility.Visible; };
             _chkHeatmap.Unchecked += (s, e) => { if (HeatmapOverlay != null) HeatmapOverlay.Visibility = System.Windows.Visibility.Collapsed; };
 
@@ -464,6 +525,8 @@ namespace BrakeDiscInspector_GUI_ROI
                 IsChecked = true,
                 Margin = new System.Windows.Thickness(2, 0, 2, 2)
             };
+            chk.Foreground = Brushes.White;
+            chk.FontSize = 13;
             host.Children.Add(chk);
         }
 
@@ -506,6 +569,9 @@ namespace BrakeDiscInspector_GUI_ROI
         {
             InitializeComponent();
             EnsureHeatmapCheckbox();
+            EnsureHeatmapScaleSlider();
+            if (_sldHeatmapScale != null)
+                _sldHeatmapScale.ValueChanged += HeatmapScaleSlider_ValueChangedSync;
 
             try
             {
@@ -1614,11 +1680,11 @@ namespace BrakeDiscInspector_GUI_ROI
                     _lastHeatmapRoi = HeatmapRoiModel.From(export.RoiImage.Clone());
                     _heatmapOverlayOpacity = Math.Clamp(opacity, 0.0, 1.0);
                     EnterAnalysisView();
+                    EnsureHeatmapScaleSlider();
 
-                    var heatmapBitmap = heatmapSource;
-
-                    // Build robust, visible heatmap (keeps size; location/clipping code stays unchanged)
-                    _lastHeatmapBmp = BuildVisibleHeatmap(heatmapBitmap, useTurbo: true, gamma: 0.9);
+                    CacheHeatmapGrayFromBitmapSource(heatmapSource);
+                    RebuildHeatmapOverlayFromCache();
+                    SyncHeatmapBitmapFromOverlay();
 
                     if (_lastHeatmapBmp != null)
                     {
@@ -1653,6 +1719,9 @@ namespace BrakeDiscInspector_GUI_ROI
 
             _lastHeatmapBmp = null;
             _lastHeatmapRoi = null;
+            _lastHeatmapGray = null;
+            _lastHeatmapW = 0;
+            _lastHeatmapH = 0;
             LogHeatmap("Heatmap Source: <null>");
             UpdateHeatmapOverlayLayoutAndClip();
         }
@@ -1665,6 +1734,125 @@ namespace BrakeDiscInspector_GUI_ROI
                 return;
             }
             UpdateHeatmapOverlayLayoutAndClip();
+        }
+
+        private void RebuildHeatmapOverlayFromCache()
+        {
+            if (HeatmapOverlay == null) return;
+            if (_lastHeatmapGray == null || _lastHeatmapW <= 0 || _lastHeatmapH <= 0) return;
+
+            // Build Turbo colormap LUT (once per rebuild; fast enough at this size)
+            byte[] turboR = new byte[256], turboG = new byte[256], turboB = new byte[256];
+            for (int i = 0; i < 256; i++)
+            {
+                double t = i / 255.0;
+                double rr = 0.13572138 + 4.61539260*t - 42.66032258*t*t + 132.13108234*t*t*t - 152.94239396*t*t*t*t + 59.28637943*t*t*t*t*t;
+                double gg = 0.09140261 + 2.19418839*t + 4.84296658*t*t - 14.18503333*t*t*t + 14.13815831*t*t*t*t - 4.21519726*t*t*t*t*t;
+                double bb = 0.10667330 + 12.64194608*t - 60.58204836*t*t + 139.27510080*t*t*t - 150.21747690*t*t*t*t + 59.17006120*t*t*t*t*t;
+                turboR[i] = (byte)Math.Round(255.0 * Math.Clamp(rr, 0.0, 1.0));
+                turboG[i] = (byte)Math.Round(255.0 * Math.Clamp(gg, 0.0, 1.0));
+                turboB[i] = (byte)Math.Round(255.0 * Math.Clamp(bb, 0.0, 1.0));
+            }
+
+            // Normalize with global _heatmapNormMax (1.0=identity). If <1 -> brighter; if >1 -> darker.
+            double denom = Math.Max(0.0001, _heatmapNormMax) * 255.0;
+
+            byte[] bgra = new byte[_lastHeatmapW * _lastHeatmapH * 4];
+            int idx = 0;
+            for (int i = 0; i < _lastHeatmapGray.Length; i++)
+            {
+                // Map gray -> 0..255 index using the global normalization
+                double v = _lastHeatmapGray[i];                 // 0..255
+                int lut = (int)Math.Round(255.0 * Math.Clamp(v / denom, 0.0, 1.0));
+                bgra[idx++] = turboB[lut];
+                bgra[idx++] = turboG[lut];
+                bgra[idx++] = turboR[lut];
+                bgra[idx++] = 255; // opaque
+            }
+
+            // Create bitmap and assign
+            var wb = new System.Windows.Media.Imaging.WriteableBitmap(
+                _lastHeatmapW, _lastHeatmapH, 96, 96,
+                System.Windows.Media.PixelFormats.Bgra32, null);
+            wb.WritePixels(new Int32Rect(0, 0, _lastHeatmapW, _lastHeatmapH), bgra, _lastHeatmapW * 4, 0);
+            HeatmapOverlay.Source = wb;
+        }
+
+        private void CacheHeatmapGrayFromBitmapSource(BitmapSource src)
+        {
+            if (src == null)
+            {
+                _lastHeatmapGray = null;
+                _lastHeatmapW = 0;
+                _lastHeatmapH = 0;
+                return;
+            }
+
+            int w = src.PixelWidth;
+            int h = src.PixelHeight;
+            byte[] gray;
+
+            if (src.Format == PixelFormats.Gray8 || src.Format == PixelFormats.Indexed8)
+            {
+                gray = CopyGrayBytes(src);
+            }
+            else if (src.Format == PixelFormats.Gray16)
+            {
+                int stride = ((src.Format.BitsPerPixel * w) + 7) / 8;
+                byte[] raw = new byte[h * stride];
+                src.CopyPixels(raw, stride, 0);
+                gray = new byte[w * h];
+                for (int i = 0, j = 0; i < gray.Length; i++, j += 2)
+                {
+                    ushort val = (ushort)(raw[j] | (raw[j + 1] << 8));
+                    gray[i] = (byte)Math.Round((val / 65535.0) * 255.0);
+                }
+            }
+            else
+            {
+                var conv = new FormatConvertedBitmap(src, PixelFormats.Gray8, null, 0);
+                conv.Freeze();
+                gray = CopyGrayBytes(conv);
+            }
+
+            _lastHeatmapGray = gray;
+            _lastHeatmapW = w;
+            _lastHeatmapH = h;
+        }
+
+        private static byte[] CopyGrayBytes(BitmapSource src)
+        {
+            int w = src.PixelWidth;
+            int h = src.PixelHeight;
+            int stride = ((src.Format.BitsPerPixel * w) + 7) / 8;
+            byte[] raw = new byte[h * stride];
+            src.CopyPixels(raw, stride, 0);
+            if (stride == w)
+                return raw;
+
+            byte[] trimmed = new byte[w * h];
+            for (int row = 0; row < h; row++)
+            {
+                Buffer.BlockCopy(raw, row * stride, trimmed, row * w, w);
+            }
+            return trimmed;
+        }
+
+        private void SyncHeatmapBitmapFromOverlay()
+        {
+            if (HeatmapOverlay?.Source is BitmapSource bmp)
+            {
+                if (bmp.CanFreeze && !bmp.IsFrozen)
+                {
+                    try { bmp.Freeze(); } catch { }
+                }
+                _lastHeatmapBmp = bmp;
+            }
+        }
+
+        private void HeatmapScaleSlider_ValueChangedSync(object sender, RoutedPropertyChangedEventArgs<double> e)
+        {
+            SyncHeatmapBitmapFromOverlay();
         }
 
         // Map a [0,1] value to Turbo colormap (approx), returning (B,G,R) tuple
@@ -4576,15 +4764,28 @@ namespace BrakeDiscInspector_GUI_ROI
                 {
                     var heatBytes = Convert.FromBase64String(resp.heatmap_png_base64);
                     using var heat = OpenCvSharp.Cv2.ImDecode(heatBytes, OpenCvSharp.ImreadModes.Color);
-
-                    var heatBmp = WriteableBitmapConverter.ToWriteableBitmap(heat);
-                    heatBmp.Freeze();
+                    using var heatGray = new Mat();
+                    OpenCvSharp.Cv2.CvtColor(heat, heatGray, OpenCvSharp.ColorConversionCodes.BGR2GRAY);
                     _lastHeatmapRoi = HeatmapRoiModel.From(BuildCurrentRoiModel());
+                    EnsureHeatmapScaleSlider();
 
-                    var heatmapBitmap = heatBmp;
+                    byte[] gray = new byte[heatGray.Rows * heatGray.Cols];
+                    heatGray.GetArray(out byte[]? tmpGray);
+                    if (tmpGray != null && tmpGray.Length == gray.Length)
+                    {
+                        gray = tmpGray;
+                    }
+                    else if (tmpGray != null)
+                    {
+                        Array.Copy(tmpGray, gray, Math.Min(gray.Length, tmpGray.Length));
+                    }
 
-                    // Build robust, visible heatmap (keeps size; location/clipping code stays unchanged)
-                    _lastHeatmapBmp = BuildVisibleHeatmap(heatmapBitmap, useTurbo: true, gamma: 0.9);
+                    _lastHeatmapGray = gray;
+                    _lastHeatmapW = heatGray.Cols;
+                    _lastHeatmapH = heatGray.Rows;
+
+                    RebuildHeatmapOverlayFromCache();
+                    SyncHeatmapBitmapFromOverlay();
 
                     if (_lastHeatmapBmp != null)
                     {
