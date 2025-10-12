@@ -157,7 +157,7 @@
                     </StackPanel>
                 </TabItem>
 
-                <TabItem x:Name="TabAnalyze" Header="4) Análisis" IsEnabled="False">
+                <TabItem x:Name="TabPresets" Header="Presets" IsEnabled="False">
                     <StackPanel Margin="10">
                         <TextBlock Text="Feature (sin geom):"/>
                         <ComboBox x:Name="ComboFeature" Margin="0,4,0,8">
