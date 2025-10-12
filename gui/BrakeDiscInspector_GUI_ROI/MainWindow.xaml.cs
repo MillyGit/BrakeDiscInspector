@@ -3382,6 +3382,58 @@ namespace BrakeDiscInspector_GUI_ROI
 
         // --------- AppendLog (para evitar CS0119 en invocaciones) ---------
 
+        // Return a robust center for any RoiModel (prefer CX/CY; fallback to Left/Top/Width/Height)
+        private static (double cx, double cy) CenterOf(RoiModel r)
+        {
+            if (r == null) return (0, 0);
+            // Prefer explicit center if available
+            if (!double.IsNaN(r.CX) && !double.IsNaN(r.CY)) return (r.CX, r.CY);
+            return (r.Left + r.Width * 0.5, r.Top + r.Height * 0.5);
+        }
+
+        // Apply translation/rotation/scale to a target ROI using a baseline ROI and an old->new pivot
+        // angleDelta in RADIANS; pivotOld/new in IMAGE coordinates
+        private static void ApplyRoiTransform(RoiModel target, RoiModel baseline,
+                                              double pivotOldX, double pivotOldY,
+                                              double pivotNewX, double pivotNewY,
+                                              double scale, double angleDeltaRad)
+        {
+            if (target == null || baseline == null) return;
+
+            // Baseline center (image space)
+            var cBase = CenterOf(baseline);
+            double relX = cBase.cx - pivotOldX;
+            double relY = cBase.cy - pivotOldY;
+
+            double cos = Math.Cos(angleDeltaRad), sin = Math.Sin(angleDeltaRad);
+            double relXr = scale * (cos * relX - sin * relY);
+            double relYr = scale * (sin * relX + cos * relY);
+
+            // New center
+            double newCX = pivotNewX + relXr;
+            double newCY = pivotNewY + relYr;
+
+            // Scale size (generic: Width/Height; for circles/annulus R, RInner)
+            double newW = baseline.Width  * scale;
+            double newH = baseline.Height * scale;
+
+            target.Width  = newW;
+            target.Height = newH;
+
+            // Update center & box
+            target.CX  = newCX;
+            target.CY  = newCY;
+            target.Left = newCX - (newW * 0.5);
+            target.Top  = newCY - (newH * 0.5);
+
+            // If circular radii exist, scale them (no-ops if zero)
+            target.R      = baseline.R      * scale;
+            target.RInner = baseline.RInner * scale;
+
+            // NOTE: we do NOT modify any angle property on the ROI shape,
+            // because circles/annulus are rotation-invariant and rectangles in this app are axis-aligned.
+        }
+
         private void MoveInspectionTo(RoiModel insp, WPoint master1, WPoint master2)
         {
             if (insp == null)
@@ -3393,7 +3445,6 @@ namespace BrakeDiscInspector_GUI_ROI
             var __baseM2P = _layout?.Master2Pattern?.Clone();
             var __baseM2S = _layout?.Master2Search ?.Clone();
             var __baseHeat = _lastHeatmapRoi          ?.Clone();
-            // Guards
             bool __haveM1 = (__baseM1P != null);
             bool __haveM2 = (__baseM2P != null);
             // ===  END: capture baselines for unified transform  ===
@@ -3408,63 +3459,50 @@ namespace BrakeDiscInspector_GUI_ROI
                 master1,
                 master2);
 
-            // === BEGIN: apply the SAME transform to all other ROIs ===
+            // === BEGIN: apply the SAME transform to Masters + Heatmap (no inaccessible calls) ===
             try
             {
-                // Require Master1/2 patterns to define the baseline segment (pivot + direction)
                 if (__haveM1 && __haveM2 && _layout != null)
                 {
-                    // Old centers (baseline) from patterns
-                    var m1Old = __baseM1P.GetCenter();   // WPoint (image space)
-                    var m2Old = __baseM2P.GetCenter();
-                    double dxOld = m2Old.X - m1Old.X, dyOld = m2Old.Y - m1Old.Y;
-                    double lenOld = System.Math.Sqrt(dxOld*dxOld + dyOld*dyOld);
+                    // Old centers from baselines (tuples: use deconstruction, NOT .X/.Y)
+                    var (m1OldX, m1OldY) = CenterOf(__baseM1P);
+                    var (m2OldX, m2OldY) = CenterOf(__baseM2P);
+                    double dxOld = m2OldX - m1OldX, dyOld = m2OldY - m1OldY;
+                    double lenOld = Math.Sqrt(dxOld*dxOld + dyOld*dyOld);
 
-                    // New centers (from detection) passed into MoveInspectionTo
-                    var m1New = master1;
-                    var m2New = master2;
-                    double dxNew = m2New.X - m1New.X, dyNew = m2New.Y - m1New.Y;
-                    double lenNew = System.Math.Sqrt(dxNew*dxNew + dyNew*dyNew);
+                    // New centers from detection (WPoint master1/master2)
+                    double m1NewX = master1.X, m1NewY = master1.Y;
+                    double m2NewX = master2.X, m2NewY = master2.Y;
+                    double dxNew = m2NewX - m1NewX, dyNew = m2NewY - m1NewY;
+                    double lenNew = Math.Sqrt(dxNew*dxNew + dyNew*dyNew);
 
                     double scale = (lenOld > 1e-9) ? (lenNew / lenOld) : 1.0;
-                    double angOld = System.Math.Atan2(dyOld, dxOld);
-                    double angNew = System.Math.Atan2(dyNew, dxNew);
-                    double angDelta = angNew - angOld;
+                    double angOld = Math.Atan2(dyOld, dxOld);
+                    double angNew = Math.Atan2(dyNew, dxNew);
+                    double angDelta = angNew - angOld; // RADIANS
 
-                    // Prefer using the SAME helper InspectionAlignmentHelper.ApplyShapeTransform if it exists.
-                    // Signature used here (already present in codebase):
-                    //   ApplyShapeTransform(RoiModel target, RoiModel baseline,
-                    //                      double newPivotX, double newPivotY,
-                    //                      double scale, double angleDelta,
-                    //                      bool fallbackAdjustIfNeeded)
-                    // Pivot is Master1: baseline pivot -> m1Old ; new pivot -> m1New
-
-                    // Master 1 Pattern -> to m1New
+                    // Apply to Master1/2 Pattern and Search using SAME pivot old->new (Master1)
                     if (_layout.Master1Pattern != null && __baseM1P != null)
-                        InspectionAlignmentHelper.ApplyShapeTransform(_layout.Master1Pattern, __baseM1P, m1New.X, m1New.Y, scale, angDelta, false);
+                        ApplyRoiTransform(_layout.Master1Pattern, __baseM1P, m1OldX, m1OldY, m1NewX, m1NewY, scale, angDelta);
 
-                    // Master 2 Pattern -> to m2New
                     if (_layout.Master2Pattern != null && __baseM2P != null)
-                        InspectionAlignmentHelper.ApplyShapeTransform(_layout.Master2Pattern, __baseM2P, m2New.X, m2New.Y, scale, angDelta, false);
+                        ApplyRoiTransform(_layout.Master2Pattern, __baseM2P, m1OldX, m1OldY, m1NewX, m1NewY, scale, angDelta);
 
-                    // Master 1 Search -> rotate/scale around Master1 old->new
                     if (_layout.Master1Search != null && __baseM1S != null)
-                        InspectionAlignmentHelper.ApplyShapeTransform(_layout.Master1Search, __baseM1S, m1New.X, m1New.Y, scale, angDelta, false);
+                        ApplyRoiTransform(_layout.Master1Search,  __baseM1S, m1OldX, m1OldY, m1NewX, m1NewY, scale, angDelta);
 
-                    // Master 2 Search -> rotate/scale around Master1 old->new (same pivot to keep coherence)
                     if (_layout.Master2Search != null && __baseM2S != null)
-                        InspectionAlignmentHelper.ApplyShapeTransform(_layout.Master2Search, __baseM2S, m1New.X, m1New.Y, scale, angDelta, false);
+                        ApplyRoiTransform(_layout.Master2Search,  __baseM2S, m1OldX, m1OldY, m1NewX, m1NewY, scale, angDelta);
 
-                    // Heatmap ROI (_lastHeatmapRoi) -> keep overlay in sync with the SAME transform
                     if (_lastHeatmapRoi != null && __baseHeat != null)
-                        InspectionAlignmentHelper.ApplyShapeTransform(_lastHeatmapRoi, __baseHeat, m1New.X, m1New.Y, scale, angDelta, false);
+                        ApplyRoiTransform(_lastHeatmapRoi,        __baseHeat, m1OldX, m1OldY, m1NewX, m1NewY, scale, angDelta);
 
-                    // Now refresh overlays with the standard pipeline (NO changes to resize/drawing logic)
+                    // Refresh overlays with the standard pipeline (NO args for RedrawOverlaySafe)
                     try { ScheduleSyncOverlay(true); }
                     catch
                     {
                         SyncOverlayToImage();
-                        try { RedrawOverlaySafe("unified-transform"); }
+                        try { RedrawOverlaySafe(); }
                         catch { RedrawOverlay(); }
                         UpdateHeatmapOverlayLayoutAndClip();
                         try { RedrawAnalysisCrosses(); } catch {}
@@ -3473,11 +3511,11 @@ namespace BrakeDiscInspector_GUI_ROI
                     AppendLog("[UI] Unified transform applied to Masters + Heatmap (same as Inspection).");
                 }
             }
-            catch (System.Exception ex)
+            catch (Exception ex)
             {
                 AppendLog("[UI] Unified transform failed: " + ex.Message);
             }
-            // ===  END: apply the SAME transform to all other ROIs ===
+            // ===  END: apply the SAME transform to Masters + Heatmap ===
 
             SyncCurrentRoiFromInspection(insp);
         }
