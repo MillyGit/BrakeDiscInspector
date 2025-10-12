@@ -3387,6 +3387,17 @@ namespace BrakeDiscInspector_GUI_ROI
             if (insp == null)
                 return;
 
+            // === BEGIN: capture baselines for unified transform ===
+            var __baseM1P = _layout?.Master1Pattern?.Clone();
+            var __baseM1S = _layout?.Master1Search ?.Clone();
+            var __baseM2P = _layout?.Master2Pattern?.Clone();
+            var __baseM2S = _layout?.Master2Search ?.Clone();
+            var __baseHeat = _lastHeatmapRoi          ?.Clone();
+            // Guards
+            bool __haveM1 = (__baseM1P != null);
+            bool __haveM2 = (__baseM2P != null);
+            // ===  END: capture baselines for unified transform  ===
+
             var baseline = GetInspectionBaselineClone() ?? insp.Clone();
 
             InspectionAlignmentHelper.MoveInspectionTo(
@@ -3396,6 +3407,77 @@ namespace BrakeDiscInspector_GUI_ROI
                 _layout?.Master2Pattern,
                 master1,
                 master2);
+
+            // === BEGIN: apply the SAME transform to all other ROIs ===
+            try
+            {
+                // Require Master1/2 patterns to define the baseline segment (pivot + direction)
+                if (__haveM1 && __haveM2 && _layout != null)
+                {
+                    // Old centers (baseline) from patterns
+                    var m1Old = __baseM1P.GetCenter();   // WPoint (image space)
+                    var m2Old = __baseM2P.GetCenter();
+                    double dxOld = m2Old.X - m1Old.X, dyOld = m2Old.Y - m1Old.Y;
+                    double lenOld = System.Math.Sqrt(dxOld*dxOld + dyOld*dyOld);
+
+                    // New centers (from detection) passed into MoveInspectionTo
+                    var m1New = master1;
+                    var m2New = master2;
+                    double dxNew = m2New.X - m1New.X, dyNew = m2New.Y - m1New.Y;
+                    double lenNew = System.Math.Sqrt(dxNew*dxNew + dyNew*dyNew);
+
+                    double scale = (lenOld > 1e-9) ? (lenNew / lenOld) : 1.0;
+                    double angOld = System.Math.Atan2(dyOld, dxOld);
+                    double angNew = System.Math.Atan2(dyNew, dxNew);
+                    double angDelta = angNew - angOld;
+
+                    // Prefer using the SAME helper InspectionAlignmentHelper.ApplyShapeTransform if it exists.
+                    // Signature used here (already present in codebase):
+                    //   ApplyShapeTransform(RoiModel target, RoiModel baseline,
+                    //                      double newPivotX, double newPivotY,
+                    //                      double scale, double angleDelta,
+                    //                      bool fallbackAdjustIfNeeded)
+                    // Pivot is Master1: baseline pivot -> m1Old ; new pivot -> m1New
+
+                    // Master 1 Pattern -> to m1New
+                    if (_layout.Master1Pattern != null && __baseM1P != null)
+                        InspectionAlignmentHelper.ApplyShapeTransform(_layout.Master1Pattern, __baseM1P, m1New.X, m1New.Y, scale, angDelta, false);
+
+                    // Master 2 Pattern -> to m2New
+                    if (_layout.Master2Pattern != null && __baseM2P != null)
+                        InspectionAlignmentHelper.ApplyShapeTransform(_layout.Master2Pattern, __baseM2P, m2New.X, m2New.Y, scale, angDelta, false);
+
+                    // Master 1 Search -> rotate/scale around Master1 old->new
+                    if (_layout.Master1Search != null && __baseM1S != null)
+                        InspectionAlignmentHelper.ApplyShapeTransform(_layout.Master1Search, __baseM1S, m1New.X, m1New.Y, scale, angDelta, false);
+
+                    // Master 2 Search -> rotate/scale around Master1 old->new (same pivot to keep coherence)
+                    if (_layout.Master2Search != null && __baseM2S != null)
+                        InspectionAlignmentHelper.ApplyShapeTransform(_layout.Master2Search, __baseM2S, m1New.X, m1New.Y, scale, angDelta, false);
+
+                    // Heatmap ROI (_lastHeatmapRoi) -> keep overlay in sync with the SAME transform
+                    if (_lastHeatmapRoi != null && __baseHeat != null)
+                        InspectionAlignmentHelper.ApplyShapeTransform(_lastHeatmapRoi, __baseHeat, m1New.X, m1New.Y, scale, angDelta, false);
+
+                    // Now refresh overlays with the standard pipeline (NO changes to resize/drawing logic)
+                    try { ScheduleSyncOverlay(true); }
+                    catch
+                    {
+                        SyncOverlayToImage();
+                        try { RedrawOverlaySafe("unified-transform"); }
+                        catch { RedrawOverlay(); }
+                        UpdateHeatmapOverlayLayoutAndClip();
+                        try { RedrawAnalysisCrosses(); } catch {}
+                    }
+
+                    AppendLog("[UI] Unified transform applied to Masters + Heatmap (same as Inspection).");
+                }
+            }
+            catch (System.Exception ex)
+            {
+                AppendLog("[UI] Unified transform failed: " + ex.Message);
+            }
+            // ===  END: apply the SAME transform to all other ROIs ===
 
             SyncCurrentRoiFromInspection(insp);
         }
