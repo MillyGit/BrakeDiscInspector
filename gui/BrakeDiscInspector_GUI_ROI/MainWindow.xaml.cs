@@ -3999,20 +3999,80 @@ namespace BrakeDiscInspector_GUI_ROI
             bool __haveM2 = (__baseM2P != null);
             // ===  END: capture baselines for unified transform  ===
 
-            var baseline = _useFixedInspectionBaseline
-                           ? (_inspectionBaselineFixed ?? (_inspectionBaselineFixed = insp.Clone()))
-                           : (GetInspectionBaselineClone() ?? insp.Clone());
+            var baselineInspection = _useFixedInspectionBaseline
+                                      ? (_inspectionBaselineFixed ?? (_inspectionBaselineFixed = insp.Clone()))
+                                      : (GetInspectionBaselineClone() ?? insp.Clone());
 
-            InspectionAlignmentHelper.MoveInspectionTo(
-                insp,
-                baseline,
-                _layout?.Master1Pattern,
-                _layout?.Master2Pattern,
-                master1,
-                master2);
+            double m1OldX = 0, m1OldY = 0;
+            double m2OldX = 0, m2OldY = 0;
+            double m1NewX = master1.X, m1NewY = master1.Y;
+            double m2NewX = master2.X, m2NewY = master2.Y;
+            double scale = 1.0;
+            double effectiveScale = 1.0;
+            double angDelta = 0.0;
+            bool __canTransform = false;
+
+            if (__haveM1 && __haveM2 && baselineInspection != null)
+            {
+                var centerM1 = CenterOf(__baseM1P);
+                var centerM2 = CenterOf(__baseM2P);
+                m1OldX = centerM1.cx;
+                m1OldY = centerM1.cy;
+                m2OldX = centerM2.cx;
+                m2OldY = centerM2.cy;
+
+                double dxOld = m2OldX - m1OldX;
+                double dyOld = m2OldY - m1OldY;
+                double lenOld = Math.Sqrt(dxOld * dxOld + dyOld * dyOld);
+
+                double dxNew = m2NewX - m1NewX;
+                double dyNew = m2NewY - m1NewY;
+                double lenNew = Math.Sqrt(dxNew * dxNew + dyNew * dyNew);
+
+                scale = (lenOld > 1e-9) ? (lenNew / lenOld) : 1.0;
+                effectiveScale = _lockAnalyzeScale ? 1.0 : scale;
+                AppendLog($"[UI] AnalyzeMaster scale lock={_lockAnalyzeScale}, scale={scale:F6} -> eff={effectiveScale:F6}");
+
+                double angOld = Math.Atan2(dyOld, dxOld);
+                double angNew = Math.Atan2(dyNew, dxNew);
+                angDelta = angNew - angOld;
+
+                InspLog($"[Transform] PIVOT/ANGLE: m1Old=({m1OldX:F3},{m1OldY:F3}) → m1New=({m1NewX:F3},{m1NewY:F3}), angΔ={angDelta*180/Math.PI:F3}°, effScale={effectiveScale:F6}");
+                __canTransform = true;
+            }
+
+            if (__canTransform && baselineInspection != null)
+            {
+                // === Inspection ROI: use the SAME transform pipeline as Heatmap/Masters ===
+                InspLog($"[Transform] INSPECT BEFORE: {FInsp(insp)}");
+                InspLog($"[Transform] pivotOld=({m1OldX:F3},{m1OldY:F3}), pivotNew=({m1NewX:F3},{m1NewY:F3}), effScale={effectiveScale:F6}, angΔ={angDelta*180/Math.PI:F3}°");
+
+                double __inspW0Lock = __inspW0;
+                double __inspH0Lock = __inspH0;
+                double __inspR0Lock = __inspR0;
+                double __inspRin0Lock = __inspRin0;
+
+                ApplyRoiTransform(insp, baselineInspection, m1OldX, m1OldY, m1NewX, m1NewY, effectiveScale, angDelta);
+
+                if (_lockAnalyzeScale && insp != null)
+                {
+                    double cx = insp.CX, cy = insp.CY;
+                    insp.Width  = __inspW0Lock;
+                    insp.Height = __inspH0Lock;
+                    insp.R      = __inspR0Lock;
+                    insp.RInner = __inspRin0Lock;
+                    insp.Left = cx - (__inspW0Lock * 0.5);
+                    insp.Top  = cy - (__inspH0Lock * 0.5);
+                }
+
+                InspLog($"[Transform] INSPECT AFTER : {FInsp(insp)}");
+                double dCx = insp.CX - baselineInspection.CX;
+                double dCy = insp.CY - baselineInspection.CY;
+                InspLog($"[Transform] INSPECT Δ vs baseline: dCX={dCx:F3}, dCY={dCy:F3}");
+            }
 
             // === Size lock: restore original size; keep center & rotation from alignment ===
-            if (_lockAnalyzeScale && insp != null)
+            if (!__canTransform && _lockAnalyzeScale && insp != null)
             {
                 double cx = insp.CX, cy = insp.CY;
                 insp.Width  = __inspW0;
@@ -4043,28 +4103,8 @@ namespace BrakeDiscInspector_GUI_ROI
             // === BEGIN: apply the SAME transform to Masters + Heatmap (no inaccessible calls) ===
             try
             {
-                if (__haveM1 && __haveM2 && _layout != null)
+                if (__canTransform && _layout != null)
                 {
-                    // Old centers from baselines (tuples: use deconstruction, NOT .X/.Y)
-                    var (m1OldX, m1OldY) = CenterOf(__baseM1P);
-                    var (m2OldX, m2OldY) = CenterOf(__baseM2P);
-                    double dxOld = m2OldX - m1OldX, dyOld = m2OldY - m1OldY;
-                    double lenOld = Math.Sqrt(dxOld*dxOld + dyOld*dyOld);
-
-                    // New centers from detection (WPoint master1/master2)
-                    double m1NewX = master1.X, m1NewY = master1.Y;
-                    double m2NewX = master2.X, m2NewY = master2.Y;
-                    double dxNew = m2NewX - m1NewX, dyNew = m2NewY - m1NewY;
-                    double lenNew = Math.Sqrt(dxNew*dxNew + dyNew*dyNew);
-
-                    double scale = (lenOld > 1e-9) ? (lenNew / lenOld) : 1.0;
-                    double effectiveScale = _lockAnalyzeScale ? 1.0 : scale;
-                    AppendLog($"[UI] AnalyzeMaster scale lock={_lockAnalyzeScale}, scale={scale:F6} -> eff={effectiveScale:F6}");
-                    double angOld = Math.Atan2(dyOld, dxOld);
-                    double angNew = Math.Atan2(dyNew, dxNew);
-                    double angDelta = angNew - angOld; // RADIANS
-
-                    // Apply to Master1/2 Pattern and Search using SAME pivot old->new (Master1)
                     if (_layout.Master1Pattern != null && __baseM1P != null)
                         ApplyRoiTransform(_layout.Master1Pattern, __baseM1P, m1OldX, m1OldY, m1NewX, m1NewY, effectiveScale, angDelta);
 
