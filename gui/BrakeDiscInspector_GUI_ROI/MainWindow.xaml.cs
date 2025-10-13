@@ -5,6 +5,7 @@ using OpenCvSharp.WpfExtensions;
 using BrakeDiscInspector_GUI_ROI.Workflow;
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Linq;
@@ -68,6 +69,17 @@ namespace BrakeDiscInspector_GUI_ROI
 
         private WorkflowViewModel? _workflowViewModel;
         private double _heatmapOverlayOpacity = 0.6;
+
+        // === ROI diagnostics ===
+        private static readonly string RoiDiagLogPath =
+            System.IO.Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "BrakeDiscInspector", "logs", "roi_load_coords.log");
+
+        private readonly object _roiDiagLock = new object();
+        private string _roiDiagSessionId = System.DateTime.Now.ToString("yyyyMMdd-HHmmss");
+        private int _roiDiagEventSeq = 0;
+        private bool _roiDiagEnabled = true;   // flip to false to silence
 
         private System.Windows.Media.Imaging.BitmapSource _lastHeatmapBmp;          // heatmap image in image space
         private HeatmapRoiModel _lastHeatmapRoi;              // ROI (image-space) that defines the heatmap clipping area
@@ -197,6 +209,174 @@ namespace BrakeDiscInspector_GUI_ROI
             public RoiShapeType ShapeType => (RoiShapeType)Shape;
         }
         // ---------- Logging helpers ----------
+
+        private void RoiDiagLog(string line)
+        {
+            if (!_roiDiagEnabled) return;
+            try
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(RoiDiagLogPath)!);
+                var sb = new StringBuilder(256);
+                sb.Append("[").Append(DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff")).Append("] ");
+                sb.Append("#").Append(++_roiDiagEventSeq).Append(" ");
+                sb.Append("[").Append(_roiDiagSessionId).Append("] ");
+                sb.Append(line);
+                var text = sb.ToString() + Environment.NewLine;
+                lock (_roiDiagLock)
+                {
+                    File.AppendAllText(RoiDiagLogPath, text, Encoding.UTF8);
+                }
+            }
+            catch { /* never throw from logging */ }
+        }
+
+        // Pretty print rectangle and center
+        private static string FRect(double L, double T, double W, double H)
+            => $"L={L:F3},T={T:F3},W={W:F3},H={H:F3},CX={(L+W*0.5):F3},CY={(T+H*0.5):F3}";
+
+        private static string FRoiImg(RoiModel r)
+        {
+            if (r == null) return "<null>";
+            return $"Role={r.Role} Img(L={r.Left:F3},T={r.Top:F3},W={r.Width:F3},H={r.Height:F3},CX={r.CX:F3},CY={r.CY:F3},R={r.R:F3},Rin={r.RInner:F3})";
+        }
+
+        // Dump current Image→Canvas transform and related surfaces
+        private void RoiDiagDumpTransform(string where)
+        {
+            try
+            {
+                // image source size
+                int srcW = 0, srcH = 0;
+                try
+                {
+                    var bs = ImgMain?.Source as System.Windows.Media.Imaging.BitmapSource;
+                    if (bs != null) { srcW = bs.PixelWidth; srcH = bs.PixelHeight; }
+                } catch {}
+
+                // viewport and canvas sizes
+                double imgVW = ImgMain?.ActualWidth  ?? 0;
+                double imgVH = ImgMain?.ActualHeight ?? 0;
+                double canW  = CanvasROI?.ActualWidth  ?? 0;
+                double canH  = CanvasROI?.ActualHeight ?? 0;
+
+                // project’s transform (sx,sy,offX,offY)
+                var t = GetImageToCanvasTransform();
+                double sx = t.Item1, sy = t.Item2, offX = t.Item3, offY = t.Item4;
+
+                RoiDiagLog($"[{where}] ImgSrc={srcW}x{srcH} ImgView={imgVW:F3}x{imgVH:F3} CanvasROI={canW:F3}x{canH:F3}  Transform: sx={sx:F9}, sy={sy:F9}, offX={offX:F3}, offY={offY:F3}  Stretch={ImgMain?.Stretch}");
+            }
+            catch (System.Exception ex)
+            {
+                RoiDiagLog($"[{where}] DumpTransform EX: {ex.Message}");
+            }
+        }
+
+        // Convert image→canvas for a RoiModel using existing project conversion
+        private System.Windows.Rect RoiDiagImageToCanvasRect(RoiModel r)
+        {
+            // Use existing method that the app already relies on
+            var rc = ImageToCanvas(r);
+            return new System.Windows.Rect(rc.Left, rc.Top, rc.Width, rc.Height);
+        }
+
+        // Try to find a UI element for a ROI and read its actual canvas placement
+        private bool RoiDiagTryFindUiRect(RoiModel r, out System.Windows.Rect uiRect, out string name)
+        {
+            uiRect = new System.Windows.Rect(); name = "";
+            try
+            {
+                if (CanvasROI == null || r == null) return false;
+                // Heuristics: children that are FrameworkElement with Name/Tag containing the Role or "roi"
+                foreach (var o in CanvasROI.Children)
+                {
+                    if (o is System.Windows.FrameworkElement fe)
+                    {
+                        var tag = fe.Tag as string;
+                        var nm  = fe.Name ?? "";
+                        bool matches =
+                            (!string.IsNullOrEmpty(tag) && tag.IndexOf("roi", System.StringComparison.OrdinalIgnoreCase) >= 0) ||
+                            (!string.IsNullOrEmpty(nm)  && nm.IndexOf(r.Role.ToString(), System.StringComparison.OrdinalIgnoreCase) >= 0);
+
+                        if (!matches) continue;
+
+                        double L = System.Windows.Controls.Canvas.GetLeft(fe);
+                        double T = System.Windows.Controls.Canvas.GetTop(fe);
+                        double W = fe.ActualWidth;
+                        double H = fe.ActualHeight;
+                        if (double.IsNaN(L)) L = 0;
+                        if (double.IsNaN(T)) T = 0;
+                        uiRect = new System.Windows.Rect(L, T, W, H);
+                        name = string.IsNullOrEmpty(nm) ? (tag ?? fe.GetType().Name) : nm;
+                        return true;
+                    }
+                }
+            }
+            catch {}
+            return false;
+        }
+
+        // Dump expected canvas rect vs. actual UI rect (if any)
+        private void RoiDiagDumpRoi(string where, string label, RoiModel r)
+        {
+            try
+            {
+                if (r == null)
+                {
+                    RoiDiagLog($"[{where}] {label}: <null>");
+                    return;
+                }
+                var rcExp = RoiDiagImageToCanvasRect(r);
+                string line = $"[{where}] {label}: IMG({FRoiImg(r)})  EXP-CANVAS({FRect(rcExp.Left, rcExp.Top, rcExp.Width, rcExp.Height)})";
+
+                if (RoiDiagTryFindUiRect(r, out var rcUi, out var nm))
+                {
+                    double dx = rcUi.Left - rcExp.Left;
+                    double dy = rcUi.Top  - rcExp.Top;
+                    double dw = rcUi.Width  - rcExp.Width;
+                    double dh = rcUi.Height - rcExp.Height;
+                    line += $"  UI[{nm}]({FRect(rcUi.Left, rcUi.Top, rcUi.Width, rcUi.Height)})  Δpos=({dx:F3},{dy:F3}) Δsize=({dw:F3},{dh:F3})";
+                }
+                RoiDiagLog(line);
+            }
+            catch (System.Exception ex)
+            {
+                RoiDiagLog($"[{where}] {label}: EX: {ex.Message}");
+            }
+        }
+
+        // Snapshot of ALL canvas children (for forensic inspection)
+        private void RoiDiagDumpCanvasChildren(string where)
+        {
+            try
+            {
+                if (CanvasROI == null) { RoiDiagLog($"[{where}] CanvasROI=<null>"); return; }
+                RoiDiagLog($"[{where}] CanvasROI children count = {CanvasROI.Children.Count}");
+                foreach (var o in CanvasROI.Children)
+                {
+                    if (o is System.Windows.FrameworkElement fe)
+                    {
+                        double L = System.Windows.Controls.Canvas.GetLeft(fe);
+                        double T = System.Windows.Controls.Canvas.GetTop(fe);
+                        double W = fe.ActualWidth;
+                        double H = fe.ActualHeight;
+                        if (double.IsNaN(L)) L = 0;
+                        if (double.IsNaN(T)) T = 0;
+                        string nm = fe.Name ?? fe.GetType().Name;
+                        string tg = fe.Tag?.ToString() ?? "";
+                        RoiDiagLog($"    FE: {nm}  Tag='{tg}'  {FRect(L,T,W,H)}  Z={System.Windows.Controls.Panel.GetZIndex(fe)}");
+                    }
+                    else
+                    {
+                        RoiDiagLog($"    Child: {o?.GetType().Name ?? "<null>"}");
+                    }
+                }
+            }
+            catch (System.Exception ex)
+            {
+                RoiDiagLog($"[{where}] DumpCanvasChildren EX: {ex.Message}");
+            }
+        }
+
         private static readonly string HeatmapLogPath = @"C:\BDI\logs\gui_heatmap.log";
 
         private static void LogHeatmap(string msg)
@@ -569,6 +749,26 @@ namespace BrakeDiscInspector_GUI_ROI
         public MainWindow()
         {
             InitializeComponent();
+            this.SizeChanged += (s,e) =>
+            {
+                try
+                {
+                    RoiDiagDumpTransform("sizechanged");
+                    if (_layout != null)
+                    {
+                        RoiDiagDumpRoi("sizechanged", "Master1Pattern", _layout.Master1Pattern);
+                        RoiDiagDumpRoi("sizechanged", "Master1Search ", _layout.Master1Search);
+                        RoiDiagDumpRoi("sizechanged", "Master2Pattern", _layout.Master2Pattern);
+                        RoiDiagDumpRoi("sizechanged", "Master2Search ", _layout.Master2Search);
+                        RoiDiagDumpRoi("sizechanged", "Inspection   ", _layout.Inspection);
+                    }
+                    if (_lastHeatmapRoi != null)
+                        RoiDiagDumpRoi("sizechanged", "HeatmapROI   ", _lastHeatmapRoi);
+                    Dispatcher.InvokeAsync(() => RoiDiagDumpCanvasChildren("sizechanged:UI-snapshot"),
+                                           System.Windows.Threading.DispatcherPriority.Render);
+                }
+                catch {}
+            };
             EnsureHeatmapCheckbox();
             EnsureHeatmapScaleSlider();
             if (_sldHeatmapScale != null)
@@ -994,6 +1194,33 @@ namespace BrakeDiscInspector_GUI_ROI
             AppendLog($"Imagen cargada: {_imgW}x{_imgH}  (Canvas: {CanvasROI.ActualWidth:0}x{CanvasROI.ActualHeight:0})");
             RedrawOverlaySafe();
             ClearHeatmapOverlay();
+
+            // === ROI DIAG: after image load & overlay sync ===
+            try
+            {
+                RoiDiagDumpTransform("imgload:after-sync");
+
+                // Dump all known ROIs from layout
+                if (_layout != null)
+                {
+                    RoiDiagDumpRoi("imgload", "Master1Pattern", _layout.Master1Pattern);
+                    RoiDiagDumpRoi("imgload", "Master1Search ", _layout.Master1Search);
+                    RoiDiagDumpRoi("imgload", "Master2Pattern", _layout.Master2Pattern);
+                    RoiDiagDumpRoi("imgload", "Master2Search ", _layout.Master2Search);
+                    RoiDiagDumpRoi("imgload", "Inspection   ", _layout.Inspection);
+                }
+                // Heatmap ROI if available
+                if (_lastHeatmapRoi != null)
+                    RoiDiagDumpRoi("imgload", "HeatmapROI   ", _lastHeatmapRoi);
+
+                // Snapshot of canvas children after layout
+                Dispatcher.InvokeAsync(() => RoiDiagDumpCanvasChildren("imgload:UI-snapshot"),
+                                       System.Windows.Threading.DispatcherPriority.Render);
+            }
+            catch (System.Exception ex)
+            {
+                RoiDiagLog("imgload: diagnostics EX: " + ex.Message);
+            }
 
             _hasLoadedImage = true;
             EnablePresetsTab(true);
