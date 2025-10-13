@@ -245,7 +245,7 @@ namespace BrakeDiscInspector_GUI_ROI
 
         // Pretty print rectangle and center
         private static string FRect(double L, double T, double W, double H)
-            => $"L={L:F3},T={T:F3},W={W:F3},H={H:F3},CX={(L+W*0.5):F3},CY={(T+H*0.5):F3}";
+            => $"L={L:F3},T={T:F3},W={W:F3},H={H:F3},CX={(L+W*0.5):F3},CY={(T+H*0.5):F3})";
 
         private static string FRoiImg(RoiModel r)
         {
