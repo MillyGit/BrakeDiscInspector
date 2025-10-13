@@ -3319,6 +3319,17 @@ namespace BrakeDiscInspector_GUI_ROI
 
                     KeepOnlyMaster2InCanvas();
 
+                    // Ensure overlay fully refreshed so Master2 doesn't appear missing
+                    try { ScheduleSyncOverlay(true); }
+                    catch
+                    {
+                        SyncOverlayToImage();
+                        try { RedrawOverlaySafe(); } catch { RedrawOverlay(); }
+                        UpdateHeatmapOverlayLayoutAndClip();
+                        try { RedrawAnalysisCrosses(); } catch {}
+                    }
+                    AppendLog("[UI] Redraw forced after saving Master2-Search.");
+
                     _tmpBuffer = null;
 
                     // En este punto M1+M2 podrían estar completos → permite inspección pero NO la exige
@@ -3346,8 +3357,7 @@ namespace BrakeDiscInspector_GUI_ROI
             var savedRoiModel = savedRoi;
 
             bool skipRedrawForMasterInspection = savedRoiModel != null &&
-                (savedRoiModel.Role == RoiRole.Master1Search ||
-                 savedRoiModel.Role == RoiRole.Master2Search);
+                (savedRoiModel.Role == RoiRole.Master1Search);
 
             if (skipRedrawForMasterInspection)
             {
@@ -3883,6 +3893,17 @@ namespace BrakeDiscInspector_GUI_ROI
                 _layout?.Master2Pattern,
                 master1,
                 master2);
+
+            try
+            {
+                // Refresh baseline to avoid cumulative drift in subsequent runs
+                SetInspectionBaseline(insp.Clone());
+                AppendLog("[UI] Inspection baseline refreshed after relocation.");
+            }
+            catch (Exception ex)
+            {
+                AppendLog("[UI] Failed to refresh inspection baseline: " + ex.Message);
+            }
 
             // === BEGIN: apply the SAME transform to Masters + Heatmap (no inaccessible calls) ===
             try

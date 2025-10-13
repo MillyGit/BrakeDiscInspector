@@ -206,7 +206,7 @@ namespace BrakeDiscInspector_GUI_ROI
                 brush,
                 pixelsPerDip);
 
-            var labelPos = new System.Windows.Point(anchor.X, anchor.Y - ft.Height - 4);
+            var labelPos = new System.Windows.Point(anchor.X, anchor.Y + 2);
             dc.DrawText(ft, labelPos);
         }
 
