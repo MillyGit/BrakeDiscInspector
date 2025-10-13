@@ -83,7 +83,18 @@ namespace BrakeDiscInspector_GUI_ROI
 
         private System.Windows.Media.Imaging.BitmapSource _lastHeatmapBmp;          // heatmap image in image space
         private HeatmapRoiModel _lastHeatmapRoi;              // ROI (image-space) that defines the heatmap clipping area
+        // --- Analyze Master drift control + logging ---
+        private bool _useFixedInspectionBaseline = true;  // keep a fixed seed baseline to avoid cumulative drift
+        private RoiModel? _inspectionBaselineFixed;       // set on first analyze (or first time MoveInspectionTo runs)
+
+        // keep size locked (no scaling) but allow rotation
         private bool _lockAnalyzeScale = true;  // if true, sizes are preserved (scale forced to 1.0) during Analyze Master
+
+        // logging to same folder as other GUI logs
+        private static readonly string InspAlignLogPath = System.IO.Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "BrakeDiscInspector", "logs", "roi_analyze_master.log");
+        private readonly object _inspLogLock = new object();
 
         // IMAGE-space centers (pixels) of found masters
         private CvPoint? _lastM1CenterPx;
@@ -3818,6 +3829,21 @@ namespace BrakeDiscInspector_GUI_ROI
 
         // --------- AppendLog (para evitar CS0119 en invocaciones) ---------
 
+        private static string FInsp(RoiModel r) =>
+            r == null ? "<null>"
+                      : $"L={r.Left:F3},T={r.Top:F3},W={r.Width:F3},H={r.Height:F3},CX={r.CX:F3},CY={r.CY:F3},R={r.R:F3},Rin={r.RInner:F3},Ang={r.AngleDeg:F3}";
+
+        private void InspLog(string msg)
+        {
+            try
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(InspAlignLogPath)!);
+                var line = $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}] {msg}{Environment.NewLine}";
+                lock (_inspLogLock) { File.AppendAllText(InspAlignLogPath, line, Encoding.UTF-8); }
+            }
+            catch { /* never throw from logging */ }
+        }
+
         // Return a robust center for any RoiModel (prefer CX/CY; fallback to Left/Top/Width/Height)
         private static (double cx, double cy) CenterOf(RoiModel r)
         {
@@ -3872,11 +3898,24 @@ namespace BrakeDiscInspector_GUI_ROI
 
         private void MoveInspectionTo(RoiModel insp, WPoint master1, WPoint master2)
         {
-            // -- lock-scale: capture pre-move size of Inspection ROI --
-            double __inspW0  = insp?.Width  ?? 0;
-            double __inspH0  = insp?.Height ?? 0;
-            double __inspR0  = insp?.R      ?? 0;
-            double __inspRin0= insp?.RInner ?? 0;
+            // === Inspect ROI drift control: capture pre-state and ensure fixed baseline seed ===
+            InspLog($"[Analyze] BEFORE insp: {FInsp(insp)}  M1=({master1.X:F3},{master1.Y:F3}) M2=({master2.X:F3},{master2.Y:F3})");
+
+            if (_useFixedInspectionBaseline)
+            {
+                // Seed the fixed baseline only once from the first known inspection ROI
+                if (_inspectionBaselineFixed == null && insp != null)
+                {
+                    _inspectionBaselineFixed = insp.Clone();
+                    InspLog("[Analyze] Seeded fixed Inspection baseline from current ROI.");
+                }
+            }
+
+            // Keep original size (for restoring size if any helper scales it)
+            double __inspW0   = insp?.Width  ?? 0;
+            double __inspH0   = insp?.Height ?? 0;
+            double __inspR0   = insp?.R      ?? 0;
+            double __inspRin0 = insp?.RInner ?? 0;
 
             if (insp == null)
                 return;
@@ -3891,7 +3930,9 @@ namespace BrakeDiscInspector_GUI_ROI
             bool __haveM2 = (__baseM2P != null);
             // ===  END: capture baselines for unified transform  ===
 
-            var baseline = GetInspectionBaselineClone() ?? insp.Clone();
+            var baseline = _useFixedInspectionBaseline
+                           ? (_inspectionBaselineFixed ?? (_inspectionBaselineFixed = insp.Clone()))
+                           : (GetInspectionBaselineClone() ?? insp.Clone());
 
             InspectionAlignmentHelper.MoveInspectionTo(
                 insp,
@@ -3901,30 +3942,33 @@ namespace BrakeDiscInspector_GUI_ROI
                 master1,
                 master2);
 
-            // -- lock-scale: restore inspection size, keep its new center --
             if (_lockAnalyzeScale && insp != null)
             {
-                double cx = insp.CX;
-                double cy = insp.CY;
-                // restore size
+                double cx = insp.CX, cy = insp.CY;
+                // restore size only; keep rotation and center from alignment
                 insp.Width  = __inspW0;
                 insp.Height = __inspH0;
                 insp.R      = __inspR0;
                 insp.RInner = __inspRin0;
-                // re-center bounding box to preserved size
                 insp.Left = cx - (__inspW0 * 0.5);
                 insp.Top  = cy - (__inspH0 * 0.5);
             }
 
-            try
+            if (!_useFixedInspectionBaseline)
             {
-                // Refresh baseline to avoid cumulative drift in subsequent runs
-                SetInspectionBaseline(insp.Clone());
-                AppendLog("[UI] Inspection baseline refreshed after relocation.");
+                try
+                {
+                    SetInspectionBaseline(insp.Clone());
+                    AppendLog("[UI] Inspection baseline refreshed (rolling mode).");
+                }
+                catch (Exception ex)
+                {
+                    AppendLog("[UI] Failed to refresh inspection baseline: " + ex.Message);
+                }
             }
-            catch (Exception ex)
+            else
             {
-                AppendLog("[UI] Failed to refresh inspection baseline: " + ex.Message);
+                AppendLog("[UI] Fixed Inspection baseline in use (no refresh).");
             }
 
             // === BEGIN: apply the SAME transform to Masters + Heatmap (no inaccessible calls) ===
@@ -3989,6 +4033,9 @@ namespace BrakeDiscInspector_GUI_ROI
             // ===  END: apply the SAME transform to Masters + Heatmap ===
 
             SyncCurrentRoiFromInspection(insp);
+
+            InspLog($"[Analyze] AFTER  insp: {FInsp(insp)}");
+            InspLog($"[Analyze] DELTA  : dCX={(insp.CX - (_inspectionBaselineFixed?.CX ?? insp.CX)):F3}, dCY={(insp.CY - (_inspectionBaselineFixed?.CY ?? insp.CY)):F3}  (fixedBaseline={_useFixedInspectionBaseline})");
         }
 
         private RoiModel? GetInspectionBaselineClone()
