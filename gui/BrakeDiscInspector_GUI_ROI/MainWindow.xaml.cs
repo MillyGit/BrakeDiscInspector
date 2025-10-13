@@ -3871,14 +3871,19 @@ namespace BrakeDiscInspector_GUI_ROI
             try
             {
                 var bs = ImgMain?.Source as BitmapSource;
-                int w = bs?.PixelWidth ?? 0;
-                int h = bs?.PixelHeight ?? 0;
-                double dpiX = bs?.DpiX ?? 96.0;
-                double dpiY = bs?.DpiY ?? 96.0;
-                string fmt = bs?.Format?.ToString() ?? string.Empty;
+                if (bs == null) return "0x0|0|0|";
+                int w = bs.PixelWidth;
+                int h = bs.PixelHeight;
+                double dpiX = bs.DpiX;
+                double dpiY = bs.DpiY;
+                // PixelFormat is a struct; do NOT use '?.' here
+                string fmt = bs.Format.ToString();
                 return $"{w}x{h}|{dpiX:F2}|{dpiY:F2}|{fmt}";
             }
-            catch { return "0x0|0|0|"; }
+            catch
+            {
+                return "0x0|0|0|";
+            }
         }
 
         private void SeedInspectionBaselineOnce(RoiModel? insp, string seedKey)
