@@ -83,15 +83,14 @@ namespace BrakeDiscInspector_GUI_ROI
 
         private System.Windows.Media.Imaging.BitmapSource _lastHeatmapBmp;          // heatmap image in image space
         private HeatmapRoiModel _lastHeatmapRoi;              // ROI (image-space) that defines the heatmap clipping area
-        // --- Inspection Analyze drift control + logging ---
-        private bool _useFixedInspectionBaseline = true;    // keep a fixed seed per image; prevents cumulative drift
-        private RoiModel? _inspectionBaselineFixed;         // fixed seed for this image
-        private bool _inspectionBaselineSeededForImage = false; // seeded once per image/layout
+        // --- Fixed baseline per image (no drift) ---
+        private bool _useFixedInspectionBaseline = true;        // keep using fixed baseline (must be true)
+        private RoiModel? _inspectionBaselineFixed = null;      // the fixed baseline for the current image
+        private bool _inspectionBaselineSeededForImage = false; // has the baseline been seeded for the current image?
+        private string _lastImageSeedKey = "";                  // “signature” of the currently loaded image
 
-        // keep size locked (no scaling) but allow rotation (must remain true)
-        private bool _lockAnalyzeScale = true;              // if exists, ensure it is true
+        private bool _lockAnalyzeScale = true;                  // keep ROI size fixed during Analyze
 
-        // logging (same folder as other GUI logs)
         private static readonly string InspAlignLogPath = System.IO.Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             "BrakeDiscInspector", "logs", "roi_analyze_master.log");
@@ -1208,15 +1207,27 @@ namespace BrakeDiscInspector_GUI_ROI
             RedrawOverlaySafe();
             ClearHeatmapOverlay();
 
-            // === Inspection baseline reset & seed for NEW image/layout ===
-            _inspectionBaselineFixed = null;
-            _inspectionBaselineSeededForImage = false;
-            try
             {
-                // Prefer the model’s persisted inspection ROI; otherwise use the current on-screen inspection if available
-                SeedInspectionBaselineOnce(_layout?.Inspection ?? _layout?.InspectionBaseline);
+                var seedKey = ComputeImageSeedKey();
+                // New image => reset and seed
+                if (!string.Equals(seedKey, _lastImageSeedKey, System.StringComparison.Ordinal))
+                {
+                    _inspectionBaselineFixed = null;
+                    _inspectionBaselineSeededForImage = false;
+                    InspLog($"[Seed] New image detected, oldKey='{_lastImageSeedKey}' newKey='{seedKey}' -> reset baseline.");
+                    try
+                    {
+                        // Prefer persisted inspection ROI if available; else current on-screen inspection
+                        SeedInspectionBaselineOnce(_layout?.Inspection ?? _layout?.InspectionBaseline, seedKey);
+                    }
+                    catch { /* ignore */ }
+                }
+                else
+                {
+                    // Same image => do NOTHING (no re-seed)
+                    InspLog($"[Seed] Same image key='{seedKey}', no re-seed.");
+                }
             }
-            catch { /* ignore seeding errors */ }
 
             // === ROI DIAG: after image load & overlay sync ===
             try
@@ -3840,7 +3851,7 @@ namespace BrakeDiscInspector_GUI_ROI
 
         // --------- AppendLog (para evitar CS0119 en invocaciones) ---------
 
-        private static string FInsp(RoiModel r) =>
+        private static string FInsp(RoiModel? r) =>
             r == null ? "<null>"
                       : $"L={r.Left:F3},T={r.Top:F3},W={r.Width:F3},H={r.Height:F3},CX={r.CX:F3},CY={r.CY:F3},R={r.R:F3},Rin={r.RInner:F3},Ang={r.AngleDeg:F3}";
 
@@ -3855,15 +3866,39 @@ namespace BrakeDiscInspector_GUI_ROI
             catch { /* never throw from logging */ }
         }
 
-        // Seed fixed baseline ONCE per image/layout load
-        private void SeedInspectionBaselineOnce(RoiModel? insp)
+        private string ComputeImageSeedKey()
+        {
+            try
+            {
+                var bs = ImgMain?.Source as BitmapSource;
+                int w = bs?.PixelWidth ?? 0;
+                int h = bs?.PixelHeight ?? 0;
+                double dpiX = bs?.DpiX ?? 96.0;
+                double dpiY = bs?.DpiY ?? 96.0;
+                string fmt = bs?.Format?.ToString() ?? string.Empty;
+                return $"{w}x{h}|{dpiX:F2}|{dpiY:F2}|{fmt}";
+            }
+            catch { return "0x0|0|0|"; }
+        }
+
+        private void SeedInspectionBaselineOnce(RoiModel? insp, string seedKey)
         {
             if (!_useFixedInspectionBaseline) return;
-            if (_inspectionBaselineSeededForImage) return;
-            if (insp == null) return;
+            if (_inspectionBaselineSeededForImage)
+            {
+                InspLog($"[Seed] Skip: already seeded for key='{_lastImageSeedKey}'");
+                return;
+            }
+            if (insp == null)
+            {
+                InspLog("[Seed] Skip: insp is null");
+                return;
+            }
+
             _inspectionBaselineFixed = insp.Clone();
             _inspectionBaselineSeededForImage = true;
-            InspLog("[Analyze] Fixed baseline SEEDED on image/layout load: " + FInsp(_inspectionBaselineFixed));
+            _lastImageSeedKey = seedKey;
+            InspLog($"[Seed] Fixed baseline SEEDED (key='{seedKey}') from: {FInsp(_inspectionBaselineFixed)}");
         }
 
         // Return a robust center for any RoiModel (prefer CX/CY; fallback to Left/Top/Width/Height)
@@ -3920,15 +3955,24 @@ namespace BrakeDiscInspector_GUI_ROI
 
         private void MoveInspectionTo(RoiModel insp, WPoint master1, WPoint master2)
         {
-            // === AnalyzeMaster: BEFORE state log ===
-            InspLog($"[Analyze] BEFORE insp: {FInsp(insp)}  M1=({master1.X:F3},{master1.Y:F3}) M2=({master2.X:F3},{master2.Y:F3})");
+            // === Analyze: BEFORE state & current image key ===
+            var __seedKeyNow = ComputeImageSeedKey();
+            InspLog($"[Analyze] Key='{__seedKeyNow}' BEFORE insp: {FInsp(insp)}  M1=({master1.X:F3},{master1.Y:F3}) M2=({master2.X:F3},{master2.Y:F3})");
 
-            // Ensure fixed baseline is seeded (defensive, in case image-load hook missed it)
+            // DEFENSIVE: do NOT re-seed here if already seeded for this image
             if (_useFixedInspectionBaseline && !_inspectionBaselineSeededForImage && insp != null)
             {
-                _inspectionBaselineFixed = insp.Clone();
-                _inspectionBaselineSeededForImage = true;
-                InspLog("[Analyze] Fixed baseline seeded (fallback in MoveInspectionTo): " + FInsp(_inspectionBaselineFixed));
+                // Only seed if the image key is different (should not happen if [3] ran properly)
+                if (!string.Equals(__seedKeyNow, _lastImageSeedKey, System.StringComparison.Ordinal))
+                {
+                    SeedInspectionBaselineOnce(insp, __seedKeyNow);
+                    InspLog("[Analyze] Fallback seed performed (unexpected), key differed.");
+                }
+                else
+                {
+                    InspLog("[Analyze] Fallback seed skipped (already seeded for current image key).");
+                    _inspectionBaselineSeededForImage = true;
+                }
             }
 
             // Keep original size to restore after move (size lock)
@@ -3988,7 +4032,7 @@ namespace BrakeDiscInspector_GUI_ROI
             }
             else
             {
-                AppendLog("[UI] Fixed Inspection baseline in use (no refresh).");
+                AppendLog("[UI] Fixed Inspection baseline in use (no refresh after Analyze).");
             }
 
             // === BEGIN: apply the SAME transform to Masters + Heatmap (no inaccessible calls) ===
@@ -4662,15 +4706,24 @@ namespace BrakeDiscInspector_GUI_ROI
             ApplyPresetToUI(_preset);
             _layout = MasterLayoutManager.LoadOrNew(_preset);
             EnsureInspectionBaselineInitialized();
-            // === Inspection baseline reset & seed for NEW image/layout ===
-            _inspectionBaselineFixed = null;
-            _inspectionBaselineSeededForImage = false;
-            try
             {
-                // Prefer the model’s persisted inspection ROI; otherwise use the current on-screen inspection if available
-                SeedInspectionBaselineOnce(_layout?.Inspection ?? _layout?.InspectionBaseline);
+                var seedKey = ComputeImageSeedKey();
+                if (!string.Equals(seedKey, _lastImageSeedKey, System.StringComparison.Ordinal))
+                {
+                    _inspectionBaselineFixed = null;
+                    _inspectionBaselineSeededForImage = false;
+                    InspLog($"[Seed] New image detected, oldKey='{_lastImageSeedKey}' newKey='{seedKey}' -> reset baseline.");
+                    try
+                    {
+                        SeedInspectionBaselineOnce(_layout?.Inspection ?? _layout?.InspectionBaseline, seedKey);
+                    }
+                    catch { /* ignore */ }
+                }
+                else
+                {
+                    InspLog($"[Seed] Same image key='{seedKey}', no re-seed.");
+                }
             }
-            catch { /* ignore seeding errors */ }
             ResetAnalysisMarks();
             UpdateWizardState();
             Snack("Preset cargado.");
@@ -4686,15 +4739,24 @@ namespace BrakeDiscInspector_GUI_ROI
         {
             _layout = MasterLayoutManager.LoadOrNew(_preset);
             EnsureInspectionBaselineInitialized();
-            // === Inspection baseline reset & seed for NEW image/layout ===
-            _inspectionBaselineFixed = null;
-            _inspectionBaselineSeededForImage = false;
-            try
             {
-                // Prefer the model’s persisted inspection ROI; otherwise use the current on-screen inspection if available
-                SeedInspectionBaselineOnce(_layout?.Inspection ?? _layout?.InspectionBaseline);
+                var seedKey = ComputeImageSeedKey();
+                if (!string.Equals(seedKey, _lastImageSeedKey, System.StringComparison.Ordinal))
+                {
+                    _inspectionBaselineFixed = null;
+                    _inspectionBaselineSeededForImage = false;
+                    InspLog($"[Seed] New image detected, oldKey='{_lastImageSeedKey}' newKey='{seedKey}' -> reset baseline.");
+                    try
+                    {
+                        SeedInspectionBaselineOnce(_layout?.Inspection ?? _layout?.InspectionBaseline, seedKey);
+                    }
+                    catch { /* ignore */ }
+                }
+                else
+                {
+                    InspLog($"[Seed] Same image key='{seedKey}', no re-seed.");
+                }
             }
-            catch { /* ignore seeding errors */ }
             ResetAnalysisMarks();
             Snack("Layout cargado.");
             UpdateWizardState();
