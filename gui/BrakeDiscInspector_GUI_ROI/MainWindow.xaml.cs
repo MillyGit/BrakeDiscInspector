@@ -83,14 +83,15 @@ namespace BrakeDiscInspector_GUI_ROI
 
         private System.Windows.Media.Imaging.BitmapSource _lastHeatmapBmp;          // heatmap image in image space
         private HeatmapRoiModel _lastHeatmapRoi;              // ROI (image-space) that defines the heatmap clipping area
-        // --- Analyze Master drift control + logging ---
-        private bool _useFixedInspectionBaseline = true;  // keep a fixed seed baseline to avoid cumulative drift
-        private RoiModel? _inspectionBaselineFixed;       // set on first analyze (or first time MoveInspectionTo runs)
+        // --- Inspection Analyze drift control + logging ---
+        private bool _useFixedInspectionBaseline = true;    // keep a fixed seed per image; prevents cumulative drift
+        private RoiModel? _inspectionBaselineFixed;         // fixed seed for this image
+        private bool _inspectionBaselineSeededForImage = false; // seeded once per image/layout
 
-        // keep size locked (no scaling) but allow rotation
-        private bool _lockAnalyzeScale = true;  // if true, sizes are preserved (scale forced to 1.0) during Analyze Master
+        // keep size locked (no scaling) but allow rotation (must remain true)
+        private bool _lockAnalyzeScale = true;              // if exists, ensure it is true
 
-        // logging to same folder as other GUI logs
+        // logging (same folder as other GUI logs)
         private static readonly string InspAlignLogPath = System.IO.Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             "BrakeDiscInspector", "logs", "roi_analyze_master.log");
@@ -1206,6 +1207,16 @@ namespace BrakeDiscInspector_GUI_ROI
             AppendLog($"Imagen cargada: {_imgW}x{_imgH}  (Canvas: {CanvasROI.ActualWidth:0}x{CanvasROI.ActualHeight:0})");
             RedrawOverlaySafe();
             ClearHeatmapOverlay();
+
+            // === Inspection baseline reset & seed for NEW image/layout ===
+            _inspectionBaselineFixed = null;
+            _inspectionBaselineSeededForImage = false;
+            try
+            {
+                // Prefer the model’s persisted inspection ROI; otherwise use the current on-screen inspection if available
+                SeedInspectionBaselineOnce(_layout?.Inspection ?? _layout?.InspectionBaseline);
+            }
+            catch { /* ignore seeding errors */ }
 
             // === ROI DIAG: after image load & overlay sync ===
             try
@@ -3844,6 +3855,17 @@ namespace BrakeDiscInspector_GUI_ROI
             catch { /* never throw from logging */ }
         }
 
+        // Seed fixed baseline ONCE per image/layout load
+        private void SeedInspectionBaselineOnce(RoiModel? insp)
+        {
+            if (!_useFixedInspectionBaseline) return;
+            if (_inspectionBaselineSeededForImage) return;
+            if (insp == null) return;
+            _inspectionBaselineFixed = insp.Clone();
+            _inspectionBaselineSeededForImage = true;
+            InspLog("[Analyze] Fixed baseline SEEDED on image/layout load: " + FInsp(_inspectionBaselineFixed));
+        }
+
         // Return a robust center for any RoiModel (prefer CX/CY; fallback to Left/Top/Width/Height)
         private static (double cx, double cy) CenterOf(RoiModel r)
         {
@@ -3898,20 +3920,18 @@ namespace BrakeDiscInspector_GUI_ROI
 
         private void MoveInspectionTo(RoiModel insp, WPoint master1, WPoint master2)
         {
-            // === Inspect ROI drift control: capture pre-state and ensure fixed baseline seed ===
+            // === AnalyzeMaster: BEFORE state log ===
             InspLog($"[Analyze] BEFORE insp: {FInsp(insp)}  M1=({master1.X:F3},{master1.Y:F3}) M2=({master2.X:F3},{master2.Y:F3})");
 
-            if (_useFixedInspectionBaseline)
+            // Ensure fixed baseline is seeded (defensive, in case image-load hook missed it)
+            if (_useFixedInspectionBaseline && !_inspectionBaselineSeededForImage && insp != null)
             {
-                // Seed the fixed baseline only once from the first known inspection ROI
-                if (_inspectionBaselineFixed == null && insp != null)
-                {
-                    _inspectionBaselineFixed = insp.Clone();
-                    InspLog("[Analyze] Seeded fixed Inspection baseline from current ROI.");
-                }
+                _inspectionBaselineFixed = insp.Clone();
+                _inspectionBaselineSeededForImage = true;
+                InspLog("[Analyze] Fixed baseline seeded (fallback in MoveInspectionTo): " + FInsp(_inspectionBaselineFixed));
             }
 
-            // Keep original size (for restoring size if any helper scales it)
+            // Keep original size to restore after move (size lock)
             double __inspW0   = insp?.Width  ?? 0;
             double __inspH0   = insp?.Height ?? 0;
             double __inspR0   = insp?.R      ?? 0;
@@ -3942,10 +3962,10 @@ namespace BrakeDiscInspector_GUI_ROI
                 master1,
                 master2);
 
+            // === Size lock: restore original size; keep center & rotation from alignment ===
             if (_lockAnalyzeScale && insp != null)
             {
                 double cx = insp.CX, cy = insp.CY;
-                // restore size only; keep rotation and center from alignment
                 insp.Width  = __inspW0;
                 insp.Height = __inspH0;
                 insp.R      = __inspR0;
@@ -3989,7 +4009,6 @@ namespace BrakeDiscInspector_GUI_ROI
                     double lenNew = Math.Sqrt(dxNew*dxNew + dyNew*dyNew);
 
                     double scale = (lenOld > 1e-9) ? (lenNew / lenOld) : 1.0;
-                    // -- lock-scale: override scale if requested --
                     double effectiveScale = _lockAnalyzeScale ? 1.0 : scale;
                     AppendLog($"[UI] AnalyzeMaster scale lock={_lockAnalyzeScale}, scale={scale:F6} -> eff={effectiveScale:F6}");
                     double angOld = Math.Atan2(dyOld, dxOld);
@@ -4034,8 +4053,12 @@ namespace BrakeDiscInspector_GUI_ROI
 
             SyncCurrentRoiFromInspection(insp);
 
+            // === AnalyzeMaster: AFTER state + delta (vs FIXED baseline) ===
             InspLog($"[Analyze] AFTER  insp: {FInsp(insp)}");
-            InspLog($"[Analyze] DELTA  : dCX={(insp.CX - (_inspectionBaselineFixed?.CX ?? insp.CX)):F3}, dCY={(insp.CY - (_inspectionBaselineFixed?.CY ?? insp.CY)):F3}  (fixedBaseline={_useFixedInspectionBaseline})");
+            if (_inspectionBaselineFixed != null)
+            {
+                InspLog($"[Analyze] DELTA  : dCX={(insp.CX - _inspectionBaselineFixed.CX):F3}, dCY={(insp.CY - _inspectionBaselineFixed.CY):F3}  (fixedBaseline={_useFixedInspectionBaseline})");
+            }
         }
 
         private RoiModel? GetInspectionBaselineClone()
@@ -4639,6 +4662,15 @@ namespace BrakeDiscInspector_GUI_ROI
             ApplyPresetToUI(_preset);
             _layout = MasterLayoutManager.LoadOrNew(_preset);
             EnsureInspectionBaselineInitialized();
+            // === Inspection baseline reset & seed for NEW image/layout ===
+            _inspectionBaselineFixed = null;
+            _inspectionBaselineSeededForImage = false;
+            try
+            {
+                // Prefer the model’s persisted inspection ROI; otherwise use the current on-screen inspection if available
+                SeedInspectionBaselineOnce(_layout?.Inspection ?? _layout?.InspectionBaseline);
+            }
+            catch { /* ignore seeding errors */ }
             ResetAnalysisMarks();
             UpdateWizardState();
             Snack("Preset cargado.");
@@ -4654,6 +4686,15 @@ namespace BrakeDiscInspector_GUI_ROI
         {
             _layout = MasterLayoutManager.LoadOrNew(_preset);
             EnsureInspectionBaselineInitialized();
+            // === Inspection baseline reset & seed for NEW image/layout ===
+            _inspectionBaselineFixed = null;
+            _inspectionBaselineSeededForImage = false;
+            try
+            {
+                // Prefer the model’s persisted inspection ROI; otherwise use the current on-screen inspection if available
+                SeedInspectionBaselineOnce(_layout?.Inspection ?? _layout?.InspectionBaseline);
+            }
+            catch { /* ignore seeding errors */ }
             ResetAnalysisMarks();
             Snack("Layout cargado.");
             UpdateWizardState();
