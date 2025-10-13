@@ -83,6 +83,7 @@ namespace BrakeDiscInspector_GUI_ROI
 
         private System.Windows.Media.Imaging.BitmapSource _lastHeatmapBmp;          // heatmap image in image space
         private HeatmapRoiModel _lastHeatmapRoi;              // ROI (image-space) that defines the heatmap clipping area
+        private bool _lockAnalyzeScale = true;  // if true, sizes are preserved (scale forced to 1.0) during Analyze Master
 
         // IMAGE-space centers (pixels) of found masters
         private CvPoint? _lastM1CenterPx;
@@ -3871,6 +3872,12 @@ namespace BrakeDiscInspector_GUI_ROI
 
         private void MoveInspectionTo(RoiModel insp, WPoint master1, WPoint master2)
         {
+            // -- lock-scale: capture pre-move size of Inspection ROI --
+            double __inspW0  = insp?.Width  ?? 0;
+            double __inspH0  = insp?.Height ?? 0;
+            double __inspR0  = insp?.R      ?? 0;
+            double __inspRin0= insp?.RInner ?? 0;
+
             if (insp == null)
                 return;
 
@@ -3893,6 +3900,21 @@ namespace BrakeDiscInspector_GUI_ROI
                 _layout?.Master2Pattern,
                 master1,
                 master2);
+
+            // -- lock-scale: restore inspection size, keep its new center --
+            if (_lockAnalyzeScale && insp != null)
+            {
+                double cx = insp.CX;
+                double cy = insp.CY;
+                // restore size
+                insp.Width  = __inspW0;
+                insp.Height = __inspH0;
+                insp.R      = __inspR0;
+                insp.RInner = __inspRin0;
+                // re-center bounding box to preserved size
+                insp.Left = cx - (__inspW0 * 0.5);
+                insp.Top  = cy - (__inspH0 * 0.5);
+            }
 
             try
             {
@@ -3923,25 +3945,28 @@ namespace BrakeDiscInspector_GUI_ROI
                     double lenNew = Math.Sqrt(dxNew*dxNew + dyNew*dyNew);
 
                     double scale = (lenOld > 1e-9) ? (lenNew / lenOld) : 1.0;
+                    // -- lock-scale: override scale if requested --
+                    double effectiveScale = _lockAnalyzeScale ? 1.0 : scale;
+                    AppendLog($"[UI] AnalyzeMaster scale lock={_lockAnalyzeScale}, scale={scale:F6} -> eff={effectiveScale:F6}");
                     double angOld = Math.Atan2(dyOld, dxOld);
                     double angNew = Math.Atan2(dyNew, dxNew);
                     double angDelta = angNew - angOld; // RADIANS
 
                     // Apply to Master1/2 Pattern and Search using SAME pivot old->new (Master1)
                     if (_layout.Master1Pattern != null && __baseM1P != null)
-                        ApplyRoiTransform(_layout.Master1Pattern, __baseM1P, m1OldX, m1OldY, m1NewX, m1NewY, scale, angDelta);
+                        ApplyRoiTransform(_layout.Master1Pattern, __baseM1P, m1OldX, m1OldY, m1NewX, m1NewY, effectiveScale, angDelta);
 
                     if (_layout.Master2Pattern != null && __baseM2P != null)
-                        ApplyRoiTransform(_layout.Master2Pattern, __baseM2P, m1OldX, m1OldY, m1NewX, m1NewY, scale, angDelta);
+                        ApplyRoiTransform(_layout.Master2Pattern, __baseM2P, m1OldX, m1OldY, m1NewX, m1NewY, effectiveScale, angDelta);
 
                     if (_layout.Master1Search != null && __baseM1S != null)
-                        ApplyRoiTransform(_layout.Master1Search,  __baseM1S, m1OldX, m1OldY, m1NewX, m1NewY, scale, angDelta);
+                        ApplyRoiTransform(_layout.Master1Search,  __baseM1S, m1OldX, m1OldY, m1NewX, m1NewY, effectiveScale, angDelta);
 
                     if (_layout.Master2Search != null && __baseM2S != null)
-                        ApplyRoiTransform(_layout.Master2Search,  __baseM2S, m1OldX, m1OldY, m1NewX, m1NewY, scale, angDelta);
+                        ApplyRoiTransform(_layout.Master2Search,  __baseM2S, m1OldX, m1OldY, m1NewX, m1NewY, effectiveScale, angDelta);
 
                     if (_lastHeatmapRoi != null && __baseHeat != null)
-                        ApplyRoiTransform(_lastHeatmapRoi,        __baseHeat, m1OldX, m1OldY, m1NewX, m1NewY, scale, angDelta);
+                        ApplyRoiTransform(_lastHeatmapRoi,        __baseHeat, m1OldX, m1OldY, m1NewX, m1NewY, effectiveScale, angDelta);
 
                     // Refresh overlays with the standard pipeline (NO args for RedrawOverlaySafe)
                     try { ScheduleSyncOverlay(true); }
