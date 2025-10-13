@@ -3839,7 +3839,7 @@ namespace BrakeDiscInspector_GUI_ROI
             {
                 Directory.CreateDirectory(Path.GetDirectoryName(InspAlignLogPath)!);
                 var line = $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}] {msg}{Environment.NewLine}";
-                lock (_inspLogLock) { File.AppendAllText(InspAlignLogPath, line, Encoding.UTF-8); }
+                lock (_inspLogLock) { File.AppendAllText(InspAlignLogPath, line, Encoding.UTF8); }
             }
             catch { /* never throw from logging */ }
         }
