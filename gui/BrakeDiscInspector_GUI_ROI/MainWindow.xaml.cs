@@ -34,17 +34,18 @@ using WColor = System.Windows.Media.Color;
 using WEllipse = System.Windows.Shapes.Ellipse;
 using WLine = System.Windows.Shapes.Line;
 // Aliases WPF
-using WPoint = System.Windows.Point;
-using WRect = System.Windows.Rect;
 using WRectShape = System.Windows.Shapes.Rectangle;
 using Path = System.IO.Path;
 using WSize = System.Windows.Size;
 using LegacyROI = BrakeDiscInspector_GUI_ROI.ROI;
 using ROI = BrakeDiscInspector_GUI_ROI.RoiModel;
 using RoiShapeType = BrakeDiscInspector_GUI_ROI.RoiShape;
-
+// --- BEGIN: UI/OCV type aliases ---
+using SWPoint = System.Windows.Point;
+using SWRect = System.Windows.Rect;
 using CvPoint = OpenCvSharp.Point;
 using CvRect = OpenCvSharp.Rect;
+// --- END: UI/OCV type aliases ---
 
 namespace BrakeDiscInspector_GUI_ROI
 {
@@ -117,7 +118,7 @@ namespace BrakeDiscInspector_GUI_ROI
 
         private Shape? _previewShape;
         private bool _isDrawing;
-        private WPoint _p0;
+        private SWPoint _p0;
         private RoiShape _currentShape = RoiShape.Rectangle;
 
         private DispatcherTimer? _trainTimer;
@@ -302,26 +303,26 @@ namespace BrakeDiscInspector_GUI_ROI
 
         private static double R(double v) => Math.Round(v, MidpointRounding.AwayFromZero);
 
-        private WRect MapImageRectToCanvas(WRect imageRect)
+        private SWRect MapImageRectToCanvas(SWRect imageRect)
         {
             var t = GetImageToCanvasTransform();
             double L = t.offX + t.sx * imageRect.X;
             double T = t.offY + t.sy * imageRect.Y;
             double W = t.sx * imageRect.Width;
             double H = t.sy * imageRect.Height;
-            return new WRect(R(L), R(T), R(W), R(H));
+            return new SWRect(R(L), R(T), R(W), R(H));
         }
 
-        private WPoint MapImagePointToCanvas(WPoint p)
+        private SWPoint MapImagePointToCanvas(SWPoint p)
         {
             var t = GetImageToCanvasTransform();
-            return new WPoint(R(t.offX + t.sx * p.X), R(t.offY + t.sy * p.Y));
+            return new SWPoint(R(t.offX + t.sx * p.X), R(t.offY + t.sy * p.Y));
         }
 
-        private (WPoint c, double rOuter, double rInner) MapImageCircleToCanvas(double cx, double cy, double rOuter, double rInner)
+        private (SWPoint c, double rOuter, double rInner) MapImageCircleToCanvas(double cx, double cy, double rOuter, double rInner)
         {
             var t = GetImageToCanvasTransform();
-            var c = new WPoint(R(t.offX + t.sx * cx), R(t.offY + t.sy * cy));
+            var c = new SWPoint(R(t.offX + t.sx * cx), R(t.offY + t.sy * cy));
             return (c, R(t.sx * rOuter), R(t.sx * rInner));
         }
 
@@ -1595,7 +1596,7 @@ namespace BrakeDiscInspector_GUI_ROI
 
                             if (isMasterRole)
                             {
-                                var canvasRect = MapImageRectToCanvas(new WRect(roi.Left, roi.Top, roi.Width, roi.Height));
+                                var canvasRect = MapImageRectToCanvas(new SWRect(roi.Left, roi.Top, roi.Width, roi.Height));
                                 left = canvasRect.X;
                                 top = canvasRect.Y;
                                 width = Math.Max(1.0, canvasRect.Width);
@@ -2569,7 +2570,7 @@ namespace BrakeDiscInspector_GUI_ROI
             CanvasROI.Children.Add(border);
         }
 
-        private void DrawMasterMatch(RoiModel roi, WPoint matchImagePoint, string caption, Brush brush, bool withLabel)
+        private void DrawMasterMatch(RoiModel roi, SWPoint matchImagePoint, string caption, Brush brush, bool withLabel)
         {
             var canvasPoint = ImagePxToCanvasPt(matchImagePoint.X, matchImagePoint.Y);
             var canvasRoi = ImageToCanvas(roi);
@@ -2726,7 +2727,7 @@ namespace BrakeDiscInspector_GUI_ROI
             }
         }
 
-        private void BeginDraw(RoiShape shape, WPoint p0)
+        private void BeginDraw(RoiShape shape, SWPoint p0)
         {
             // Si había un preview anterior, elimínalo para evitar capas huérfanas
             ClearPreview();
@@ -3691,7 +3692,7 @@ namespace BrakeDiscInspector_GUI_ROI
             var seaRect = RoiToRect(search);
 
             // Centro del patrón
-            var pc = new WPoint(patRect.X + patRect.Width / 2, patRect.Y + patRect.Height / 2);
+            var pc = new SWPoint(patRect.X + patRect.Width / 2, patRect.Y + patRect.Height / 2);
 
             // Permitir validación si el centro cae en BÚSQUEDA o en INSPECCIÓN
             bool inSearch = seaRect.Contains(pc);
@@ -3727,10 +3728,10 @@ namespace BrakeDiscInspector_GUI_ROI
             return true;
         }
 
-        private WRect RoiToRect(RoiModel r)
+        private SWRect RoiToRect(RoiModel r)
         {
-            if (r.Shape == RoiShape.Rectangle) return new WRect(r.Left, r.Top, r.Width, r.Height);
-            var ro = r.R; return new WRect(r.CX - ro, r.CY - ro, 2 * ro, 2 * ro);
+            if (r.Shape == RoiShape.Rectangle) return new SWRect(r.Left, r.Top, r.Width, r.Height);
+            var ro = r.R; return new SWRect(r.CX - ro, r.CY - ro, 2 * ro, 2 * ro);
         }
 
         // ====== Analizar Master / ROI ======
@@ -3744,7 +3745,7 @@ namespace BrakeDiscInspector_GUI_ROI
             // Limpia cruces, mantiene ROIs
             ResetAnalysisMarks();
 
-            WPoint? c1 = null, c2 = null;
+            SWPoint? c1 = null, c2 = null;
             double s1 = 0, s2 = 0;
 
             // 1) Intento local primero (opcional)
@@ -3767,13 +3768,13 @@ namespace BrakeDiscInspector_GUI_ROI
                             var res1 = LocalMatcher.MatchInSearchROI(img, _layout.Master1Pattern, _layout.Master1Search,
                                 _preset.Feature, _preset.MatchThr, _preset.RotRange, _preset.ScaleMin, _preset.ScaleMax, m1Override,
                                 LogToFileAndUI);
-                            if (res1.center.HasValue) { c1 = new WPoint(res1.center.Value.X, res1.center.Value.Y); s1 = res1.score; }
+                            if (res1.center.HasValue) { c1 = new SWPoint(res1.center.Value.X, res1.center.Value.Y); s1 = res1.score; }
                             else AppendLog("[LOCAL] M1 no encontrado");
 
                             var res2 = LocalMatcher.MatchInSearchROI(img, _layout.Master2Pattern, _layout.Master2Search,
                                 _preset.Feature, _preset.MatchThr, _preset.RotRange, _preset.ScaleMin, _preset.ScaleMax, m2Override,
                                 LogToFileAndUI);
-                            if (res2.center.HasValue) { c2 = new WPoint(res2.center.Value.X, res2.center.Value.Y); s2 = res2.score; }
+                            if (res2.center.HasValue) { c2 = new SWPoint(res2.center.Value.X, res2.center.Value.Y); s2 = res2.score; }
                             else AppendLog("[LOCAL] M2 no encontrado");
                         }
                         finally
@@ -3806,7 +3807,7 @@ namespace BrakeDiscInspector_GUI_ROI
                     {
                         var result = inferM1.result;
                         var (cx, cy) = _layout.Master1Pattern!.GetCenter();
-                        c1 = new WPoint(cx, cy);
+                        c1 = new SWPoint(cx, cy);
                         s1 = result.score;
                         string thrText = result.threshold.HasValue ? result.threshold.Value.ToString("0.###") : "n/a";
                         bool pass = !result.threshold.HasValue || result.score <= result.threshold.Value;
@@ -3825,7 +3826,7 @@ namespace BrakeDiscInspector_GUI_ROI
                     {
                         var result = inferM2.result;
                         var (cx, cy) = _layout.Master2Pattern!.GetCenter();
-                        c2 = new WPoint(cx, cy);
+                        c2 = new SWPoint(cx, cy);
                         s2 = result.score;
                         string thrText = result.threshold.HasValue ? result.threshold.Value.ToString("0.###") : "n/a";
                         bool pass = !result.threshold.HasValue || result.score <= result.threshold.Value;
@@ -3854,7 +3855,7 @@ namespace BrakeDiscInspector_GUI_ROI
             }
 
             // 4) Dibujar cruces siempre para la imagen actual
-            var mid = new WPoint((c1.Value.X + c2.Value.X) / 2.0, (c1.Value.Y + c2.Value.Y) / 2.0);
+            var mid = new SWPoint((c1.Value.X + c2.Value.X) / 2.0, (c1.Value.Y + c2.Value.Y) / 2.0);
             AppendLog($"[FLOW] mid=({mid.X:0.##},{mid.Y:0.##})");
 
             EnterAnalysisView();
@@ -4123,7 +4124,7 @@ namespace BrakeDiscInspector_GUI_ROI
             // because circles/annulus are rotation-invariant and rectangles in this app are axis-aligned.
         }
 
-        private void MoveInspectionTo(RoiModel insp, WPoint master1, WPoint master2)
+        private void MoveInspectionTo(RoiModel insp, SWPoint master1, SWPoint master2)
         {
             // === Analyze: BEFORE state & current image key ===
             var __seedKeyNow = ComputeImageSeedKey();
@@ -5357,13 +5358,13 @@ namespace BrakeDiscInspector_GUI_ROI
         }
 
         // Helper: convertir WPF Rect -> System.Drawing.Rectangle
-        private static System.Drawing.Rectangle ToDrawingRect(WRect r)
+        private static System.Drawing.Rectangle ToDrawingRect(SWRect r)
         {
             return new System.Drawing.Rectangle((int)r.X, (int)r.Y, (int)r.Width, (int)r.Height);
         }
 
         // ====== Backend (multipart) helpers ======
-        private static byte[] CropTemplatePng(string imagePathWin, WRect rect)
+        private static byte[] CropTemplatePng(string imagePathWin, SWRect rect)
         {
             using var bmp = new System.Drawing.Bitmap(imagePathWin);
             var x = Math.Max(0, (int)rect.X);
@@ -5674,15 +5675,15 @@ namespace BrakeDiscInspector_GUI_ROI
         }
 
         /// Convierte un punto en píxeles de imagen -> punto en CanvasROI (coordenadas locales del Canvas)
-        private WPoint ImagePxToCanvasPt(double px, double py)
+        private SWPoint ImagePxToCanvasPt(double px, double py)
         {
             var transform = GetImageToCanvasTransform();
             double x = px * transform.sx + transform.offX;
             double y = py * transform.sy + transform.offY;
-            return new WPoint(x, y);
+            return new SWPoint(x, y);
         }
 
-        private WPoint ImagePxToCanvasPt(CvPoint px)
+        private SWPoint ImagePxToCanvasPt(CvPoint px)
         {
             return ImagePxToCanvasPt(px.X, px.Y);
         }
@@ -5690,17 +5691,17 @@ namespace BrakeDiscInspector_GUI_ROI
 
 
 
-        private WPoint CanvasToImage(WPoint pCanvas)
+        private SWPoint CanvasToImage(SWPoint pCanvas)
         {
             var transform = GetImageToCanvasTransform();
             double scaleX = transform.sx;
             double scaleY = transform.sy;
             double offsetX = transform.offX;
             double offsetY = transform.offY;
-            if (scaleX <= 0 || scaleY <= 0) return new WPoint(0, 0);
+            if (scaleX <= 0 || scaleY <= 0) return new SWPoint(0, 0);
             double ix = (pCanvas.X - offsetX) / scaleX;
             double iy = (pCanvas.Y - offsetY) / scaleY;
-            return new WPoint(ix, iy);
+            return new SWPoint(ix, iy);
         }
 
 
