@@ -43,10 +43,8 @@ using LegacyROI = BrakeDiscInspector_GUI_ROI.ROI;
 using ROI = BrakeDiscInspector_GUI_ROI.RoiModel;
 using RoiShapeType = BrakeDiscInspector_GUI_ROI.RoiShape;
 
-using CvPoint  = OpenCvSharp.Point;
-using CvRect   = OpenCvSharp.Rect;
-using WpfPoint = System.Windows.Point;
-using WpfRect  = System.Windows.Rect;
+using CvPoint = OpenCvSharp.Point;
+using CvRect = OpenCvSharp.Rect;
 
 namespace BrakeDiscInspector_GUI_ROI
 {
@@ -304,26 +302,26 @@ namespace BrakeDiscInspector_GUI_ROI
 
         private static double R(double v) => Math.Round(v, MidpointRounding.AwayFromZero);
 
-        private Rect MapImageRectToCanvas(Rect imageRect)
+        private WRect MapImageRectToCanvas(WRect imageRect)
         {
             var t = GetImageToCanvasTransform();
             double L = t.offX + t.sx * imageRect.X;
             double T = t.offY + t.sy * imageRect.Y;
             double W = t.sx * imageRect.Width;
             double H = t.sy * imageRect.Height;
-            return new Rect(R(L), R(T), R(W), R(H));
+            return new WRect(R(L), R(T), R(W), R(H));
         }
 
-        private Point MapImagePointToCanvas(Point p)
+        private WPoint MapImagePointToCanvas(WPoint p)
         {
             var t = GetImageToCanvasTransform();
-            return new Point(R(t.offX + t.sx * p.X), R(t.offY + t.sy * p.Y));
+            return new WPoint(R(t.offX + t.sx * p.X), R(t.offY + t.sy * p.Y));
         }
 
-        private (Point c, double rOuter, double rInner) MapImageCircleToCanvas(double cx, double cy, double rOuter, double rInner)
+        private (WPoint c, double rOuter, double rInner) MapImageCircleToCanvas(double cx, double cy, double rOuter, double rInner)
         {
             var t = GetImageToCanvasTransform();
-            var c = new Point(R(t.offX + t.sx * cx), R(t.offY + t.sy * cy));
+            var c = new WPoint(R(t.offX + t.sx * cx), R(t.offY + t.sy * cy));
             return (c, R(t.sx * rOuter), R(t.sx * rInner));
         }
 
@@ -1597,7 +1595,7 @@ namespace BrakeDiscInspector_GUI_ROI
 
                             if (isMasterRole)
                             {
-                                var canvasRect = MapImageRectToCanvas(new Rect(roi.Left, roi.Top, roi.Width, roi.Height));
+                                var canvasRect = MapImageRectToCanvas(new WRect(roi.Left, roi.Top, roi.Width, roi.Height));
                                 left = canvasRect.X;
                                 top = canvasRect.Y;
                                 width = Math.Max(1.0, canvasRect.Width);
@@ -5675,30 +5673,16 @@ namespace BrakeDiscInspector_GUI_ROI
             return new System.Windows.Rect(x, y, w, h);
         }
 
-        /// Convierte un punto en píxeles de imagen -> punto en CanvasROI
-        private System.Windows.Point ImgToCanvas(System.Windows.Point pImg)
-        {
-            var displayRect = GetImageDisplayRect();
-            var (pw, ph) = GetImagePixelSize();
-            if (pw <= 0 || ph <= 0 || displayRect.Width <= 0 || displayRect.Height <= 0)
-                return new System.Windows.Point(0, 0);
-
-            double scale = displayRect.Width / pw; // escala uniforme usada al dibujar la imagen
-            return new System.Windows.Point(
-                displayRect.Left + pImg.X * scale,
-                displayRect.Top + pImg.Y * scale);
-        }
-
         /// Convierte un punto en píxeles de imagen -> punto en CanvasROI (coordenadas locales del Canvas)
-        private System.Windows.Point ImagePxToCanvasPt(double px, double py)
+        private WPoint ImagePxToCanvasPt(double px, double py)
         {
             var transform = GetImageToCanvasTransform();
             double x = px * transform.sx + transform.offX;
             double y = py * transform.sy + transform.offY;
-            return new System.Windows.Point(x, y);
+            return new WPoint(x, y);
         }
 
-        private System.Windows.Point ImagePxToCanvasPt(CvPoint px)
+        private WPoint ImagePxToCanvasPt(CvPoint px)
         {
             return ImagePxToCanvasPt(px.X, px.Y);
         }
@@ -5706,17 +5690,17 @@ namespace BrakeDiscInspector_GUI_ROI
 
 
 
-        private System.Windows.Point CanvasToImage(System.Windows.Point pCanvas)
+        private WPoint CanvasToImage(WPoint pCanvas)
         {
             var transform = GetImageToCanvasTransform();
             double scaleX = transform.sx;
             double scaleY = transform.sy;
             double offsetX = transform.offX;
             double offsetY = transform.offY;
-            if (scaleX <= 0 || scaleY <= 0) return new System.Windows.Point(0, 0);
+            if (scaleX <= 0 || scaleY <= 0) return new WPoint(0, 0);
             double ix = (pCanvas.X - offsetX) / scaleX;
             double iy = (pCanvas.Y - offsetY) / scaleY;
-            return new System.Windows.Point(ix, iy);
+            return new WPoint(ix, iy);
         }
 
 
