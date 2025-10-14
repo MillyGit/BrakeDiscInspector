@@ -89,11 +89,22 @@ namespace BrakeDiscInspector_GUI_ROI
         private bool _inspectionBaselineSeededForImage = false; // has the baseline been seeded for the current image?
         private string _lastImageSeedKey = "";                  // “signature” of the currently loaded image
 
-        // --- Fixed master baselines per image (to avoid chained pivots) ---
-        private bool _mastersBaselineSeededForImage = false;
-        private string _mastersImageSeedKey = "";
+        // --- Per-image master baselines (seeded on load) ---
+        private string _imageKeyForMasters = "";
+        private bool _mastersSeededForImage = false;
         private double _m1BaseX = 0, _m1BaseY = 0;
         private double _m2BaseX = 0, _m2BaseY = 0;
+
+        // --- Last accepted detections on this image (for idempotence) ---
+        private double _lastAccM1X = double.NaN, _lastAccM1Y = double.NaN;
+        private double _lastAccM2X = double.NaN, _lastAccM2Y = double.NaN;
+
+        // Tolerances (pixels / degrees). Tune if needed.
+        private const double ANALYZE_POS_TOL_PX = 1.0;    // <=1 px considered the same
+        private const double ANALYZE_ANG_TOL_DEG = 0.5;   // <=0.5° considered the same
+
+        // UI-only: keep masters visually static on Analyze (recommended: true)
+        private bool _freezeMasterShapesOnAnalyze = true;
 
         private bool _lockAnalyzeScale = true;                  // Size lock already in use; keep it true
 
@@ -1236,35 +1247,32 @@ namespace BrakeDiscInspector_GUI_ROI
             }
 
             {
-                string seedKey = ComputeImageSeedKey();
-
-                if (!string.Equals(seedKey, _mastersImageSeedKey, System.StringComparison.Ordinal))
+                string key = ComputeImageSeedKey();
+                if (!string.Equals(key, _imageKeyForMasters, System.StringComparison.Ordinal))
                 {
-                    // New image: compute and store MASTER BASE centers once
-                    _mastersImageSeedKey = seedKey;
-                    _mastersBaselineSeededForImage = false; // will seed now
+                    _imageKeyForMasters = key;
+                    _mastersSeededForImage = false;
 
-                    // Take centers from layout masters AS LOADED (baseline)
-                    // Prefer the *pattern* ROIs if present; they are the geometric anchors.
                     var m1p = _layout?.Master1Pattern;
                     var m2p = _layout?.Master2Pattern;
-
                     if (m1p != null && m2p != null)
                     {
                         _m1BaseX = m1p.CX; _m1BaseY = m1p.CY;
                         _m2BaseX = m2p.CX; _m2BaseY = m2p.CY;
-                        _mastersBaselineSeededForImage = true;
-                        InspLog($"[Seed-M] New image => M1_base=({_m1BaseX:F3},{_m1BaseY:F3}) M2_base=({_m2BaseX:F3},{_m2BaseY:F3}) key='{seedKey}'");
+                        _mastersSeededForImage = true;
+                        InspLog($"[Seed-M] New image: seed M1_base=({_m1BaseX:F3},{_m1BaseY:F3}) M2_base=({_m2BaseX:F3},{_m2BaseY:F3}) key='{key}'");
                     }
                     else
                     {
-                        InspLog("[Seed-M] WARNING: Could not seed master baselines (missing Master1Pattern/Master2Pattern).");
+                        InspLog("[Seed-M] WARNING: Cannot seed masters baseline (missing Master1Pattern/Master2Pattern).");
                     }
+
+                    _lastAccM1X = _lastAccM1Y = _lastAccM2X = _lastAccM2Y = double.NaN;
+                    InspLog("[Analyze] Reset last-accepted M1/M2 for new image.");
                 }
                 else
                 {
-                    // Same image: do NOT reseed
-                    InspLog($"[Seed-M] Same image key='{seedKey}', keep existing M1/M2 baselines.");
+                    InspLog($"[Seed-M] Same image key='{key}', keep current masters baseline.");
                 }
             }
 
@@ -3925,6 +3933,12 @@ namespace BrakeDiscInspector_GUI_ROI
             }
         }
 
+        private static double AngleDeg(double dy, double dx)
+            => (System.Math.Atan2(dy, dx) * 180.0 / System.Math.PI);
+
+        private static double Dist(double x1, double y1, double x2, double y2)
+            => System.Math.Sqrt((x2 - x1) * (x2 - x1) + (y2 - y1) * (y2 - y1));
+
         private void SeedInspectionBaselineOnce(RoiModel? insp, string seedKey)
         {
             if (!_useFixedInspectionBaseline) return;
@@ -4028,43 +4042,61 @@ namespace BrakeDiscInspector_GUI_ROI
             if (insp == null)
                 return;
 
-            // === BEGIN: capture baselines for unified transform ===
-            var __baseM1P = _layout?.Master1Pattern?.Clone();
-            var __baseM1S = _layout?.Master1Search ?.Clone();
-            var __baseM2P = _layout?.Master2Pattern?.Clone();
-            var __baseM2S = _layout?.Master2Search ?.Clone();
-            var __baseHeat = _lastHeatmapRoi          ?.Clone();
-            bool __haveM1 = (__baseM1P != null);
-            bool __haveM2 = (__baseM2P != null);
-            // ===  END: capture baselines for unified transform  ===
-
             var baselineInspection = _useFixedInspectionBaseline
                                       ? (_inspectionBaselineFixed ?? (_inspectionBaselineFixed = insp.Clone()))
                                       : (GetInspectionBaselineClone() ?? insp.Clone());
 
-            if (!_mastersBaselineSeededForImage)
+            RoiModel? __baseM1P = null, __baseM1S = null, __baseM2P = null, __baseM2S = null;
+            if (!_freezeMasterShapesOnAnalyze)
             {
-                InspLog("[Analyze] WARNING: Masters baseline not seeded for this image. Seeding defensively from current layout.");
+                __baseM1P = _layout?.Master1Pattern?.Clone();
+                __baseM1S = _layout?.Master1Search ?.Clone();
+                __baseM2P = _layout?.Master2Pattern?.Clone();
+                __baseM2S = _layout?.Master2Search ?.Clone();
+            }
+            var __baseHeat = _lastHeatmapRoi?.Clone();
+
+            if (!_mastersSeededForImage)
+            {
                 var m1p = _layout?.Master1Pattern;
                 var m2p = _layout?.Master2Pattern;
                 if (m1p != null && m2p != null)
                 {
                     _m1BaseX = m1p.CX; _m1BaseY = m1p.CY;
                     _m2BaseX = m2p.CX; _m2BaseY = m2p.CY;
-                    _mastersBaselineSeededForImage = true;
+                    _mastersSeededForImage = true;
+                    InspLog("[Analyze] DEFENSIVE seed of masters baseline (unexpected).");
+                }
+            }
+
+            double m1NewX = master1.X, m1NewY = master1.Y;
+            double m2NewX = master2.X, m2NewY = master2.Y;
+
+            bool haveLast = !double.IsNaN(_lastAccM1X) && !double.IsNaN(_lastAccM2X);
+            if (haveLast)
+            {
+                double dM1 = Dist(m1NewX, m1NewY, _lastAccM1X, _lastAccM1Y);
+                double dM2 = Dist(m2NewX, m2NewY, _lastAccM2X, _lastAccM2Y);
+                double angOld = AngleDeg(_lastAccM2Y - _lastAccM1Y, _lastAccM2X - _lastAccM1X);
+                double angNew = AngleDeg(m2NewY - m1NewY, m2NewX - m1NewX);
+                double dAng = System.Math.Abs(angNew - angOld);
+                if (dAng > 180.0) dAng = 360.0 - dAng;
+
+                if (dM1 <= ANALYZE_POS_TOL_PX && dM2 <= ANALYZE_POS_TOL_PX && dAng <= ANALYZE_ANG_TOL_DEG)
+                {
+                    InspLog($"[Analyze] NO-OP: detection within tolerance (dM1={dM1:F3}px, dM2={dM2:F3}px, dAng={dAng:F3}°).");
+                    return;
                 }
             }
 
             double m1OldX = _m1BaseX, m1OldY = _m1BaseY;
             double m2OldX = _m2BaseX, m2OldY = _m2BaseY;
-            double m1NewX = master1.X, m1NewY = master1.Y;
-            double m2NewX = master2.X, m2NewY = master2.Y;
             double scale = 1.0;
             double effectiveScale = 1.0;
             double angDelta = 0.0;
-            bool __canTransform = false;
+            bool __canTransform = baselineInspection != null && _mastersSeededForImage;
 
-            if (_mastersBaselineSeededForImage && __haveM1 && __haveM2 && baselineInspection != null)
+            if (__canTransform)
             {
                 double dxOld = m2OldX - m1OldX;
                 double dyOld = m2OldY - m1OldY;
@@ -4078,18 +4110,16 @@ namespace BrakeDiscInspector_GUI_ROI
                 effectiveScale = _lockAnalyzeScale ? 1.0 : scale;
                 AppendLog($"[UI] AnalyzeMaster scale lock={_lockAnalyzeScale}, scale={scale:F6} -> eff={effectiveScale:F6}");
 
-                double angOld = Math.Atan2(dyOld, dxOld);
-                double angNew = Math.Atan2(dyNew, dxNew);
-                angDelta = angNew - angOld;
+                double angOldRad = Math.Atan2(dyOld, dxOld);
+                double angNewRad = Math.Atan2(dyNew, dxNew);
+                angDelta = angNewRad - angOldRad;
 
-                InspLog($"[Transform] BASE->NEW: M1_base=({m1OldX:F3},{m1OldY:F3}) → M1_new=({m1NewX:F3},{m1NewY:F3}), " +
-                        $"M2_base=({m2OldX:F3},{m2OldY:F3}) → M2_new=({m2NewX:F3},{m2NewY:F3}), angΔ={angDelta * 180 / Math.PI:F3}°, effScale={effectiveScale:F6}");
-                __canTransform = true;
+                InspLog($"[Transform] BASE→NEW: M1_base=({m1OldX:F3},{m1OldY:F3}) → M1_new=({m1NewX:F3},{m1NewY:F3}); " +
+                        $"M2_base=({m2OldX:F3},{m2OldY:F3}) → M2_new=({m2NewX:F3},{m2NewY:F3}); angΔ={angDelta * 180 / Math.PI:F3}°, effScale={effectiveScale:F6}");
             }
 
             if (__canTransform && baselineInspection != null)
             {
-                // === Inspection ROI: use the SAME transform pipeline as Heatmap/Masters ===
                 InspLog($"[Transform] INSPECT BEFORE: {FInsp(insp)}");
                 InspLog($"[Transform] pivotOld=({m1OldX:F3},{m1OldY:F3}), pivotNew=({m1NewX:F3},{m1NewY:F3}), effScale={effectiveScale:F6}, angΔ={angDelta*180/Math.PI:F3}°");
 
@@ -4112,15 +4142,11 @@ namespace BrakeDiscInspector_GUI_ROI
                 }
 
                 InspLog($"[Transform] INSPECT AFTER : {FInsp(insp)}");
-                if (baselineInspection != null)
-                {
-                    double dCx = insp.CX - baselineInspection.CX;
-                    double dCy = insp.CY - baselineInspection.CY;
-                    InspLog($"[Transform] INSPECT Δ vs baseline: dCX={dCx:F3}, dCY={dCy:F3}");
-                }
+                double dCx = insp.CX - baselineInspection.CX;
+                double dCy = insp.CY - baselineInspection.CY;
+                InspLog($"[Transform] INSPECT Δ vs baseline: dCX={dCx:F3}, dCY={dCy:F3}");
             }
 
-            // === Size lock: restore original size; keep center & rotation from alignment ===
             if (!__canTransform && _lockAnalyzeScale && insp != null)
             {
                 double cx = insp.CX, cy = insp.CY;
@@ -4149,27 +4175,32 @@ namespace BrakeDiscInspector_GUI_ROI
                 AppendLog("[UI] Fixed Inspection baseline in use (no refresh after Analyze).");
             }
 
-            // === BEGIN: apply the SAME transform to Masters + Heatmap (no inaccessible calls) ===
             try
             {
                 if (__canTransform && _layout != null)
                 {
-                    if (_layout.Master1Pattern != null && __baseM1P != null)
-                        ApplyRoiTransform(_layout.Master1Pattern, __baseM1P, m1OldX, m1OldY, m1NewX, m1NewY, effectiveScale, angDelta);
+                    if (!_freezeMasterShapesOnAnalyze)
+                    {
+                        if (_layout.Master1Pattern != null && __baseM1P != null)
+                            ApplyRoiTransform(_layout.Master1Pattern, __baseM1P, m1OldX, m1OldY, m1NewX, m1NewY, effectiveScale, angDelta);
 
-                    if (_layout.Master2Pattern != null && __baseM2P != null)
-                        ApplyRoiTransform(_layout.Master2Pattern, __baseM2P, m1OldX, m1OldY, m1NewX, m1NewY, effectiveScale, angDelta);
+                        if (_layout.Master2Pattern != null && __baseM2P != null)
+                            ApplyRoiTransform(_layout.Master2Pattern, __baseM2P, m1OldX, m1OldY, m1NewX, m1NewY, effectiveScale, angDelta);
 
-                    if (_layout.Master1Search != null && __baseM1S != null)
-                        ApplyRoiTransform(_layout.Master1Search,  __baseM1S, m1OldX, m1OldY, m1NewX, m1NewY, effectiveScale, angDelta);
+                        if (_layout.Master1Search != null && __baseM1S != null)
+                            ApplyRoiTransform(_layout.Master1Search,  __baseM1S, m1OldX, m1OldY, m1NewX, m1NewY, effectiveScale, angDelta);
 
-                    if (_layout.Master2Search != null && __baseM2S != null)
-                        ApplyRoiTransform(_layout.Master2Search,  __baseM2S, m1OldX, m1OldY, m1NewX, m1NewY, effectiveScale, angDelta);
+                        if (_layout.Master2Search != null && __baseM2S != null)
+                            ApplyRoiTransform(_layout.Master2Search,  __baseM2S, m1OldX, m1OldY, m1NewX, m1NewY, effectiveScale, angDelta);
+                    }
+                    else
+                    {
+                        InspLog("[Analyze] Master shapes frozen (UI only). Crosses will show detection movement.");
+                    }
 
                     if (_lastHeatmapRoi != null && __baseHeat != null)
-                        ApplyRoiTransform(_lastHeatmapRoi,        __baseHeat, m1OldX, m1OldY, m1NewX, m1NewY, effectiveScale, angDelta);
+                        ApplyRoiTransform(_lastHeatmapRoi, __baseHeat, m1OldX, m1OldY, m1NewX, m1NewY, effectiveScale, angDelta);
 
-                    // Refresh overlays with the standard pipeline (NO args for RedrawOverlaySafe)
                     try { ScheduleSyncOverlay(true); }
                     catch
                     {
@@ -4177,17 +4208,16 @@ namespace BrakeDiscInspector_GUI_ROI
                         try { RedrawOverlaySafe(); }
                         catch { RedrawOverlay(); }
                         UpdateHeatmapOverlayLayoutAndClip();
-                        try { RedrawAnalysisCrosses(); } catch {}
+                        try { RedrawAnalysisCrosses(); } catch { }
                     }
 
-                    AppendLog("[UI] Unified transform applied to Masters + Heatmap (same as Inspection).");
+                    AppendLog("[UI] Unified transform applied to Inspection/Heatmap (masters frozen=" + _freezeMasterShapesOnAnalyze + ").");
                 }
             }
             catch (Exception ex)
             {
                 AppendLog("[UI] Unified transform failed: " + ex.Message);
             }
-            // ===  END: apply the SAME transform to Masters + Heatmap ===
 
             SyncCurrentRoiFromInspection(insp);
 
@@ -4197,6 +4227,9 @@ namespace BrakeDiscInspector_GUI_ROI
             {
                 InspLog($"[Analyze] DELTA  : dCX={(insp.CX - _inspectionBaselineFixed.CX):F3}, dCY={(insp.CY - _inspectionBaselineFixed.CY):F3}  (fixedBaseline={_useFixedInspectionBaseline})");
             }
+
+            _lastAccM1X = m1NewX; _lastAccM1Y = m1NewY;
+            _lastAccM2X = m2NewX; _lastAccM2Y = m2NewY;
         }
 
         private RoiModel? GetInspectionBaselineClone()
