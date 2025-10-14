@@ -269,28 +269,83 @@ namespace BrakeDiscInspector_GUI_ROI
             return $"Role={r.Role} Img(L={r.Left:F3},T={r.Top:F3},W={r.Width:F3},H={r.Height:F3},CX={r.CX:F3},CY={r.CY:F3},R={r.R:F3},Rin={r.RInner:F3})";
         }
 
-        // Dump current Image→Canvas transform and related surfaces
+        private struct ImgToCanvas
+        {
+            public double sx, sy, offX, offY;
+        }
+
+        private ImgToCanvas GetImageToCanvasTransform()
+        {
+            var bs = ImgMain?.Source as BitmapSource;
+            if (bs == null || ImgMain == null)
+                return new ImgToCanvas { sx = 1, sy = 1, offX = 0, offY = 0 };
+
+            double imgW = bs.PixelWidth;
+            double imgH = bs.PixelHeight;
+            double viewW = ImgMain.ActualWidth;
+            double viewH = ImgMain.ActualHeight;
+            if (imgW <= 0 || imgH <= 0 || viewW <= 0 || viewH <= 0)
+                return new ImgToCanvas { sx = 1, sy = 1, offX = 0, offY = 0 };
+
+            double scale = Math.Min(viewW / imgW, viewH / imgH);
+            double drawnW = imgW * scale;
+            double drawnH = imgH * scale;
+            double offX = (viewW - drawnW) * 0.5;
+            double offY = (viewH - drawnH) * 0.5;
+
+            return new ImgToCanvas
+            {
+                sx = scale,
+                sy = scale,
+                offX = offX,
+                offY = offY
+            };
+        }
+
+        private static double R(double v) => Math.Round(v, MidpointRounding.AwayFromZero);
+
+        private Rect MapImageRectToCanvas(Rect imageRect)
+        {
+            var t = GetImageToCanvasTransform();
+            double L = t.offX + t.sx * imageRect.X;
+            double T = t.offY + t.sy * imageRect.Y;
+            double W = t.sx * imageRect.Width;
+            double H = t.sy * imageRect.Height;
+            return new Rect(R(L), R(T), R(W), R(H));
+        }
+
+        private Point MapImagePointToCanvas(Point p)
+        {
+            var t = GetImageToCanvasTransform();
+            return new Point(R(t.offX + t.sx * p.X), R(t.offY + t.sy * p.Y));
+        }
+
+        private (Point c, double rOuter, double rInner) MapImageCircleToCanvas(double cx, double cy, double rOuter, double rInner)
+        {
+            var t = GetImageToCanvasTransform();
+            var c = new Point(R(t.offX + t.sx * cx), R(t.offY + t.sy * cy));
+            return (c, R(t.sx * rOuter), R(t.sx * rInner));
+        }
+
         private void RoiDiagDumpTransform(string where)
         {
             try
             {
-                // image source size
                 int srcW = 0, srcH = 0;
                 try
                 {
                     var bs = ImgMain?.Source as System.Windows.Media.Imaging.BitmapSource;
                     if (bs != null) { srcW = bs.PixelWidth; srcH = bs.PixelHeight; }
-                } catch {}
+                }
+                catch { }
 
-                // viewport and canvas sizes
-                double imgVW = ImgMain?.ActualWidth  ?? 0;
+                double imgVW = ImgMain?.ActualWidth ?? 0;
                 double imgVH = ImgMain?.ActualHeight ?? 0;
-                double canW  = CanvasROI?.ActualWidth  ?? 0;
-                double canH  = CanvasROI?.ActualHeight ?? 0;
+                double canW = CanvasROI?.ActualWidth ?? 0;
+                double canH = CanvasROI?.ActualHeight ?? 0;
 
-                // project’s transform (sx,sy,offX,offY)
                 var t = GetImageToCanvasTransform();
-                double sx = t.Item1, sy = t.Item2, offX = t.Item3, offY = t.Item4;
+                double sx = t.sx, sy = t.sy, offX = t.offX, offY = t.offY;
 
                 RoiDiagLog($"[{where}] ImgSrc={srcW}x{srcH} ImgView={imgVW:F3}x{imgVH:F3} CanvasROI={canW:F3}x{canH:F3}  Transform: sx={sx:F9}, sy={sy:F9}, offX={offX:F3}, offY={offY:F3}  Stretch={ImgMain?.Stretch}");
             }
@@ -1450,7 +1505,11 @@ namespace BrakeDiscInspector_GUI_ROI
                 }
             }
 
-            var (sx, sy, ox, oy) = GetImageToCanvasTransform();
+            var transform = GetImageToCanvasTransform();
+            double sx = transform.sx;
+            double sy = transform.sy;
+            double ox = transform.offX;
+            double oy = transform.offY;
             if (sx <= 0.0 || sy <= 0.0)
             {
                 AppendLog("[overlay] skipped redraw (transform invalid)");
@@ -1520,16 +1579,40 @@ namespace BrakeDiscInspector_GUI_ROI
                 canvasRoi.AngleDeg = roi.AngleDeg;
                 canvasRoi.Shape = roi.Shape;
 
+                bool isMasterRole = roi.Role == RoiRole.Master1Pattern ||
+                                    roi.Role == RoiRole.Master1Search ||
+                                    roi.Role == RoiRole.Master2Pattern ||
+                                    roi.Role == RoiRole.Master2Search;
+
                 switch (roi.Shape)
                 {
                     case RoiShape.Rectangle:
                         {
-                            double left = ox + roi.Left * sx;
-                            double top = oy + roi.Top * sy;
-                            double width = Math.Max(1.0, roi.Width * sx);
-                            double height = Math.Max(1.0, roi.Height * sy);
-                            double centerX = left + width / 2.0;
-                            double centerY = top + height / 2.0;
+                            double left;
+                            double top;
+                            double width;
+                            double height;
+                            double centerX;
+                            double centerY;
+
+                            if (isMasterRole)
+                            {
+                                var canvasRect = MapImageRectToCanvas(new Rect(roi.Left, roi.Top, roi.Width, roi.Height));
+                                left = canvasRect.X;
+                                top = canvasRect.Y;
+                                width = Math.Max(1.0, canvasRect.Width);
+                                height = Math.Max(1.0, canvasRect.Height);
+                            }
+                            else
+                            {
+                                left = ox + roi.Left * sx;
+                                top = oy + roi.Top * sy;
+                                width = Math.Max(1.0, roi.Width * sx);
+                                height = Math.Max(1.0, roi.Height * sy);
+                            }
+
+                            centerX = left + width / 2.0;
+                            centerY = top + height / 2.0;
 
                             Canvas.SetLeft(shape, left);
                             Canvas.SetTop(shape, top);
@@ -1550,13 +1633,27 @@ namespace BrakeDiscInspector_GUI_ROI
                         }
                     case RoiShape.Circle:
                         {
-                            double cxImg = roi.CX;
-                            double cyImg = roi.CY;
-                            double dImg = roi.R * 2.0;
+                            double cx;
+                            double cy;
+                            double d;
 
-                            double cx = ox + cxImg * sx;
-                            double cy = oy + cyImg * sy;
-                            double d = Math.Max(1.0, dImg * k);
+                            if (isMasterRole)
+                            {
+                                var mapped = MapImageCircleToCanvas(roi.CX, roi.CY, roi.R, 0);
+                                cx = mapped.c.X;
+                                cy = mapped.c.Y;
+                                d = Math.Max(1.0, mapped.rOuter * 2.0);
+                            }
+                            else
+                            {
+                                double cxImg = roi.CX;
+                                double cyImg = roi.CY;
+                                double dImg = roi.R * 2.0;
+
+                                cx = ox + cxImg * sx;
+                                cy = oy + cyImg * sy;
+                                d = Math.Max(1.0, dImg * k);
+                            }
 
                             Canvas.SetLeft(shape, cx - d / 2.0);
                             Canvas.SetTop(shape, cy - d / 2.0);
@@ -1577,13 +1674,31 @@ namespace BrakeDiscInspector_GUI_ROI
                         }
                     case RoiShape.Annulus:
                         {
-                            double cxImg = roi.CX;
-                            double cyImg = roi.CY;
-                            double dImg = roi.R * 2.0;
+                            double cx;
+                            double cy;
+                            double d;
+                            double innerCanvas;
 
-                            double cx = ox + cxImg * sx;
-                            double cy = oy + cyImg * sy;
-                            double d = Math.Max(1.0, dImg * k);
+                            if (isMasterRole)
+                            {
+                                var mapped = MapImageCircleToCanvas(roi.CX, roi.CY, roi.R, roi.RInner);
+                                cx = mapped.c.X;
+                                cy = mapped.c.Y;
+                                double outerRadius = Math.Max(0.0, mapped.rOuter);
+                                d = Math.Max(1.0, outerRadius * 2.0);
+                                innerCanvas = Math.Max(0.0, Math.Min(mapped.rInner, d / 2.0));
+                            }
+                            else
+                            {
+                                double cxImg = roi.CX;
+                                double cyImg = roi.CY;
+                                double dImg = roi.R * 2.0;
+
+                                cx = ox + cxImg * sx;
+                                cy = oy + cyImg * sy;
+                                d = Math.Max(1.0, dImg * k);
+                                innerCanvas = Math.Max(0.0, Math.Min(roi.RInner * k, d / 2.0));
+                            }
 
                             Canvas.SetLeft(shape, cx - d / 2.0);
                             Canvas.SetTop(shape, cy - d / 2.0);
@@ -1592,7 +1707,6 @@ namespace BrakeDiscInspector_GUI_ROI
 
                             if (shape is AnnulusShape ann)
                             {
-                                double innerCanvas = Math.Max(0.0, Math.Min(roi.RInner * k, d / 2.0));
                                 ann.InnerRadius = innerCanvas;
                                 canvasRoi.RInner = innerCanvas;
                             }
@@ -1823,8 +1937,8 @@ namespace BrakeDiscInspector_GUI_ROI
             LogHeatmap($"DisplayRect = (X={disp.X:F2},Y={disp.Y:F2},W={disp.Width:F2},H={disp.Height:F2})");
 
             // 2) Transformación imagen→canvas actualmente en uso
-            var (sx, sy, offX, offY) = GetImageToCanvasTransform();
-            LogHeatmap($"Transform Img→Canvas: sx={sx:F6}, sy={sy:F6}, offX={offX:F4}, offY={offY:F4}]");
+            var heatmapTransform = GetImageToCanvasTransform();
+            LogHeatmap($"Transform Img→Canvas: sx={heatmapTransform.sx:F6}, sy={heatmapTransform.sy:F6}, offX={heatmapTransform.offX:F4}, offY={heatmapTransform.offY:F4}]");
 
             // 3) ROI en espacio de imagen (si tienes RoiDebug)
             try { LogHeatmap("ROI (image space): " + RoiDebug(_lastHeatmapRoi)); } catch {}
@@ -5578,9 +5692,9 @@ namespace BrakeDiscInspector_GUI_ROI
         /// Convierte un punto en píxeles de imagen -> punto en CanvasROI (coordenadas locales del Canvas)
         private System.Windows.Point ImagePxToCanvasPt(double px, double py)
         {
-            var (scaleX, scaleY, offsetX, offsetY) = GetImageToCanvasTransform();
-            double x = px * scaleX + offsetX;
-            double y = py * scaleY + offsetY;
+            var transform = GetImageToCanvasTransform();
+            double x = px * transform.sx + transform.offX;
+            double y = py * transform.sy + transform.offY;
             return new System.Windows.Point(x, y);
         }
 
@@ -5594,7 +5708,11 @@ namespace BrakeDiscInspector_GUI_ROI
 
         private System.Windows.Point CanvasToImage(System.Windows.Point pCanvas)
         {
-            var (scaleX, scaleY, offsetX, offsetY) = GetImageToCanvasTransform();
+            var transform = GetImageToCanvasTransform();
+            double scaleX = transform.sx;
+            double scaleY = transform.sy;
+            double offsetX = transform.offX;
+            double offsetY = transform.offY;
             if (scaleX <= 0 || scaleY <= 0) return new System.Windows.Point(0, 0);
             double ix = (pCanvas.X - offsetX) / scaleX;
             double iy = (pCanvas.Y - offsetY) / scaleY;
@@ -5605,7 +5723,11 @@ namespace BrakeDiscInspector_GUI_ROI
         private RoiModel CanvasToImage(RoiModel roiCanvas)
         {
             var result = roiCanvas.Clone();
-            var (scaleX, scaleY, offsetX, offsetY) = GetImageToCanvasTransform();
+            var transform = GetImageToCanvasTransform();
+            double scaleX = transform.sx;
+            double scaleY = transform.sy;
+            double offsetX = transform.offX;
+            double offsetY = transform.offY;
             if (scaleX <= 0 || scaleY <= 0) return result;
 
             result.AngleDeg = roiCanvas.AngleDeg;
@@ -5644,7 +5766,11 @@ namespace BrakeDiscInspector_GUI_ROI
         private RoiModel ImageToCanvas(RoiModel roiImage)
         {
             var result = roiImage.Clone();
-            var (scaleX, scaleY, offsetX, offsetY) = GetImageToCanvasTransform();
+            var transform = GetImageToCanvasTransform();
+            double scaleX = transform.sx;
+            double scaleY = transform.sy;
+            double offsetX = transform.offX;
+            double offsetY = transform.offY;
             if (scaleX <= 0 || scaleY <= 0) return result;
 
             result.AngleDeg = roiImage.AngleDeg;
@@ -5850,59 +5976,6 @@ namespace BrakeDiscInspector_GUI_ROI
             _overlayNeedsRedraw = false;
             return;
         }
-
-
-
-        private (double scaleX, double scaleY, double offsetX, double offsetY) GetImageToCanvasTransform()
-        {
-            var (pw, ph) = GetImagePixelSize();
-            if (pw <= 0 || ph <= 0)
-                return (1.0, 1.0, 0.0, 0.0);
-
-            var displayRect = GetImageDisplayRect();
-            bool overlayAligned = IsOverlayAligned();
-
-            double canvasWidth = 0.0;
-            double canvasHeight = 0.0;
-
-            if (overlayAligned)
-            {
-                canvasWidth = CanvasROI?.ActualWidth ?? CanvasROI?.Width ?? 0.0;
-                canvasHeight = CanvasROI?.ActualHeight ?? CanvasROI?.Height ?? 0.0;
-            }
-
-            if (!overlayAligned || canvasWidth <= 0 || canvasHeight <= 0)
-            {
-                canvasWidth = displayRect.Width;
-                canvasHeight = displayRect.Height;
-            }
-
-            if (canvasWidth <= 0 || canvasHeight <= 0)
-            {
-                // Último recurso: usa las dimensiones actuales del canvas aunque no estén alineadas.
-                canvasWidth = CanvasROI?.ActualWidth ?? CanvasROI?.Width ?? 0.0;
-                canvasHeight = CanvasROI?.ActualHeight ?? CanvasROI?.Height ?? 0.0;
-            }
-
-            if (canvasWidth <= 0 || canvasHeight <= 0)
-                return (1.0, 1.0, 0.0, 0.0);
-
-            double scaleX = canvasWidth / pw;
-            double scaleY = canvasHeight / ph;
-
-            if (Math.Abs(scaleX - scaleY) > 0.001)
-            {
-                AppendLog($"[sync] escala no uniforme detectada canvas=({canvasWidth:0.###}x{canvasHeight:0.###}) px=({pw}x{ph}) scaleX={scaleX:0.#####} scaleY={scaleY:0.#####}");
-            }
-
-            double offsetX = displayRect.X;
-            double offsetY = displayRect.Y;
-
-            return (scaleX, scaleY, offsetX, offsetY);
-        }
-
-
-
 
 
 
