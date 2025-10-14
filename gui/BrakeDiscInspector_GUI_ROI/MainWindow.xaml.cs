@@ -89,7 +89,13 @@ namespace BrakeDiscInspector_GUI_ROI
         private bool _inspectionBaselineSeededForImage = false; // has the baseline been seeded for the current image?
         private string _lastImageSeedKey = "";                  // “signature” of the currently loaded image
 
-        private bool _lockAnalyzeScale = true;                  // keep ROI size fixed during Analyze
+        // --- Fixed master baselines per image (to avoid chained pivots) ---
+        private bool _mastersBaselineSeededForImage = false;
+        private string _mastersImageSeedKey = "";
+        private double _m1BaseX = 0, _m1BaseY = 0;
+        private double _m2BaseX = 0, _m2BaseY = 0;
+
+        private bool _lockAnalyzeScale = true;                  // Size lock already in use; keep it true
 
         private static readonly string InspAlignLogPath = System.IO.Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
@@ -1226,6 +1232,39 @@ namespace BrakeDiscInspector_GUI_ROI
                 {
                     // Same image => do NOTHING (no re-seed)
                     InspLog($"[Seed] Same image key='{seedKey}', no re-seed.");
+                }
+            }
+
+            {
+                string seedKey = ComputeImageSeedKey();
+
+                if (!string.Equals(seedKey, _mastersImageSeedKey, System.StringComparison.Ordinal))
+                {
+                    // New image: compute and store MASTER BASE centers once
+                    _mastersImageSeedKey = seedKey;
+                    _mastersBaselineSeededForImage = false; // will seed now
+
+                    // Take centers from layout masters AS LOADED (baseline)
+                    // Prefer the *pattern* ROIs if present; they are the geometric anchors.
+                    var m1p = _layout?.Master1Pattern;
+                    var m2p = _layout?.Master2Pattern;
+
+                    if (m1p != null && m2p != null)
+                    {
+                        _m1BaseX = m1p.CX; _m1BaseY = m1p.CY;
+                        _m2BaseX = m2p.CX; _m2BaseY = m2p.CY;
+                        _mastersBaselineSeededForImage = true;
+                        InspLog($"[Seed-M] New image => M1_base=({_m1BaseX:F3},{_m1BaseY:F3}) M2_base=({_m2BaseX:F3},{_m2BaseY:F3}) key='{seedKey}'");
+                    }
+                    else
+                    {
+                        InspLog("[Seed-M] WARNING: Could not seed master baselines (missing Master1Pattern/Master2Pattern).");
+                    }
+                }
+                else
+                {
+                    // Same image: do NOT reseed
+                    InspLog($"[Seed-M] Same image key='{seedKey}', keep existing M1/M2 baselines.");
                 }
             }
 
@@ -4003,8 +4042,21 @@ namespace BrakeDiscInspector_GUI_ROI
                                       ? (_inspectionBaselineFixed ?? (_inspectionBaselineFixed = insp.Clone()))
                                       : (GetInspectionBaselineClone() ?? insp.Clone());
 
-            double m1OldX = 0, m1OldY = 0;
-            double m2OldX = 0, m2OldY = 0;
+            if (!_mastersBaselineSeededForImage)
+            {
+                InspLog("[Analyze] WARNING: Masters baseline not seeded for this image. Seeding defensively from current layout.");
+                var m1p = _layout?.Master1Pattern;
+                var m2p = _layout?.Master2Pattern;
+                if (m1p != null && m2p != null)
+                {
+                    _m1BaseX = m1p.CX; _m1BaseY = m1p.CY;
+                    _m2BaseX = m2p.CX; _m2BaseY = m2p.CY;
+                    _mastersBaselineSeededForImage = true;
+                }
+            }
+
+            double m1OldX = _m1BaseX, m1OldY = _m1BaseY;
+            double m2OldX = _m2BaseX, m2OldY = _m2BaseY;
             double m1NewX = master1.X, m1NewY = master1.Y;
             double m2NewX = master2.X, m2NewY = master2.Y;
             double scale = 1.0;
@@ -4012,15 +4064,8 @@ namespace BrakeDiscInspector_GUI_ROI
             double angDelta = 0.0;
             bool __canTransform = false;
 
-            if (__haveM1 && __haveM2 && baselineInspection != null)
+            if (_mastersBaselineSeededForImage && __haveM1 && __haveM2 && baselineInspection != null)
             {
-                var centerM1 = CenterOf(__baseM1P);
-                var centerM2 = CenterOf(__baseM2P);
-                m1OldX = centerM1.cx;
-                m1OldY = centerM1.cy;
-                m2OldX = centerM2.cx;
-                m2OldY = centerM2.cy;
-
                 double dxOld = m2OldX - m1OldX;
                 double dyOld = m2OldY - m1OldY;
                 double lenOld = Math.Sqrt(dxOld * dxOld + dyOld * dyOld);
@@ -4037,7 +4082,8 @@ namespace BrakeDiscInspector_GUI_ROI
                 double angNew = Math.Atan2(dyNew, dxNew);
                 angDelta = angNew - angOld;
 
-                InspLog($"[Transform] PIVOT/ANGLE: m1Old=({m1OldX:F3},{m1OldY:F3}) → m1New=({m1NewX:F3},{m1NewY:F3}), angΔ={angDelta*180/Math.PI:F3}°, effScale={effectiveScale:F6}");
+                InspLog($"[Transform] BASE->NEW: M1_base=({m1OldX:F3},{m1OldY:F3}) → M1_new=({m1NewX:F3},{m1NewY:F3}), " +
+                        $"M2_base=({m2OldX:F3},{m2OldY:F3}) → M2_new=({m2NewX:F3},{m2NewY:F3}), angΔ={angDelta * 180 / Math.PI:F3}°, effScale={effectiveScale:F6}");
                 __canTransform = true;
             }
 
@@ -4066,9 +4112,12 @@ namespace BrakeDiscInspector_GUI_ROI
                 }
 
                 InspLog($"[Transform] INSPECT AFTER : {FInsp(insp)}");
-                double dCx = insp.CX - baselineInspection.CX;
-                double dCy = insp.CY - baselineInspection.CY;
-                InspLog($"[Transform] INSPECT Δ vs baseline: dCX={dCx:F3}, dCY={dCy:F3}");
+                if (baselineInspection != null)
+                {
+                    double dCx = insp.CX - baselineInspection.CX;
+                    double dCy = insp.CY - baselineInspection.CY;
+                    InspLog($"[Transform] INSPECT Δ vs baseline: dCX={dCx:F3}, dCY={dCy:F3}");
+                }
             }
 
             // === Size lock: restore original size; keep center & rotation from alignment ===
