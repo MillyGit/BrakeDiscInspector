@@ -1,17 +1,13 @@
-
 # 📌 Actualización — 2025-10-07
 
-**Cambios clave (GUI):**
-- Corrección de salto del frame al clicar adorner (círculo/annulus): cálculo y propagación del centro reales en `SyncModelFromShape` y sincronización `X,Y = CX,CY` en `CreateLayoutShape`.
-- Bbox SIEMPRE cuadrado para circle/annulus; overlay heatmap alineado.
-- Decisiones del proyecto y parámetros vigentes documentados.
-
-**Cambios clave (Backend):**
-- PatchCore + DINOv2 ViT-S/14; endpoints `/health`, `/fit_ok`, `/calibrate_ng`, `/infer`; persistencia por `(role_id, roi_id)`.
+**Cambios clave documentados en esta versión:**
+- Requests/responses sincronizados con `backend/app.py` e `InferenceEngine.run` (score, threshold, heatmap, regions, token_shape).
+- Esquemas de artefactos persistidos (`memory.npz`, `index.faiss`, `calib.json`) actualizados según `ModelStore`.
+- Metadatos de datasets GUI ajustados a `Workflow/DatasetManager.cs` y `DatasetSample.cs` (`shape_json`, `mm_per_px`, `angle`).
 
 # DATA_FORMATS — BrakeDiscInspector
 
-Este documento resume los formatos de datos utilizados entre la GUI y el backend PatchCore (FastAPI), así como los archivos generados en disco.
+Resumen de los formatos de datos intercambiados entre la GUI WPF y el backend FastAPI PatchCore, así como de los archivos generados en disco.
 
 ---
 
@@ -20,7 +16,7 @@ Este documento resume los formatos de datos utilizados entre la GUI y el backend
 - [Requests al backend](#1-requests-al-backend)
 - [Responses del backend](#2-responses-del-backend)
 - [Archivos generados en disco](#3-archivos-generados-en-disco)
-- [Modelos de datos en la GUI](#4-modelos-de-datos-en-la-gui-c)
+- [Modelos de datos en la GUI](#4-modelos-de-datos-en-la-gui)
 - [Convenciones generales](#5-convenciones-generales)
 
 ---
@@ -28,47 +24,43 @@ Este documento resume los formatos de datos utilizados entre la GUI y el backend
 ## 1) Requests al backend
 
 ### 1.1 `POST /fit_ok`
-
 - **Tipo**: `multipart/form-data`
-- **Campos**:
+- **Campos**
   | Campo | Tipo | Descripción |
   |-------|------|-------------|
-  | `role_id` | string | Identificador del rol o layout actual. |
-  | `roi_id` | string | Identificador de la ROI dentro del rol. |
-  | `mm_per_px` | float | Resolución usada para reportar áreas. |
-  | `images[]` | fichero(s) | PNG/JPG del ROI canónico (recortado + rotado). |
+  | `role_id` | string | Identificador del rol/preset. |
+  | `roi_id` | string | Identificador de la ROI. |
+  | `mm_per_px` | float | Resolución del ROI (mm por pixel). |
+  | `images` | fichero(s) | PNG/JPG canónicos (crop + rotación ya aplicados). |
 
 ### 1.2 `POST /calibrate_ng`
-
 - **Tipo**: `application/json`
-- **Esquema**:
+- **Ejemplo**
   ```json
   {
     "role_id": "Master1",
     "roi_id": "Pattern",
-    "mm_per_px": 0.2,
+    "mm_per_px": 0.20,
     "ok_scores": [12.1, 10.8, 11.5],
     "ng_scores": [28.4],
     "area_mm2_thr": 1.0,
     "score_percentile": 99
   }
   ```
-- `ng_scores` es opcional. Si está vacío, el backend usa `p99(ok_scores)` como umbral.
+- `ng_scores` es opcional. Si está vacío, el umbral resultante es `p99(ok_scores)`.
 
 ### 1.3 `POST /infer`
-
 - **Tipo**: `multipart/form-data`
-- **Campos**:
+- **Campos**
   | Campo | Tipo | Descripción |
   |-------|------|-------------|
   | `role_id` | string | Debe coincidir con el usado en `/fit_ok`. |
   | `roi_id` | string | Debe coincidir con el usado en `/fit_ok`. |
-  | `mm_per_px` | float | Resolución para calcular áreas mm². |
-  | `image` | fichero | PNG/JPG del ROI canónico. |
-  | `shape` | string JSON (opcional) | Máscara (`rect`, `circle`, `annulus`) en coordenadas del ROI. |
+  | `mm_per_px` | float | Necesario para convertir áreas a mm². |
+  | `image` | fichero | ROI canónico (PNG/JPG). |
+  | `shape` | string (opcional) | JSON con máscara (`rect`, `circle`, `annulus`) en píxeles del ROI. |
 
 ### 1.4 `GET /health`
-
 - **Tipo**: `application/json`
 - **Body**: vacío.
 
@@ -102,25 +94,23 @@ Este documento resume los formatos de datos utilizados entre la GUI y el backend
 ### 2.3 `/infer`
 ```json
 {
-  "role_id": "Master1",
-  "roi_id": "Pattern",
   "score": 18.7,
   "threshold": 20.0,
+  "token_shape": [32, 32],
   "heatmap_png_base64": "iVBORw0K...",
   "regions": [
-    {"bbox": [x, y, w, h], "area_px": 250.0, "area_mm2": 10.0, "contour": [[x1, y1], ...]}
-  ],
-  "token_shape": [32, 32],
-  "params": {
-    "coreset_rate": 0.02,
-    "score_percentile": 99,
-    "mm_per_px": 0.2
-  }
+    {
+      "bbox": [x, y, w, h],
+      "area_px": 250.0,
+      "area_mm2": 10.0,
+      "contour": [[x1, y1], ...]
+    }
+  ]
 }
 ```
-
-- `heatmap_png_base64`: PNG de 8 bits (grises) del heatmap.
-- `regions`: lista ordenada por área descendente tras aplicar `area_mm2_thr` y filtrado morfológico.
+- `threshold` puede ser `null` si no se ha calibrado.
+- `regions` puede estar vacío si no se supera el umbral.
+- El heatmap es un PNG en escala de grises (`uint8`).【F:backend/infer.py†L122-L181】
 
 ### 2.4 `/health`
 ```json
@@ -132,77 +122,92 @@ Este documento resume los formatos de datos utilizados entre la GUI y el backend
 }
 ```
 
-**Errores**: cualquier endpoint puede responder `{ "error": "mensaje", "trace": "stacktrace" }` con códigos 4xx/5xx.
+### 2.5 Errores
+Los endpoints pueden responder con códigos `4xx/5xx` y payload:
+```json
+{
+  "error": "mensaje descriptivo",
+  "trace": "stacktrace"
+}
+```
+Esto se emite cuando `app.py` captura una excepción durante la petición.【F:backend/app.py†L108-L214】
 
 ---
 
 ## 3) Archivos generados en disco
 
-### 3.1 Persistencia del backend (`backend/models/<role>/<roi>/`)
+### 3.1 Persistencia backend (`backend/models/<role>/<roi>/`)
 
-| Archivo | Tipo | Descripción |
-|---------|------|-------------|
-| `memory.npz` | NumPy NPZ | Contiene `emb` (coreset), `token_h`, `token_w` y metadata (`coreset_rate`, `applied_rate`). |
-| `index.faiss` | Binario | Índice FlatL2 serializado (opcional; se crea si FAISS está disponible). |
-| `calib.json` | JSON | Resultado de `/calibrate_ng` con umbral y parámetros persistidos. |
+| Archivo | Tipo | Contenido |
+|---------|------|-----------|
+| `memory.npz` | NumPy NPZ | `emb` (coreset `float32`), `token_h`, `token_w`, `metadata` JSON con tasas de coreset.【F:backend/storage.py†L12-L64】 |
+| `index.faiss` | Binario | Índice serializado (si FAISS está disponible). |
+| `calib.json` | JSON | Umbral (`threshold`), percentiles (`p99_ok`, `p5_ng`), `mm_per_px`, `area_mm2_thr`, `score_percentile`. |
 
-### 3.2 Dataset local de la GUI (`datasets/<role>/<roi>/<ok|ng>/`)
+### 3.2 Dataset GUI (`datasets/<role>/<roi>/<ok|ng>/`)
 
 | Archivo | Contenido |
 |---------|-----------|
 | `*.png` | ROI canónico exportado por la GUI (PNG 8/24 bits). |
-| `*.json` | Metadata asociada: `role_id`, `roi_id`, `mm_per_px`, `shape`, `source_path`, `angle`, `timestamp`, `app_version?`. |
-| `manifest.json` *(opcional)* | Resumen del dataset: nº OK/NG, fecha último `fit_ok`, `threshold` vigente, `mm_per_px`. |
+| `*.json` | Metadata serializada desde `DatasetManager`: `{ "role_id", "roi_id", "mm_per_px", "shape_json", "source_path", "angle", "timestamp" }`.【F:gui/BrakeDiscInspector_GUI_ROI/Workflow/DatasetManager.cs†L38-L74】【F:gui/BrakeDiscInspector_GUI_ROI/Workflow/DatasetSample.cs†L72-L120】 |
+| `manifest.json` *(opcional)* | Resumen del dataset (contadores, fecha último `fit_ok`, versión GUI). |
 
-### 3.3 Heatmaps temporales
-
-- La GUI decodifica `heatmap_png_base64` a `byte[]` y lo muestra sin persistir por defecto.
-- Si se decide guardar evidencias, se recomienda carpeta `evidence/<fecha>/<role>/<roi>/heatmap_<timestamp>.png` (fuera del repo).
+### 3.3 Evidencias temporales
+- La GUI decodifica `heatmap_png_base64` para mostrarlo; no se persiste por defecto.
+- Se recomienda guardar heatmaps/contornos bajo `evidence/<fecha>/<role>/<roi>/` si se requiere auditoría.
 
 ---
 
-## 4) Modelos de datos en la GUI (C#)
+## 4) Modelos de datos en la GUI
+
+Ejemplo de DTOs utilizados en `Workflow` (simplificados):
 
 ```csharp
-public record BackendRegion(
-    Rect BBox,
-    double AreaPx,
-    double AreaMm2,
-    IReadOnlyList<Point> Contour
-);
+public sealed class FitOkResult
+{
+    public int n_embeddings { get; set; }
+    public int coreset_size { get; set; }
+    public int[]? token_shape { get; set; }
+}
 
-public record InferResult(
-    string RoleId,
-    string RoiId,
-    double Score,
-    double Threshold,
-    byte[] HeatmapPng,
-    IReadOnlyList<BackendRegion> Regions,
-    int TokenHeight,
-    int TokenWidth
-);
+public sealed class CalibResult
+{
+    public double? threshold { get; set; }
+    public double? p99_ok { get; set; }
+    public double? p5_ng { get; set; }
+    public double mm_per_px { get; set; }
+    public double area_mm2_thr { get; set; }
+    public int score_percentile { get; set; }
+}
 
-public record FitOkResult(int NEmbeddings, int CoresetSize, int TokenHeight, int TokenWidth);
+public sealed class InferRegion
+{
+    public double[]? bbox { get; set; }
+    public double area_px { get; set; }
+    public double area_mm2 { get; set; }
+    public double[][]? contour { get; set; }
+}
 
-public record CalibrateResult(
-    double Threshold,
-    double? P99Ok,
-    double? P5Ng,
-    double MmPerPx,
-    double AreaMm2Thr,
-    int ScorePercentile
-);
+public sealed class InferResult
+{
+    public double score { get; set; }
+    public double? threshold { get; set; }
+    public string? heatmap_png_base64 { get; set; }
+    public InferRegion[]? regions { get; set; }
+    public int[]? token_shape { get; set; }
+}
 ```
 
-Las estructuras anteriores deben mantenerse sincronizadas con los contratos documentados.
+Ajustar los DTOs si el backend añade campos opcionales (`params`, `metadata`), manteniendo compatibilidad con JSON web (`JsonSerializerDefaults.Web`).
 
 ---
 
 ## 5) Convenciones generales
 
-- Todas las coordenadas (`bbox`, contornos) se expresan en píxeles del ROI canónico.
-- `mm_per_px` siempre acompaña a las operaciones para convertir áreas a mm².
-- Los ficheros JSON deben guardarse en UTF-8 sin BOM.
-- El backend acepta PNG/JPG; la GUI recomienda PNG para evitar pérdidas de calidad.
+- Todos los tiempos se registran en UTC (`timestamp` ISO 8601) en metadatos GUI.
+- `mm_per_px` debe mantenerse consistente entre dataset, entrenamiento y calibración para que `area_mm2` sea fiable.
+- Las rutas se construyen con `Path.Combine` para evitar problemas multiplataforma.
+- El backend espera imágenes BGR `uint8`; cualquier normalización/rotación debe realizarla la GUI antes de enviar la petición.【F:backend/app.py†L46-L71】
+- Los archivos generados por el backend se deben versionar fuera del repositorio Git (carpetas montadas, unidades externas).
 
-Consulta [API_REFERENCE.md](API_REFERENCE.md) para ejemplos detallados de llamadas HTTP y [ARCHITECTURE.md](ARCHITECTURE.md) para el flujo end-to-end.
+Para detalles sobre geometría y sincronización ROI ↔ heatmap consulta [ROI_AND_MATCHING_SPEC.md](ROI_AND_MATCHING_SPEC.md).

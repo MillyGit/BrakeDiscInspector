@@ -1,13 +1,9 @@
-
 # 📌 Actualización — 2025-10-07
 
-**Cambios clave (GUI):**
-- Corrección de salto del frame al clicar adorner (círculo/annulus): cálculo y propagación del centro reales en `SyncModelFromShape` y sincronización `X,Y = CX,CY` en `CreateLayoutShape`.
-- Bbox SIEMPRE cuadrado para circle/annulus; overlay heatmap alineado.
-- Decisiones del proyecto y parámetros vigentes documentados.
-
-**Cambios clave (Backend):**
-- PatchCore + DINOv2 ViT-S/14; endpoints `/health`, `/fit_ok`, `/calibrate_ng`, `/infer`; persistencia por `(role_id, roi_id)`.
+**Cambios clave documentados en esta versión:**
+- Se detalla cómo instrumentar `app.py` e `InferenceEngine` con logs estructurados para `/fit_ok`, `/calibrate_ng`, `/infer`.
+- Se alinean los destinos de log de la GUI con los archivos creados durante dataset/inferencia (`roi_analyze_master.log`, etc.).
+- Se incluyen recomendaciones de correlación (`X-Correlation-Id`) y rotación en despliegues Windows/Linux.
 
 # LOGGING — BrakeDiscInspector
 
@@ -27,96 +23,95 @@ Política de logging y trazabilidad para el backend FastAPI (PatchCore + DINOv2)
 
 ## 1) Principios
 
-- **Observabilidad**: registrar tiempos, tamaños y resultados clave sin exponer datos sensibles.
-- **Correlación**: usar `X-Correlation-Id` para unir eventos GUI ↔ backend.
-- **Retención**: rotar y conservar logs críticos según políticas de planta.
+- **Observabilidad**: registrar inicio, parámetros y tiempos de cada operación crítica.
+- **Correlación**: propagar un identificador (`X-Correlation-Id`) desde la GUI hacia el backend para unir eventos.
+- **Retención**: definir rotación y purgado acorde al entorno (laboratorio vs producción).
 
 ---
 
 ## 2) Backend (FastAPI)
 
-### 2.1 Configuración básica
+### 2.1 Configuración
+- El módulo raíz (`app.py`) obtiene un `logger` con `logging.getLogger(__name__)` y crea registros al arrancar mediante `logging.basicConfig` cuando se ejecuta como script.【F:backend/app.py†L1-L214】
+- Al ejecutar con Uvicorn/Gunicorn usar `--log-level info` y, si se necesita más detalle, habilitar `uvicorn.error` y `uvicorn.access` en un fichero aparte.
 
-- El backend usa `logging.getLogger(__name__)` en módulos como `app.py`, `infer.py` y `storage.py`.
-- Inicializa logging en `if __name__ == "__main__"` cuando se ejecuta con `uvicorn backend.app:app` (usar `--log-level info`).
-- Para despliegues con Gunicorn, definir `log-config` o variables `LOG_LEVEL` según necesidad.
-- Habilita `uvicorn.access` si necesitas auditoría HTTP; puede redirigirse a fichero separado usando la configuración de Gunicorn/Uvicorn.
-
-### 2.2 Eventos mínimos
+### 2.2 Eventos recomendados
 
 | Evento | Campos sugeridos |
 |--------|------------------|
-| Inicio del servicio | versión, dispositivo (`cpu`/`cuda`), `models_dir` activo. |
-| `/fit_ok` | `role_id`, `roi_id`, nº de imágenes, bytes totales, `n_embeddings`, `coreset_size`, `token_shape`, tiempo total. |
-| `/calibrate_ng` | `role_id`, `roi_id`, tamaño arrays OK/NG, `threshold`, `score_percentile`, `area_mm2_thr`. |
-| `/infer` | `role_id`, `roi_id`, tamaño PNG, presencia de `shape`, `score`, `threshold`, nº regiones, latencia total. |
+| Inicio | versión (`0.1.0`), dispositivo (`cpu`/`cuda`), `MODELS_DIR` activo. |
+| `/fit_ok` | `role_id`, `roi_id`, nº imágenes, bytes totales, `n_embeddings`, `coreset_size`, `token_shape`, `coreset_rate`. |
+| `/calibrate_ng` | `role_id`, `roi_id`, len arrays OK/NG, `threshold`, `area_mm2_thr`, `score_percentile`. |
+| `/infer` | `role_id`, `roi_id`, tamaño imagen, `shape` presente, `score`, `threshold`, nº regiones, tiempo total. |
 | Errores | Mensaje y `traceback` completo (`logger.exception`). |
 
-Ejemplo (pseudocódigo):
+Pseudocódigo:
 ```python
-cid = headers.get("X-Correlation-Id", uuid.uuid4().hex[:8])
-t0 = time.perf_counter()
-log.info("[%s] /infer start role=%s roi=%s bytes=%d shape=%s", cid, role_id, roi_id, len(data), bool(shape))
-...
-dt = (time.perf_counter() - t0) * 1000
-log.info("[%s] /infer end score=%.2f thr=%s regions=%d dt_ms=%.1f", cid, out["score"], out.get("threshold"), len(out["regions"]), dt)
+cid = headers.get("X-Correlation-Id") or uuid.uuid4().hex[:8]
+log.info("[%s] /infer start role=%s roi=%s bytes=%d shape=%s", cid, role_id, roi_id, len(raw), bool(shape))
+try:
+    result = engine.run(...)
+    log.info("[%s] /infer end score=%.2f thr=%s regions=%d", cid, result["score"], result.get("threshold"), len(result["regions"]))
+except Exception:
+    log.exception("[%s] /infer failed", cid)
+    raise
 ```
 
-### 2.3 Rotación
-
-- **Linux**: usar `logrotate` (ejemplo `/etc/logrotate.d/brakedisc` con rotación semanal + compresión).
-- **Windows**: emplear Task Scheduler o NSSM para rotar ficheros en `backend/logs/`.
-- Registrar la ruta exacta en documentación de despliegue.
+### 2.3 Rotación y destino
+- **Linux**: configurar `/var/log/brakedisc/backend.log` con `logrotate` semanal (7 versiones comprimidas).
+- **Windows/NSSM**: redirigir `stdout`/`stderr` a un fichero (`backend\logs\backend.log`) y rotarlo mediante Task Scheduler o NSSM `AppRotateFiles`.
 
 ### 2.4 Métricas opcionales
-
-- Promedio y percentil 95 de latencias `/infer`.
-- Conteo de `OK` vs `NG` por rol/ROI.
-- Uso opcional de Prometheus (`prometheus_fastapi_instrumentator`) para exponer métricas.
+- Latencias p95 de `/infer` y `/fit_ok` (exportables vía `prometheus_fastapi_instrumentator`).
+- Conteo de inferencias por `(role_id, roi_id)` para seguimiento de uso.
 
 ---
 
 ## 3) GUI (WPF)
 
-### 3.1 Recomendaciones
-
-- Centralizar logs en `gui/logs/gui.log` (añadir a `.gitignore`).
-- Usar un `ConcurrentQueue` o `ObservableCollection` para mostrar eventos en pantalla y escribirlos en disco.
-- Formato sugerido: `yyyy-MM-dd HH:mm:ss.fff [Nivel] Mensaje`.
+### 3.1 Destinos de log
+- Registrar eventos en `%LOCALAPPDATA%/BrakeDiscInspector/logs/` (sugerido):
+  - `roi_analyze_master.log` → exportación de ROIs y generación de dataset.
+  - `roi_load_coords.log` → carga/guardado de layouts y presets.
+  - `gui_heatmap.log` → resultados de `/fit_ok`, `/calibrate_ng`, `/infer` (score, threshold, nº regiones).
+- Utilizar `StreamWriter` asíncrono o `Serilog` si ya está integrado en la solución.
 
 ### 3.2 Eventos mínimos
 
 | Evento | Contenido |
 |--------|-----------|
-| Inicio de la app | Versión, ruta del dataset, backend configurado. |
-| Carga de imagen | Nombre de archivo (anonimizado) y dimensiones. |
-| ROI exportada | `role_id`, `roi_id`, tamaño PNG generado, ángulo, `shape`. |
-| `/fit_ok` | Tiempo de ejecución y resumen de respuesta (`n_embeddings`, `coreset_size`). |
-| `/calibrate_ng` | `threshold` devuelto, tamaños de arrays. |
-| `/infer` | `score`, `threshold`, nº regiones, latencia. |
-| Errores | Mensaje y detalles (`HttpRequestException`, validaciones). |
+| Inicio de app | Versión GUI, `DatasetRoot`, `Backend.BaseUrl`. |
+| Carga imagen | Ruta (anonimizada) y dimensiones originales. |
+| Exportar ROI | `role_id`, `roi_id`, `shape`, tamaño PNG, `mm_per_px`, ángulo. |
+| `/fit_ok` | Nº imágenes enviadas, `n_embeddings`, `coreset_size`, duración. |
+| `/calibrate_ng` | Arrays OK/NG usados, `threshold` devuelto. |
+| `/infer` | `score`, `threshold`, nº regiones, duración, path del heatmap temporal. |
+| Errores | Mensaje amigable + detalle técnico (`HttpRequestException`, validaciones). |
 
-### 3.3 Correlación con backend
+### 3.3 Correlación GUI ↔ backend
+- Generar `X-Correlation-Id` por operación (`Guid.NewGuid().ToString("N").Substring(0,8)`) y adjuntarlo en `BackendClient` vía `HttpRequestMessage.Headers` antes de cada POST/GET.
+- Registrar el ID en los logs GUI y backend para facilitar el trazado cuando se analicen incidencias.
 
-- Generar `X-Correlation-Id` por cada operación (ej. `Guid.NewGuid().ToString("N").Substring(0,8)`).
-- Adjuntar el header en todas las llamadas HTTP y registrar el mismo ID en los logs GUI.
+### 3.4 Supervisión visual
+- Al recibir `heatmap_png_base64`, guardar temporalmente el PNG con el mismo `CorrelationId` para comparar con los logs.
+- Almacenar respuestas completas (JSON) cuando se depuren umbrales o regresiones.
 
 ---
 
 ## 4) Seguridad
 
-- No registrar rutas completas del usuario ni datos sensibles.
-- Evitar almacenar imágenes o blobs en logs (solo tamaños/nombres anónimos).
-- Asegurar permisos restrictivos en carpetas de log (`chmod 750` en Linux; ACLs en Windows).
+- No registrar rutas completas ni IDs sensibles; anonimizar nombres de archivo cuando sea posible.
+- Revisar periódicamente los logs para asegurarse de que no contienen imágenes o datos confidenciales.
+- Establecer permisos restringidos (`chmod 750` en Linux, ACL específica en Windows) sobre carpetas de logs.
 
 ---
 
 ## 5) Checklist
 
-- [ ] Backend registra inicio, `/fit_ok`, `/calibrate_ng`, `/infer` y errores con correlation id.
-- [ ] Rotación de logs configurada en el entorno objetivo.
-- [ ] GUI guarda logs locales sin PII y muestra últimos eventos al usuario.
-- [ ] `X-Correlation-Id` presente en ambas mitades (GUI ↔ backend).
-- [ ] Métricas opcionales documentadas en `docs/mcp/latest_updates.md` si se habilitan.
+- [ ] Backend registra inicio, `/fit_ok`, `/calibrate_ng`, `/infer` con tiempos y correlation id.
+- [ ] La GUI escribe logs en disco y muestra los últimos eventos al usuario.
+- [ ] La rotación de logs está configurada en el entorno objetivo (logrotate, Task Scheduler, etc.).
+- [ ] Se documenta en `docs/mcp/latest_updates.md` cualquier cambio en política de logging.
+- [ ] Métricas opcionales (si se habilitan) quedan enlazadas desde el MCP.
 
-Para coordinación entre equipos revisar [docs/mcp/overview.md](docs/mcp/overview.md).
+Para coordinación adicional consulta [docs/mcp/overview.md](docs/mcp/overview.md).

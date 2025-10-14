@@ -1,0 +1,90 @@
+PROJECT OVERVIEW — BrakeDiscInspector (October 2025)
+====================================================
+
+Purpose
+-------
+BrakeDiscInspector combines a WPF GUI (MainWindow.xaml/.cs and supporting workflow classes) with a FastAPI backend (backend/app.py) to detect defects on brake discs using a good-only anomaly detection pipeline. The backend relies on PatchCore memory over DINOv2 ViT-S/14 embeddings, while the GUI ensures that every Region of Interest (ROI) sent to the backend is already cropped, rotated, and expressed in canonical coordinates. The system supports multiple manufacturing roles (e.g., Master1, Master2, Inspection) and maintains a persistent anomaly memory per `(role_id, roi_id)` so that plant operators can reuse training and calibration results across sessions.
+
+Data Flow Summary
+-----------------
+1. **Image Load**: The GUI opens an inspection image and displays it with `Stretch="Uniform"`, keeping track of the scale/offset used to render the bitmap inside the window.
+2. **ROI Definition**: Operators draw ROIs using the existing adorners (rectangle, circle, annulus). Rotation is supported and reflected by `AngleDeg` in the ROI model.
+3. **Canonical Crop Export**: The GUI calls `RoiCropUtils.TryGetRotatedCrop` to rotate the source image around the ROI pivot, extract the exact ROI rectangle, and generate a canonical PNG. A companion JSON stores metadata (`role_id`, `roi_id`, `mm_per_px`, `shape_json`, `angle`, `timestamp`).
+4. **Dataset Persistence**: `DatasetManager.SaveSampleAsync` writes PNG+JSON pairs to `datasets/<role>/<roi>/<ok|ng>/`, creating a ready-to-train corpus of canonical ROIs.
+5. **Training (`/fit_ok`)**: The GUI bundles canonical OK samples and calls `BackendClient.FitOkAsync`. The backend extracts DINOv2 embeddings, performs PatchCore coreset selection, and persists `memory.npz` + `index.faiss` under `backend/models/<role>/<roi>/`.
+6. **Calibration (`/calibrate_ng`)**: Once scores are collected for OK and (optionally) NG samples, the GUI posts them to `/calibrate_ng`. The backend computes a percentile-based threshold (`threshold`, `p99_ok`, `p5_ng`) and stores it in `calib.json` alongside `mm_per_px` and `area_mm2_thr`.
+7. **Inference (`/infer`)**: The GUI exports the current ROI, assembles the corresponding `shape_json`, and calls `BackendClient.InferAsync`. The backend reconstructs memory, applies kNN, masks the heatmap, computes the score and threshold, and returns a PNG heatmap (Base64) plus contour regions with areas in px/mm².
+8. **Overlay & Review**: The GUI decodes the Base64 heatmap and overlays it on the canonical ROI preview. Operators inspect `score`, compare it against `threshold`, and review the detected regions. Logs capture each action for traceability.
+
+Frontend Structure
+------------------
+- **Entry point**: `gui/BrakeDiscInspector_GUI_ROI/App.xaml` → `MainWindow.xaml/.cs`.
+- **ROI Models & Adorners**: `ROI/*.cs`, `RoiAdorner.cs`, `RoiOverlay.cs`, `ResizeAdorner.cs`, `RoiRotateAdorner.cs`. These files govern geometry, rendering, and user interaction with ROIs. They must remain untouched to avoid regressions in alignment.
+- **Workflow Layer**: `Workflow/BackendClient.cs` encapsulates HTTP calls using `HttpClient`, multipart forms, and JSON DTOs (`FitOkResult`, `CalibResult`, `InferResult`). `Workflow/DatasetManager.cs` handles dataset persistence. `Workflow/DatasetSample.cs` parses metadata and generates thumbnails. `WorkflowViewModel` orchestrates commands (Add Sample, Train, Calibrate, Infer) and logs outcomes.
+- **Dataset Management**: The GUI ensures that `datasets/<role>/<roi>/ok/` and `/ng/` directories exist before saving. Metadata JSON includes `shape_json` (string) so that the backend receives the same mask used when the sample was collected.
+- **Overlay & Heatmap**: `RoiOverlay.cs` synchronizes the ROI canvas with the displayed image. When inference returns, the GUI loads the heatmap PNG into an `ImageBrush` sized exactly to the canonical ROI and superposes it with adjustable opacity.
+- **Logging**: GUI logs (recommended filenames: `roi_analyze_master.log`, `roi_load_coords.log`, `gui_heatmap.log`) capture dataset exports, backend requests/responses (with correlation IDs), and errors. Logs live under `%LOCALAPPDATA%/BrakeDiscInspector/logs/`.
+
+Backend Structure
+-----------------
+- **app.py**: Defines FastAPI app, endpoints `/health`, `/fit_ok`, `/calibrate_ng`, `/infer`. Validates payloads, loads/stores artefacts via `ModelStore`, encodes heatmaps to PNG Base64, and wraps exceptions in JSON responses (`{"error","trace"}`).
+- **features.py**: `DinoV2Features` wrapper around `timm.create_model("vit_small_patch14_dinov2.lvd142m")`. Handles resize (`input_size` default 448), normalization, batching on CPU/GPU, and returns `(embeddings, (Ht, Wt))`.
+- **patchcore.py**: Implements `PatchCoreMemory.build` (coreset via k-center greedy) and nearest-neighbour queries. Supports FAISS if available, falling back to scikit-learn.
+- **infer.py**: `InferenceEngine` consumes embeddings and memory, rebuilds heatmaps (bilinear resize to ROI size), applies Gaussian blur and mask, computes percentile-based score, removes small islands via `area_mm2_thr`, and outputs contours (bbox, area_px, area_mm2, contour points).
+- **calib.py**: `choose_threshold` selects a value between `p99_ok` and `p5_ng` (when NG scores exist); otherwise uses `p99_ok`. Persisted fields include `threshold`, `p99_ok`, `p5_ng`, `mm_per_px`, `area_mm2_thr`, `score_percentile`.
+- **storage.py**: `ModelStore` writes artefacts to `models/<role>/<roi>/`: `memory.npz` (float32 embeddings, token grid, metadata JSON), `index.faiss`, `calib.json`. Provides load/save helpers.
+- **roi_mask.py**: Builds binary masks (rect/circle/annulus) in canonical coordinates, ensuring backend results align with GUI overlays.
+- **utils.py**: Contains helper functions (e.g., `ensure_dir`, Base64 utilities, mm²↔px² conversions).
+
+ROI–Heatmap Synchronization
+---------------------------
+- The GUI displays source images with `Stretch="Uniform"`. It computes scale/offset so the ROI canvas matches the visible bitmap.
+- Canonical crops preserve original ROI width/height and rotation. The backend receives exactly what the GUI displays in the ROI preview.
+- The heatmap returned by the backend uses the canonical ROI resolution. The GUI must overlay this heatmap on the canonical image, not on the full source frame, to avoid misalignment.
+- Letterboxing is handled only in the GUI; backend outputs assume no letterbox. Resize logic (including DPI handling) is frozen and must not be altered.
+- Masks (`shape_json`) use the canonical coordinate system (0..W-1, 0..H-1). Both backend (`roi_mask.py`) and GUI rely on this convention to align scores and contours.
+
+Roles, Datasets, and Artefacts
+------------------------------
+- **Roles**: Represents machine or production variant (e.g., `Master1`, `Master2`, `Inspection`).
+- **ROIs**: Named zones within each role (e.g., `Pattern`, `InnerSurface`).
+- **Dataset layout**: `datasets/<role>/<roi>/ok/` and `/ng/` contain PNG+JSON pairs.
+- **Backend artefacts**: `backend/models/<role>/<roi>/memory.npz`, `index.faiss`, `calib.json`. Each directory is independent and can be moved/restored as a unit.
+- **Shared server**: In production, mount `MODELS_DIR` on persistent storage (e.g., NAS) and point the backend at it via environment variables.
+
+Logging Strategy
+----------------
+- **GUI logs**: Record dataset exports, backend requests/responses (including correlation IDs), heatmap overlays, and errors. Suggested filenames: `roi_analyze_master.log`, `roi_load_coords.log`, `gui_heatmap.log`.
+- **Backend logs**: Using `logging.getLogger(__name__)`, record service start (device/model), `/fit_ok` summary (`n_embeddings`, `coreset_size`, `token_shape`), `/calibrate_ng` thresholds, `/infer` metrics (`score`, `threshold`, `regions`, duration), and errors (with stack traces). Honor `X-Correlation-Id` header when provided.
+- **Proxy logs**: For production, collect Nginx (access/error) or NSSM logs. Ensure log rotation (logrotate on Linux, Task Scheduler/NSSM on Windows).
+
+Restrictions & Invariants
+-------------------------
+1. Do not modify adorner logic, ROI resizing, canonicalization, or overlay scaling in the GUI.
+2. Backend API signatures are stable; new parameters must be optional and documented.
+3. Canonical ROI export is the single source of truth. Backend must not attempt to recrop or rotate images.
+4. `shape_json` semantics cannot change (rect, circle, annulus only).
+5. File formats (`memory.npz`, `index.faiss`, `calib.json`, dataset JSON) are fixed; versioning is required for changes.
+6. Logging must avoid PII and keep correlation IDs consistent.
+
+Technology Stack
+----------------
+- **Backend**: Python 3.10+, FastAPI, Uvicorn/Gunicorn, PyTorch 2.x, `timm` (DINOv2), NumPy/SciPy, OpenCV, optional FAISS, scikit-learn.
+- **Frontend**: WPF (.NET 8), C#, OpenCvSharp4 for image operations, CommunityToolkit.Mvvm for bindings.
+- **Build/Deploy**: `pip install -r backend/requirements.txt`, `uvicorn backend.app:app`, Windows NSSM service or Linux systemd + Nginx proxy.
+- **Testing**: Manual smoke tests (`/health`, `/fit_ok`, `/infer`), GUI walkthroughs, optional unit tests in `backend/tests/` and `BrakeDiscInspector_GUI_ROI.Tests/`.
+
+Environment & Deployment
+------------------------
+- **Environment variables**: `MODELS_DIR`, `DEVICE`, `CORESET_RATE`, `INPUT_SIZE`, `BRAKEDISC_BACKEND_HOST`, `BRAKEDISC_BACKEND_PORT`, `BRAKEDISC_BACKEND_BASEURL` (GUI override).
+- **Development**: Run backend with `uvicorn --reload` and GUI via Visual Studio.
+- **Laboratory/Windows**: Use NSSM to host backend (`python -m uvicorn backend.app:app --host 0.0.0.0 --port 8000`); configure firewall and log rotation.
+- **Production/Linux**: Deploy under `/opt/brakedisc`, configure systemd service (Gunicorn + Uvicorn workers), front with Nginx, enable HTTPS via certbot if needed. Persist `MODELS_DIR` (e.g., `/var/lib/brakedisc/models`).
+
+Key Takeaways
+-------------
+- Canonical ROI export is untouchable: all training/inference relies on the exact crop generated by the GUI pipeline.
+- Logs must remain synchronized (GUI ↔ backend ↔ proxy) and use correlation IDs when possible.
+- Heatmap/resize logic is immutable; misalignment bugs are considered regressions.
+- Artefacts (`memory.npz`, `index.faiss`, `calib.json`) are scoped per `(role_id, roi_id)` and must be versioned carefully.
+- Maintain documentation parity: whenever code changes, update the relevant markdown and this overview.

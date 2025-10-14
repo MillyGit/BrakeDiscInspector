@@ -1,232 +1,109 @@
-
 # 📌 Actualización — 2025-10-07
 
-**Cambios clave (GUI):**
-- Corrección de salto del frame al clicar adorner (círculo/annulus): cálculo y propagación del centro reales en `SyncModelFromShape` y sincronización `X,Y = CX,CY` en `CreateLayoutShape`.
-- Bbox SIEMPRE cuadrado para circle/annulus; overlay heatmap alineado.
-- Decisiones del proyecto y parámetros vigentes documentados.
+**Cambios clave documentados en esta versión:**
+- Guía actualizada para el flujo GUI Dataset → `/fit_ok` → `/calibrate_ng` → `/infer` usando `BackendClient` y `DatasetManager` actuales.
+- Se refuerzan las restricciones sobre adorners, canonicalización (`RoiCropUtils`) y máscaras `shape_json`.
+- Se añaden referencias a DTOs y manejo de errores presente en `Workflow/BackendClient.cs`.
 
-**Cambios clave (Backend):**
-- PatchCore + DINOv2 ViT-S/14; endpoints `/health`, `/fit_ok`, `/calibrate_ng`, `/infer`; persistencia por `(role_id, roi_id)`.
+# Instructions for Agents — WPF GUI workflow (Dataset → Train → Calibrate → Infer)
 
-# Instructions for Codex — WPF GUI: Dataset → Train (fit_ok) → Calibrate → Infer (backend PatchCore+DINOv2)
-
-**Goal**: Implement in the existing WPF GUI a complete workflow to (1) collect ROI samples, (2) train the model memory on the backend, (3) optionally calibrate thresholds, and (4) run inference — all **without changing adorner/ROI drawing logic** or the backend service contract.
+**Goal**: Mantener y extender la GUI WPF sin romper el pipeline de ROI canónico. Toda interacción con el backend PatchCore+DINOv2 debe respetar las rutas `/health`, `/fit_ok`, `/calibrate_ng`, `/infer` implementadas en `backend/app.py`.
 
 ---
 
-## Quick index
+## 1. Scope & Non-Regression Rules
 
-- [Scope & Non-Regression Rules](#scope--non-regression-rules)
-- [Backend Contract](#backend-contract-summary)
-- [New GUI Features](#new-gui-features-tabs-or-wizard)
-- [Shape JSON mapping](#shape-json-mapping-from-existing-roi-types)
-- [File/Folder Structure](#filefolder-structure-gui-side)
-- [New/Updated Code](#newupdated-code-wpf)
-- [Error Handling & UX](#error-handling--ux)
-- [Acceptance Criteria](#acceptance-criteria)
-- [Testing Plan](#testing-plan)
-- [Coding Standards](#coding-standards)
-- [Deliverables](#deliverables)
-- [Do/Don’t Summary](#dodont-summary)
+1. **No modificar** adorners ni overlays base (`RoiAdorner`, `ResizeAdorner`, `RoiRotateAdorner`, `RoiOverlay`).【F:gui/BrakeDiscInspector_GUI_ROI/RoiAdorner.cs†L1-L200】
+2. Reutilizar `RoiCropUtils` para exportar ROIs canónicos; no reescribir transformaciones (`TryBuildRoiCropInfo`, `TryGetRotatedCrop`).【F:gui/BrakeDiscInspector_GUI_ROI/RoiCropUtils.cs†L62-L134】
+3. Todas las llamadas HTTP deben ser `async` (usar `BackendClient`), evitando bloquear el hilo UI.【F:gui/BrakeDiscInspector_GUI_ROI/Workflow/BackendClient.cs†L20-L218】
+4. No cambiar nombres de campos enviados al backend (`role_id`, `roi_id`, `mm_per_px`, `images`, `shape`).
+5. Mantener la estructura de datasets `datasets/<role>/<roi>/<ok|ng>/` (PNG + JSON con `shape_json`, `mm_per_px`, `angle`).【F:gui/BrakeDiscInspector_GUI_ROI/Workflow/DatasetManager.cs†L38-L74】
 
 ---
 
-## Scope & Non‑Regression Rules
+## 2. Backend Contract (summary)
 
-1. **Scope**: Modify **GUI (WPF)** only. The backend (FastAPI) already exposes `/fit_ok`, `/calibrate_ng`, `/infer`, `/health`.
-2. **Must NOT change** any of these GUI subsystems, to avoid regressions in ROI alignment:
-   - Adorners (`RoiAdorner`, `ResizeAdorner`, `RoiRotateAdorner`) and overlay (`RoiOverlay`).
-   - ROI coordinate spaces and the image/canvas letterboxing logic.
-   - The ROI canonicalization logic (crop+rotation) used by the existing “Save Master”/“Save Pattern”. Reuse it.
-3. **Threading/UI**: All HTTP calls must be **async**. Do not block the UI thread. Disable buttons while requests are in-flight.
-4. **Logging**: Use the GUI’s existing logging method (e.g., `AppendLog(...)`) to trace user actions and backend replies. Include timings and file paths.
-5. **Configuration**: The backend base URL must be configurable in the GUI (default `http://127.0.0.1:8000`).
+- `GET /health` → `{ status, device, model, version }`.
+- `POST /fit_ok` (multipart) → campos `role_id`, `roi_id`, `mm_per_px`, `images[]`; respuesta con `n_embeddings`, `coreset_size`, `token_shape`.
+- `POST /calibrate_ng` (JSON) → `role_id`, `roi_id`, `mm_per_px`, `ok_scores[]`, opcional `ng_scores[]`, `area_mm2_thr`, `score_percentile`; respuesta con `threshold`, `p99_ok`, `p5_ng`.
+- `POST /infer` (multipart) → `role_id`, `roi_id`, `mm_per_px`, `image`, opcional `shape`; respuesta con `score`, `threshold?`, `heatmap_png_base64`, `regions`, `token_shape`.
+
+La GUI debe mapear estas respuestas a DTOs (`FitOkResult`, `CalibResult`, `InferResult`) usando `System.Text.Json` (`JsonSerializerDefaults.Web`).【F:gui/BrakeDiscInspector_GUI_ROI/Workflow/BackendClient.cs†L150-L218】
 
 ---
 
-## Backend Contract (summary)
+## 3. Features to maintain in the GUI
 
-- `GET /health` → status, device, model, version.
-- `POST /fit_ok` (multipart): `role_id`, `roi_id`, `mm_per_px`, multiple `images[]` (PNG/JPG). Returns `n_embeddings`, `coreset_size`, `token_shape`.
-- `POST /calibrate_ng` (JSON): `role_id`, `roi_id`, `mm_per_px`, arrays `ok_scores`, optional `ng_scores`, `area_mm2_thr`, `score_percentile`. Returns `threshold` and stats.
-- `POST /infer` (multipart): `role_id`, `roi_id`, `mm_per_px`, `image`, optional `shape` (JSON string). Returns `score`, `threshold` (0 if none), `heatmap_png_base64`, `regions` (bbox + area px/mm²).
+### Dataset tab
+- Selectores `RoleId`, `RoiId`, `MmPerPx`.
+- Botones **Add OK/NG from Current ROI** → exportar PNG+JSON usando `DatasetManager.SaveSampleAsync`.
+- Listas `OK samples` / `NG samples` con thumbnails (`DatasetSample.Thumbnail`).
+- Botón **Open folder** para abrir `datasets/<role>/<roi>/`.
 
-> **Important**: Backend expects **canonical ROI image** (already cropped+rotated by GUI). The optional `shape` is used to mask inference (rect/circle/annulus).
+### Train tab
+- Botón **Train memory (fit_ok)** → empaquetar muestras OK (`images[]`) y llamar a `BackendClient.FitOkAsync`.
+- Mostrar `n_embeddings`, `coreset_size`, `token_shape` devueltos.
 
----
+### Calibrate tab
+- Recopilar scores OK/NG (reutilizando `/infer` sin threshold) y llamar a `BackendClient.CalibrateAsync`.
+- Mostrar `threshold`, `p99_ok`, `p5_ng`, `score_percentile`, `area_mm2_thr`.
 
-## New GUI Features (Tabs or Wizard)
-
-### A) **Dataset** (per role/ROI)
-Controls:
-- Selectors: `RoleId` (e.g., `Master1`, `Inspection`, ...), `RoiId` (e.g., `Pattern`, `Search`, ...).
-- Numeric: `MmPerPx` (pre-filled from your camera/layout).
-- Lists with thumbnails: `OK Samples`, `NG Samples` (optional).
-- Buttons:
-  - **“Add OK from Current ROI”**
-  - **“Add NG from Current ROI”** (optional)
-  - **“Remove Selected”**
-  - **“Open Dataset Folder”**
-
-Behaviour:
-- On “Add OK/NG from Current ROI”:
-  1. Canonicalize ROI (same routine used by your current Save Master/Pattern): **crop + rotation**.
-     - **Reuse** your internal pipeline (e.g., `TryBuildRoiCropInfo(...)` → `TryGetRotatedCrop(...)`). **Do not rewrite adorner code**.
-  2. Save PNG to: `datasets/<role>/<roi>/<ok|ng>/SAMPLE_yyyyMMdd_HHmmssfff.png`.
-  3. Save metadata JSON next to image:
-     ```json
-     {
-       "role_id": "Master1",
-       "roi_id": "Pattern",
-       "mm_per_px": 0.20,
-       "shape": { "kind": "circle", "cx": 192, "cy": 192, "r": 180 },
-       "source_path": "C:\images\part.png",
-       "angle": 32.0,
-       "timestamp": "2025-09-28T12:34:56.789Z"
-     }
-     ```
-  4. Refresh the dataset list in UI.
-
-### B) **Train / Calibrate**
-- **“Train memory (fit_ok)”**: bundles all OK PNGs of current `(RoleId, RoiId)` and calls backend `/fit_ok`.
-  - Display result: `n_embeddings`, `coreset_size`, `token_shape`.
-- **“Calibrate threshold (calibrate_ng)”**:
-  - Option A: If you have zero or few NGs, let the user skip or set percentile (p95/p99).
-  - Option B: If you have NGs or want score-driven calibration:
-    - Compute **scores** by calling `/infer` for all OK and NG samples (with no threshold). Collect `score` values.
-    - Send arrays to `/calibrate_ng` and show returned `threshold`.
-
-### C) **Inference**
-- **“Evaluate Current ROI”**: canonicalize and POST to `/infer` with `shape` JSON built from the current ROI.
-- Overlay returned `heatmap` (decode base64 PNG) on the ROI in the preview (with opacity slider).
-- Show `score`, `threshold`, and list `regions` (bbox, area px, area mm²).
-- Add a **local threshold slider** for interactive exploration (does not change backend threshold unless user confirms a “Save Threshold” action).
+### Infer tab
+- Botón **Infer current ROI** → exportar ROI canónico temporal, construir `shape_json` y llamar a `BackendClient.InferAsync`.
+- Mostrar `score`, `threshold`, nº `regions`, overlay del `heatmap_png_base64`.
+- Slider de opacidad local (no modifica `threshold` backend).
 
 ---
 
-## Shape JSON mapping (from existing ROI types)
+## 4. Shape JSON mapping
 
-Produce one of these JSONs (as string) for the `shape` field in `/infer`:
+- `Rectangle`: `{ "kind":"rect", "x":0, "y":0, "w":W, "h":H }`
+- `Circle`: `{ "kind":"circle", "cx":CX, "cy":CY, "r":R }`
+- `Annulus`: `{ "kind":"annulus", "cx":CX, "cy":CY, "r":R_OUTER, "r_inner":R_INNER }`
 
-- **Rectangle**:
-  ```json
-  {"kind":"rect","x":0,"y":0,"w":W,"h":H}
-  ```
-  (If the exported ROI is exactly the rectangle, you can use full canvas: 0,0,W,H)
-
-- **Circle**:
-  ```json
-  {"kind":"circle","cx":CX,"cy":CY,"r":R}
-  ```
-
-- **Annulus**:
-  ```json
-  {"kind":"annulus","cx":CX,"cy":CY,"r":R_OUTER,"r_inner":R_INNER}
-  ```
-
-All coordinates are **in the canonical ROI image space** (pixels), **after** crop/rotation.
+Las coordenadas siempre están en píxeles del ROI canónico (tras crop + rotación). Enviar como `StringContent` (`application/json` o texto) en el campo `shape` del multipart.
 
 ---
 
-## File/Folder Structure (GUI side)
+## 5. Error handling & UX
 
-- Dataset root: `datasets/<role>/<roi>/`
-  - `ok/` → PNG + JSON metadata
-  - `ng/` → PNG + JSON metadata
-  - `manifest.json` (optional): counts, last trained version, last calibration, etc.
-
----
-
-## New/Updated Code (WPF)
-
-### 1) Backend client (C#)
-Create `BackendClient` with:
-- `Task<(int nEmb, int coreset, int[] tokenShape)> FitOkAsync(string roleId, string roiId, double mmPerPx, IEnumerable<string> okImagePaths)`
-- `Task<CalibResult> CalibrateAsync(string roleId, string roiId, double mmPerPx, IEnumerable<double> okScores, IEnumerable<double>? ngScores = null, double areaMm2Thr = 1.0, int scorePercentile = 99)`
-- `Task<InferResult> InferAsync(string roleId, string roiId, double mmPerPx, string imagePath, string? shapeJson = null)`
-
-Use `HttpClient`, `MultipartFormDataContent`, async/await, and JSON (System.Text.Json). Timeout 120s.
-
-### 2) ROI export
-Add helper `ExportCurrentRoiCanonicalAsync(out string pngPath, out string shapeJson)`:
-- Reuse the **same internal code path** used by the existing Save Master (e.g., `TryBuildRoiCropInfo(...)`, `TryGetRotatedCrop(...)`).
-- Output a PNG (e.g., `Temp/roi_current.png`) and the corresponding `shapeJson` in canonical space.
-
-### 3) Commands / ViewModel
-- `AddOkFromCurrentRoiCommand`
-- `AddNgFromCurrentRoiCommand` (optional)
-- `TrainFitCommand`
-- `CalibrateCommand`
-- `InferFromCurrentRoiCommand`
-
-Each command must guard against invalid state (no role/roi, no ROI drawn, missing backend URL, etc.) and show progress/logs.
-
-### 4) Heatmap Overlay
-- Decode `heatmap_png_base64` to byte[] and display as Image overlay.
-- Provide opacity slider [0..1].
-- Ensure no DPI/scaling mismatch: overlay exactly on the ROI preview (use the canonical ROI image size).
+- Capturar `HttpRequestException` en cada llamada y mostrar mensaje amigable + detalles en panel de logs.
+- Validar entradas antes de llamar al backend (role, roi, mm_per_px > 0, ROI dibujado, muestras disponibles).
+- Deshabilitar botones mientras la tarea está en curso, reactivarlos en `finally`.
+- Registrar en logs (GUI) el `CorrelationId` y la respuesta completa (`score`, `threshold`, `regions.Count`).
 
 ---
 
-## Error Handling & UX
+## 6. Testing Plan
 
-- Show backend error messages (and `trace` if present) in a collapsible log panel.
-- Gracefully handle network errors, timeouts, or invalid responses.
-- Disable buttons while a request is ongoing; re-enable on completion/failure.
-- For long operations (many samples), show a progress bar (`i/n` files uploaded).
-
----
-
-## Acceptance Criteria
-
-- Able to add ≥50 OK samples and see them listed with thumbnails.
-- `/fit_ok` succeeds and returns `n_embeddings > 0`, `coreset_size > 0`.
-- If NG provided, `/calibrate_ng` returns a valid `threshold`.
-- `/infer` returns non-empty `heatmap_png_base64` and a numeric `score`.
-- Heatmap overlay matches the ROI visualization (no drift/scale errors).
-- No regressions in ROI placement/adorner behaviour (window resize, image reload).
+1. **Startup**: llamar a `/health` y mostrar `device`/`model`.
+2. **Dataset**: exportar ≥5 muestras OK/NG y verificar que se crean PNG+JSON en `datasets/`.
+3. **Train**: ejecutar `/fit_ok`, comprobar `n_embeddings` y `coreset_size` positivos.
+4. **Calibrate**: recolectar scores y enviar a `/calibrate_ng`, verificar `threshold` persistido.
+5. **Infer**: llamar a `/infer`, superponer heatmap, listar `regions` (área px/mm²).
+6. **Resize/Reload**: confirmar que la superposición se mantiene al redimensionar la ventana o recargar imagen.
 
 ---
 
-## Testing Plan
+## 7. Deliverables when extending the GUI
 
-1. **Health**: GUI calls `/health` on startup; show device/model in status bar.
-2. **Dataset**: Add 5 OK samples from different parts; verify file system & metadata are created.
-3. **Train**: Run `/fit_ok`; validate counts. Retry train after adding 20 more OKs.
-4. **Calibrate**: If you have NGs, compute scores via `/infer` (without threshold) and run `/calibrate_ng`; store/display returned threshold.
-5. **Infer**: Evaluate ROI; verify heatmap overlays and `regions` appear; adjust local slider.
-6. **Resize/Reload**: Check that overlays remain aligned after window maximize and image reload (non-regression).
+- Cambios en XAML (nuevos controles o bindings).
+- Actualizaciones en ViewModels/Commands (`WorkflowViewModel`, comandos async).
+- Ajustes en `BackendClient`, `DatasetManager`, `DatasetSample` si se introducen nuevos campos.
+- Tests (unitarios o manuales) documentados en el PR.
 
 ---
 
-## Coding Standards
+## 8. Do / Don’t summary
 
-- C# 10+, async/await everywhere for I/O.
-- MVVM: Commands + ViewModels; no heavy logic in code-behind.
-- Use `ObservableCollection<>` for sample lists; thumbnails generated in background.
-- Keep all paths `Path.Combine(...)`; avoid hard-coded separators.
-- Localize UI strings if your project already uses resources.
-
----
-
-## Deliverables
-
-- Updated XAML (new tabs/panels, bindings).
-- `BackendClient.cs` (or similar) with 3 public methods (FitOkAsync, CalibrateAsync, InferAsync) y DTOs (`InferResult`, `CalibResult`, `Region`).
-- ROI export helper (reusing existing crop+rotate pipeline).
-- ViewModels/Commands for Dataset, Train/Calibrate, Infer.
-- Basic unit/integration tests if your solution includes a testing project (optional).
+| ✅ Hacer | ❌ No hacer |
+|---------|-------------|
+| Reutilizar pipeline de exportación (`RoiCropUtils`) | Alterar adorners, overlays o transformaciones base |
+| Usar `async/await` en todos los requests | Bloquear el hilo UI con `.Result`/`.Wait()` |
+| Guardar PNG+JSON en `datasets/<role>/<roi>/<label>/` | Cambiar la estructura de carpetas o nombres de archivo |
+| Mapear DTOs a campos existentes (`score`, `threshold`, `regions`) | Renombrar campos esperados por el backend |
+| Registrar operaciones y respuestas en logs GUI | Ignorar excepciones del backend o descartarlas silenciosamente |
 
 ---
 
-## Do/Don’t Summary
-
-- ✅ **Do**: Reuse existing ROI export pipeline (crop+rotate); keep adorner & overlay logic intact.
-- ✅ **Do**: Make all backend calls async; add progress & logs.
-- ✅ **Do**: Persist datasets under `datasets/<role>/<roi>/` with PNG + metadata JSON.
-- ❌ **Don’t**: Change adorner geometry, overlay scaling, or canvas/image transforms.
-- ❌ **Don’t**: Move ROI in canvas space or introduce new coordinate transforms.
-- ❌ **Don’t**: Touch backend endpoints or their names.
-
-If any ambiguity arises (method names for the existing canonical ROI export, or how to access `mm_per_px`), **ask before changing behaviour**.
+Para dudas adicionales revisar [README.md](README.md), [DEV_GUIDE.md](DEV_GUIDE.md) y [API_REFERENCE.md](API_REFERENCE.md).

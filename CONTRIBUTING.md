@@ -1,17 +1,12 @@
-
 # 📌 Actualización — 2025-10-07
 
-**Cambios clave (GUI):**
-- Corrección de salto del frame al clicar adorner (círculo/annulus): cálculo y propagación del centro reales en `SyncModelFromShape` y sincronización `X,Y = CX,CY` en `CreateLayoutShape`.
-- Bbox SIEMPRE cuadrado para circle/annulus; overlay heatmap alineado.
-- Decisiones del proyecto y parámetros vigentes documentados.
-
-**Cambios clave (Backend):**
-- PatchCore + DINOv2 ViT-S/14; endpoints `/health`, `/fit_ok`, `/calibrate_ng`, `/infer`; persistencia por `(role_id, roi_id)`.
+**Cambios clave documentados en esta versión:**
+- Se referencia el nuevo `PROJECT_OVERVIEW.txt` como material de onboarding rápido.
+- Se mantiene el flujo de contribución para backend y GUI alineado con los contratos actuales.
 
 # CONTRIBUTING — BrakeDiscInspector
 
-Gracias por tu interés en contribuir al proyecto **BrakeDiscInspector**. Este documento describe el flujo de colaboración y las normas de estilo para el backend FastAPI y la GUI WPF.
+Gracias por tu interés en contribuir al proyecto **BrakeDiscInspector**. Este documento describe el flujo de colaboración y las normas de estilo para el backend FastAPI y la GUI WPF. Consulta también `PROJECT_OVERVIEW.txt` para obtener una visión técnica condensada antes de iniciar cualquier tarea.
 
 ---
 
@@ -44,7 +39,7 @@ Gracias por tu interés en contribuir al proyecto **BrakeDiscInspector**. Este d
    cd BrakeDiscInspector
    git checkout -b feat/nueva-funcionalidad
    ```
-3. Configura tu entorno siguiendo [DEV_GUIDE.md](DEV_GUIDE.md).
+3. Configura tu entorno siguiendo [DEV_GUIDE.md](DEV_GUIDE.md) y revisa `PROJECT_OVERVIEW.txt` para entender el flujo completo.
 
 ---
 
@@ -58,7 +53,7 @@ Gracias por tu interés en contribuir al proyecto **BrakeDiscInspector**. Este d
 
 ### GUI (C# / WPF)
 - Convenciones .NET (PascalCase, `_camelCase` para privados).
-- `async/await` para todas las llamadas HTTP (`HttpClient`).
+- `async/await` para todas las llamadas HTTP (`BackendClient`).
 - Mantener adorners (`RoiAdorner`, `RoiRotateAdorner`, `ResizeAdorner`) sin cambios salvo instrucciones explícitas.
 - Utilizar `ObservableCollection` para listas visibles y respetar MVVM.
 
@@ -68,7 +63,7 @@ Gracias por tu interés en contribuir al proyecto **BrakeDiscInspector**. Este d
   ```
   <type>(scope): resumen breve
   ```
-  Ejemplo: `docs: update architecture with patchcore flow`.
+  Ejemplo: `docs: update architecture overview`.
 
 ---
 
@@ -91,7 +86,7 @@ Gracias por tu interés en contribuir al proyecto **BrakeDiscInspector**. Este d
   curl -X POST http://127.0.0.1:8000/fit_ok -F role_id=Test -F roi_id=ROI -F mm_per_px=0.2 -F images=@sample_ok.png
   curl -X POST http://127.0.0.1:8000/infer -F role_id=Test -F roi_id=ROI -F mm_per_px=0.2 -F image=@sample_ok.png
   ```
-- Si añades lógica nueva, crea tests en `backend/tests/` (ej. PyTest) y documenta cómo ejecutarlos.
+- Si añades lógica nueva, crea tests en `backend/tests/` (PyTest) y documenta cómo ejecutarlos.
 
 ### GUI
 - Compila solución (`Build > Build Solution`).
@@ -102,7 +97,7 @@ Gracias por tu interés en contribuir al proyecto **BrakeDiscInspector**. Este d
 
 ## 6) Documentación
 
-- Mantén el README y las guías actualizadas con cualquier cambio relevante.
+- Mantén el README, `PROJECT_OVERVIEW.txt` y las guías actualizadas con cualquier cambio relevante.
 - Añade diagramas o ejemplos cuando simplifiquen la comprensión.
 - Registra eventos importantes en `docs/mcp/latest_updates.md` cuando afecten contratos o despliegues.
 

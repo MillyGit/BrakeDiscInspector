@@ -9,9 +9,17 @@ This log records notable Maintenance & Communication Plan (MCP) events for Brake
 
 ## Quick index
 
+- [2025-10-07 — Markdown & Memory Restoration Refresh](#2025-10-07--markdown--memory-restoration-refresh)
 - [2024-06-12 — Comprehensive Markdown Refresh](#2024-06-12--comprehensive-markdown-refresh)
 - [2024-06-05 — PatchCore Documentation Refresh](#2024-06-05--patchcore-documentation-refresh)
 - [2024-05-28 — Initial MCP Publication](#2024-05-28--initial-mcp-publication)
+
+## 2025-10-07 — Markdown & Memory Restoration Refresh
+
+- **Owners:** MCP Maintainer, Backend Lead, GUI Lead
+- **Summary:** Realigned every markdown in the repo (README, ARCHITECTURE, DEV_GUIDE, API_REFERENCE, DATA_FORMATS, DEPLOYMENT, LOGGING, ROI spec, backend prompt, GUI instructions, MCP docs) with the current FastAPI (`app.py`) and GUI (`BackendClient`, `DatasetManager`) implementations. Added `PROJECT_OVERVIEW.txt` for rapid onboarding/memory restoration and documented storage layout `backend/models/<role>/<roi>/` plus dataset expectations.
+- **Evidence:** Updated markdown files in repo root and `docs/mcp/`, backend sources (`backend/app.py`, `backend/infer.py`, `backend/storage.py`), GUI workflow files.
+- **Next Steps:** Share the new `PROJECT_OVERVIEW.txt` with onboarding teams; capture feedback on clarity and identify gaps for future automation.
 
 ## 2024-06-12 — Comprehensive Markdown Refresh
 

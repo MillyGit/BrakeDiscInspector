@@ -1,18 +1,13 @@
-
 # 📌 Actualización — 2025-10-07
 
-**Cambios clave (GUI):**
-- Corrección de salto del frame al clicar adorner (círculo/annulus): cálculo y propagación del centro reales en `SyncModelFromShape` y sincronización `X,Y = CX,CY` en `CreateLayoutShape`.
-- Bbox SIEMPRE cuadrado para circle/annulus; overlay heatmap alineado.
-- Decisiones del proyecto y parámetros vigentes documentados.
-
-**Cambios clave (Backend):**
-- PatchCore + DINOv2 ViT-S/14; endpoints `/health`, `/fit_ok`, `/calibrate_ng`, `/infer`; persistencia por `(role_id, roi_id)`.
-
+**Cambios clave documentados en esta versión:**
+- Se actualizan los componentes GUI/Backend para reflejar las clases activas (`BackendClient`, `DatasetManager`, `InferenceEngine`).
+- Diagramas y flujo end-to-end alineados con los endpoints estables (`/fit_ok`, `/calibrate_ng`, `/infer`).
+- Se documenta la sincronización ROI ↔ heatmap y la persistencia `backend/models/<role>/<roi>/` según `ModelStore`.
 
 # ARCHITECTURE — BrakeDiscInspector
 
-Este documento describe la arquitectura actual (GUI + backend), el flujo de datos extremo a extremo y las zonas donde se pueden extender las funcionalidades sin romper contratos existentes.
+Visión global del sistema BrakeDiscInspector, compuesto por una GUI WPF para gestionar ROIs y un backend FastAPI que ejecuta PatchCore + DINOv2. Incluye componentes, flujo de datos y pautas de extensibilidad.
 
 ---
 
@@ -21,29 +16,27 @@ Este documento describe la arquitectura actual (GUI + backend), el flujo de dato
 - [Visión general](#1-visión-general)
 - [Componentes](#2-componentes)
 - [Flujo de datos end-to-end](#3-flujo-de-datos-end-to-end)
-- [Sincronización de coordenadas](#4-sincronización-de-coordenadas-gui--imagen)
+- [Sincronización de coordenadas](#4-sincronización-de-coordenadas)
 - [Backend — inferencia y persistencia](#5-backend--inferencia-y-persistencia)
 - [Extensibilidad segura](#6-extensibilidad-segura)
 - [Recursos cruzados](#7-recursos-cruzados)
-- [Seguridad y despliegue](#9-seguridad-y-despliegue)
-- [Referencias cruzadas](#10-referencias-cruzadas)
 - [Glosario rápido](#glosario-rápido)
 
 ---
 
 ## 1) Visión general
 
-El sistema consta de dos procesos cooperando en tiempo real:
+El sistema se divide en dos procesos que colaboran en tiempo real:
 
-- **GUI (WPF / .NET 8)**: captura imágenes, permite dibujar/rotar la ROI, gestiona datasets de muestras, llama al backend para entrenar/calibrar/inferir y superpone heatmaps sobre el ROI canónico.
-- **Backend (FastAPI / Python 3.10+)**: recibe el ROI ya canónico, extrae embeddings con DINOv2, aplica memoria PatchCore y genera score + heatmap + regiones.
+- **GUI (WPF / .NET 8)**: captura imágenes, permite dibujar/rotar ROIs, gestiona datasets (`datasets/<role>/<roi>/<ok|ng>/`), llama al backend para entrenar/calibrar/inferir y superpone heatmaps.
+- **Backend (FastAPI / Python 3.10+)**: recibe ROIs ya canónicos, extrae embeddings con DINOv2 ViT-S/14, ejecuta PatchCore y devuelve score + heatmap + regiones filtradas.
 
 ```mermaid
 flowchart LR
-    U[Usuario] -->|Carga imagen / Gestiona dataset| G[GUI WPF<br/>OpenCvSharp]
-    G -->|/fit_ok, /calibrate_ng, /infer| B[(FastAPI<br/>PatchCore + DINOv2)]
-    B -->|n_embeddings / threshold / heatmap / regiones| G
-    G -->|Overlay + reporting| U
+    U[Operador] -->|Carga imagen / Ajusta ROI| GUI[GUI WPF]
+    GUI -->|/fit_ok /calibrate_ng /infer| BE[(FastAPI PatchCore)]
+    BE -->|score / threshold / heatmap / regiones| GUI
+    GUI -->|Overlay + reporting| U
 ```
 
 ---
@@ -52,148 +45,100 @@ flowchart LR
 
 ### 2.1 GUI (WPF)
 
-- **MainWindow.xaml / .cs**: orquesta la UI, pestañas de Dataset/Train/Infer y binding con ViewModels.
-- **ROI/**: clases de dominio (`ROI.cs`, `ROIShape.cs`, `AnnulusShape.cs`, etc.) y adorners (`RoiAdorner`, `RoiRotateAdorner`, `ResizeAdorner`). **No modificar** geometrías ni pipelines de canonicalización.
-- **Overlays/**: `RoiOverlay.cs` y helpers que sincronizan el canvas con la imagen (`Stretch="Uniform"`).
-- **BackendClient.cs** (o `BackendAPI.cs`): cliente HTTP async que implementa `/health`, `/fit_ok`, `/calibrate_ng`, `/infer` usando `HttpClient` y `MultipartFormDataContent`.
-- **Datasets/**: utilidades para guardar PNG + metadata JSON por `(role_id, roi_id)` en `datasets/<role>/<roi>/<ok|ng>/`.
+- **MainWindow.xaml/.cs** — Orquesta pestañas Dataset/Train/Infer y binding con `WorkflowViewModel`.
+- **Workflow/BackendClient.cs** — Cliente HTTP asíncrono para `/health`, `/fit_ok`, `/calibrate_ng`, `/infer` (gestiona `HttpClient`, JSON y errores).【F:gui/BrakeDiscInspector_GUI_ROI/Workflow/BackendClient.cs†L20-L218】
+- **Workflow/DatasetManager.cs** — Exporta ROIs canónicos (PNG) y metadatos (`shape_json`, `mm_per_px`, `angle`, `timestamp`).【F:gui/BrakeDiscInspector_GUI_ROI/Workflow/DatasetManager.cs†L18-L80】
+- **Workflow/DatasetSample.cs** — Lee metadatos y genera thumbnails para la UI.【F:gui/BrakeDiscInspector_GUI_ROI/Workflow/DatasetSample.cs†L1-L120】
+- **ROI/*.cs & RoiAdorner.cs** — Adorners y modelo ROI; NO modificar geometría ni transformaciones.【F:gui/BrakeDiscInspector_GUI_ROI/RoiAdorner.cs†L1-L200】
+- **RoiCropUtils.cs** — Pipeline de canonicalización (rotación + recorte) y máscara ROI.【F:gui/BrakeDiscInspector_GUI_ROI/RoiCropUtils.cs†L62-L200】
 
 ### 2.2 Backend (FastAPI)
 
-- **app.py**: define endpoints `/health`, `/fit_ok`, `/calibrate_ng`, `/infer` y maneja orquestación de inferencia (lectura de archivos, respuesta JSON).【F:backend/app.py†L1-L199】
-- **features.py**: wrapper sobre `timm` para cargar `vit_small_patch14_dinov2.lvd142m`, normalizar entrada y devolver embeddings + `token_shape`.【F:backend/features.py†L1-L200】
-- **patchcore.py**: implementación del coreset k-center greedy y kNN (FAISS/NearestNeighbors).【F:backend/patchcore.py†L1-L200】
-- **infer.py**: lógica de inferencia (distancias→heatmap→score→contornos) e integración con máscaras (`roi_mask.py`).【F:backend/infer.py†L1-L200】
-- **storage.py**: persistencia de `memory.npz`, `index.faiss` y `calib.json` en `models/<role>/<roi>/`.【F:backend/storage.py†L1-L200】
-- **calib.py**: cálculo del umbral a partir de scores OK/NG (percentiles configurables).【F:backend/calib.py†L1-L160】
+- **app.py** — Endpoints `/health`, `/fit_ok`, `/calibrate_ng`, `/infer`, manejo de errores y conversión heatmap→PNG.【F:backend/app.py†L1-L214】
+- **features.py** — `DinoV2Features` (modelo `vit_small_patch14_dinov2.lvd142m`) con resize y normalización automática.【F:backend/features.py†L1-L200】
+- **patchcore.py** — Construcción de memoria (coreset k-center greedy) y kNN (FAISS opcional).【F:backend/patchcore.py†L1-L200】
+- **infer.py** — `InferenceEngine.run` genera heatmap, percentiles, máscaras y regiones con áreas px/mm².【F:backend/infer.py†L17-L181】
+- **calib.py** — Selección de threshold a partir de percentiles OK/NG (`choose_threshold`).【F:backend/calib.py†L1-L120】
+- **storage.py** — Persistencia en `models/<role>/<roi>/` (`memory.npz`, `index.faiss`, `calib.json`).【F:backend/storage.py†L12-L79】
+- **roi_mask.py** — Reconstrucción de máscaras (`rect`, `circle`, `annulus`) para enmascarar heatmaps.【F:backend/roi_mask.py†L1-L160】
 
 ---
 
-## 3) Flujo de datos (end-to-end)
+## 3) Flujo de datos end-to-end
 
 ```mermaid
 sequenceDiagram
-    participant U as Usuario
+    participant U as Operador
     participant GUI as GUI WPF
-    participant ROI as Canonical ROI Pipeline
-    participant BE as Backend FastAPI
+    participant DS as DatasetManager
+    participant BE as FastAPI
     participant PC as PatchCore/DINOv2
 
-    U->>GUI: Cargar imagen / ajustar ROI
-    GUI->>ROI: Exportar ROI canónico (crop + rotación)
-    GUI->>Datasets: Guardar PNG + metadata (opcional)
+    U->>GUI: Cargar imagen / dibujar ROI
+    GUI->>GUI: Canonicalizar ROI (RoiCropUtils)
+    GUI->>DS: Guardar PNG + metadata (role, roi, mm_per_px, shape_json)
     GUI->>BE: POST /fit_ok (images[])
-    BE->>PC: Extraer embeddings + coreset + persistir memoria
+    BE->>PC: Extraer embeddings, coreset, guardar memory.npz
     GUI->>BE: POST /calibrate_ng (scores OK/NG)
-    BE->>storage: Guardar calib.json
+    BE->>storage: Guardar calib.json (threshold, percentiles)
     GUI->>BE: POST /infer (image + shape)
-    BE->>PC: Calcular distancias → heatmap → score
-    PC->>BE: Contornos + regiones filtradas por área_mm²
-    BE-->>GUI: JSON (score, threshold, heatmap_png_base64, regions)
-    GUI->>GUI: Superponer heatmap + mostrar métricas
+    BE->>PC: Calcular heatmap + score + regiones
+    PC-->>BE: Resultado (score, threshold, heatmap, regions)
+    BE-->>GUI: JSON + heatmap PNG base64
+    GUI->>GUI: Overlay heatmap + mostrar métricas
 ```
 
 Notas clave:
-- El backend **no** realiza rotaciones ni recortes; depende del ROI canónico generado en la GUI.
-- La máscara `shape` permite limitar el área evaluada (rectángulo, círculo o annulus) dentro del ROI canónico.
+- El backend nunca rota ni recorta imágenes; depende del ROI canónico exportado por la GUI.
+- El `shape` opcional limita la zona evaluada dentro del ROI.
 
 ---
 
-## 4) Sincronización de coordenadas GUI ↔ imagen
+## 4) Sincronización de coordenadas
 
-### 4.1 Letterboxing y canvas
-
-La imagen principal se muestra con `Stretch="Uniform"`. El canvas que contiene adorners y overlays replica la zona visible mediante:
-
-```
-scale = min(ImageHost.ActualWidth  / PixelWidth,
-            ImageHost.ActualHeight / PixelHeight)
-drawWidth  = PixelWidth  * scale
-drawHeight = PixelHeight * scale
-offsetX = (ImageHost.ActualWidth  - drawWidth)  / 2
-offsetY = (ImageHost.ActualHeight - drawHeight) / 2
-
-CanvasROI.Width  = drawWidth
-CanvasROI.Height = drawHeight
-Canvas.SetLeft(CanvasROI, offsetX)
-Canvas.SetTop(CanvasROI,  offsetY)
-```
-
-### 4.2 Conversión de coordenadas
-
-- **Imagen → Canvas**: `(canvasX, canvasY) = (imageX * sx, imageY * sy)` con `sx = CanvasROI.Width / PixelWidth`.
-- **Canvas → Imagen**: `(imageX, imageY) = (canvasX / sx, canvasY / sy)`.
-
-### 4.3 Canonicalización del ROI
-
-La GUI reutiliza el mismo pipeline que “Save Master/Pattern” (`TryBuildRoiCropInfo(...)` → `TryGetRotatedCrop(...)`) para:
-1. Rotar la imagen completa alrededor del centro del ROI (`Cv2.GetRotationMatrix2D` + `Cv2.WarpAffine`).
-2. Recortar el subrectángulo resultante (mínimo 10×10 px).
-3. Generar PNG + metadata JSON; el tamaño resultante define el espacio para el heatmap devuelto.
+- La imagen principal se muestra con `Stretch="Uniform"`; `RoiOverlay` calcula escala y offsets para mantener la relación imagen↔canvas.
+- Conversión:
+  - Imagen → Canvas: `canvas = image * scale + offset`.
+  - Canvas → Imagen: `image = (canvas - offset) / scale`.
+- El heatmap devuelto (`heatmap_png_base64`) tiene el mismo tamaño que el ROI canónico; se superpone directamente usando `ImageBrush` en la GUI.
 
 ---
 
 ## 5) Backend — inferencia y persistencia
 
-1. **Lectura**: el archivo recibido (`UploadFile`) se decodifica con `cv2.imdecode` a BGR (`np.uint8`).
-2. **Carga de memoria**: `storage.ModelStore.load_memory()` obtiene embeddings (`memory.npz`) y metadatos (`token_shape`, `coreset_rate`). Se reconstruye FAISS si existe `index.faiss`.
-3. **Embeddings**: `DinoV2Features.extract()` realiza resize al tamaño soportado (múltiplo de 14, por defecto 448) y devuelve `embeddings` + `(Ht, Wt)`.
-4. **PatchCore**: `InferenceEngine.run()` calcula distancias kNN (`k=1`), interpola el mapa a tamaño ROI, aplica blur, máscara `shape`, percentile `p_score` y filtrado por `area_mm2_thr` (conversión px/mm²).
-5. **Respuesta**: se codifica el heatmap en PNG Base64 y se devuelven `score`, `threshold`, `regions` (bbox, área px/mm², contorno) y `token_shape`.
-
-Persistencia:
-- `/fit_ok` guarda `memory.npz` con `emb`, `token_h`, `token_w` y metadata del coreset.
-- `/calibrate_ng` guarda `calib.json` con `threshold`, `p99_ok`, `p5_ng`, `mm_per_px`, `area_mm2_thr`, `score_percentile`.
-- `/infer` reutiliza los artefactos anteriores sin reentrenar.
+1. **Carga de imagen**: `app.py` lee el `UploadFile`, lo decodifica con OpenCV y extrae embeddings (`DinoV2Features`).【F:backend/app.py†L46-L92】
+2. **Memoria**: `ModelStore.load_memory` reconstruye el coreset y, si existe, el índice FAISS guardado en disco.【F:backend/storage.py†L38-L64】
+3. **Inferencia**: `InferenceEngine.run` genera heatmap, aplica máscara (`roi_mask.build_mask`), calcula score (p99) y filtra contornos por `area_mm2_thr`.【F:backend/infer.py†L66-L181】
+4. **Respuesta**: `app.py` convierte el heatmap a PNG base64, añade `token_shape`, `regions` y `threshold` (si calibrado).【F:backend/app.py†L168-L214】
+5. **Persistencia**: `/fit_ok` sobrescribe `memory.npz`/`index.faiss`; `/calibrate_ng` guarda `calib.json` con percentiles y parámetros.
 
 ---
 
 ## 6) Extensibilidad segura
 
-- **GUI**: se pueden añadir nuevas vistas, comandos o reportes siempre que se reutilice la canonicalización existente y no se modifiquen adorners u overlays base.
-- **Backend**: las extensiones deben mantener estables los endpoints `/health`, `/fit_ok`, `/calibrate_ng`, `/infer`. Nuevas rutas deben documentarse en `API_REFERENCE.md`.
-- **Persistencia**: cualquier cambio en el formato de `memory.npz`, `index.faiss` o `calib.json` requiere versionado explícito y migraciones.
-- **Observabilidad**: revisar `LOGGING.md` para mantener la correlación GUI↔backend (`X-Correlation-Id`) y la rotación de logs.
+- **GUI**: se pueden añadir nuevas vistas o reportes, pero debe reutilizarse `RoiCropUtils` y respetar adorners existentes (no alterar geometría ni transformaciones).
+- **Backend**: los endpoints `/health`, `/fit_ok`, `/calibrate_ng`, `/infer` son contratos estables. Añadir rutas nuevas requiere documentarlas en `API_REFERENCE.md`.
+- **Persistencia**: cualquier cambio en el formato de `memory.npz`, `index.faiss` o `calib.json` debe versionarse explícitamente y acompañarse de migraciones/documentación.
+- **Observabilidad**: seguir [LOGGING.md](LOGGING.md) para mantener correlación GUI↔backend y rotación de logs.
 
 ---
 
 ## 7) Recursos cruzados
 
-- [API_REFERENCE.md](API_REFERENCE.md) — contratos HTTP detallados y ejemplos `curl`.
-- [DATA_FORMATS.md](DATA_FORMATS.md) — estructuras JSON, metadatos y archivos generados.
-- [DEV_GUIDE.md](DEV_GUIDE.md) — preparación de entorno, scripts y debugging.
-- [ROI_AND_MATCHING_SPEC.md](ROI_AND_MATCHING_SPEC.md) — definición formal del ROI canónico y máscaras.
-- [backend/README_backend.md](backend/README_backend.md) — guía operativa del microservicio.
-
----
-
-Para cualquier modificación sustancial, coordina con los responsables listados en `docs/mcp/overview.md` y registra el cambio en `docs/mcp/latest_updates.md`.
-- **Mejoras GUI**: snapping, restricción angular, sectores en annulus, múltiples ROIs y *batch analyze*.
-
----
-
-## 9) Seguridad y despliegue
-
-- Uso local por defecto (`127.0.0.1`).
-- Para red/local/red interna: habilitar host `0.0.0.0` y proteger con firewall/VPN.
-- Añadir logs con niveles por entorno (DEBUG/INFO/WARN/ERROR).
-
----
-
-## 10) Referencias cruzadas
-
-- **README.md** (visión general y *quick start*)
-- **API_REFERENCE.md** (contratos/ejemplos)
-- **ROI_AND_MATCHING_SPEC.md** (geometría y reglas ROI)
-- **DEV_GUIDE.md** (setup detallado)
-- **DEPLOYMENT.md** (smoke tests)
-- **LOGGING.md** (política de logs)
+- [README.md](README.md) — Visión general y quick start.
+- [DEV_GUIDE.md](DEV_GUIDE.md) — Setup de desarrollo y estándares de código.
+- [API_REFERENCE.md](API_REFERENCE.md) — Contratos HTTP y ejemplos `curl`.
+- [DATA_FORMATS.md](DATA_FORMATS.md) — Esquemas de requests/responses y artefactos en disco.
+- [ROI_AND_MATCHING_SPEC.md](ROI_AND_MATCHING_SPEC.md) — Geometría ROI, canonicalización y máscaras.
+- [DEPLOYMENT.md](DEPLOYMENT.md) — Despliegues locales/producción y troubleshooting.
+- [LOGGING.md](LOGGING.md) — Política de observabilidad.
 
 ---
 
 ## Glosario rápido
 
-- **ROI canónica**: imagen resultante de rotar y recortar la ROI dibujada en la GUI; es la única que llega al backend.
-- **Coreset**: subconjunto representativo de embeddings OK utilizado por PatchCore para acelerar el kNN.
-- **Token shape**: altura y anchura del grid de tokens DINOv2 antes de reescalar al tamaño del ROI.
-- **Shape mask**: JSON que describe la región válida (rect/círculo/annulus) dentro de la ROI canónica.
+- **ROI canónica**: recorte alineado (crop + rotación) generado por la GUI; es la entrada directa al backend.
+- **PatchCore**: algoritmo que usa un coreset de embeddings OK para realizar kNN y detectar anomalías.
+- **Token shape**: dimensiones (`Ht`, `Wt`) del grid DINOv2 previo al reescalado; se mantiene constante entre entrenamiento e inferencia.
+- **Shape JSON**: máscara opcional (`rect`, `circle`, `annulus`) expresada en píxeles del ROI canónico; se usa para recortar el heatmap.
+- **Threshold**: valor obtenido en `/calibrate_ng` que se aplica para decidir regiones relevantes en `/infer`.

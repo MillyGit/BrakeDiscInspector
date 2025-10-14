@@ -1,25 +1,20 @@
-
 # 📌 Actualización — 2025-10-07
 
-**Cambios clave (GUI):**
-- Corrección de salto del frame al clicar adorner (círculo/annulus): cálculo y propagación del centro reales en `SyncModelFromShape` y sincronización `X,Y = CX,CY` en `CreateLayoutShape`.
-- Bbox SIEMPRE cuadrado para circle/annulus; overlay heatmap alineado.
-- Decisiones del proyecto y parámetros vigentes documentados.
-
-**Cambios clave (Backend):**
-- PatchCore + DINOv2 ViT-S/14; endpoints `/health`, `/fit_ok`, `/calibrate_ng`, `/infer`; persistencia por `(role_id, roi_id)`.
-
+**Cambios clave documentados en esta versión:**
+- GUI WPF consolidada con flujo completo Dataset → `/fit_ok` → `/calibrate_ng` → `/infer`, manteniendo adorners originales y sincronización de overlays.
+- Backend FastAPI estabilizado sobre PatchCore + DINOv2 ViT-S/14 con persistencia por `(role_id, roi_id)` y contratos alineados a `app.py`/`infer.py`.
+- Documentación revisada para reflejar almacenamiento `datasets/<role>/<roi>/<ok|ng>/` y artefactos `backend/models/<role>/<roi>/`.
 
 # BrakeDiscInspector
 
-**BrakeDiscInspector** es una solución integral para inspección de discos de freno que combina una **GUI WPF** para preparar imágenes y un **backend FastAPI** que implementa detección de anomalías basada en **PatchCore + DINOv2**.
+**BrakeDiscInspector** combina una **GUI WPF (.NET 8)** para preparar y analizar Regiones de Interés (ROI) con un **backend FastAPI (Python 3.10+)** que implementa detección de anomalías *good-only* mediante **PatchCore** y un extractor **DINOv2 ViT-S/14** congelado.
 
-La documentación está organizada para que cualquier colaborador (humano o agente) pueda localizar rápidamente los contratos, las guías de desarrollo y los flujos operativos.
+La documentación está pensada para que cualquier colaborador pueda retomar el proyecto tras pérdida de contexto: explica los flujos principales, cómo levantar los componentes y qué artefactos se generan.
 
 > **Ruta de lectura sugerida**
-> 1. Empezar con la [Arquitectura](#-estructura-del-proyecto) para entender los componentes.
-> 2. Revisar la [guía de desarrollo](DEV_GUIDE.md) y el [flujo GUI](instructions_codex_gui_workflow.md) según tu perfil.
-> 3. Consultar las fichas de API y formatos cuando integres el backend.
+> 1. Revisa la [arquitectura](#-estructura-del-proyecto) para ubicar cada módulo.
+> 2. Sigue la [guía de desarrollo](DEV_GUIDE.md) según tu perfil (backend o GUI).
+> 3. Consulta los contratos y formatos en [API_REFERENCE.md](API_REFERENCE.md) y [DATA_FORMATS.md](DATA_FORMATS.md).
 
 ## 🧭 Índice rápido
 
@@ -29,17 +24,16 @@ La documentación está organizada para que cualquier colaborador (humano o agen
 - [API principal](#-api-principal)
 - [ROI y shapes](#-roi-y-shapes)
 - [Documentación relacionada](#-documentación-relacionada)
-- [Checklist para Codex](#-checklist-para-codex)
 
 ---
 
 ## ✨ Características principales
 
-- **Pipeline “good-only”**: el backend aprende únicamente a partir de muestras OK gracias a un extractor DINOv2 ViT-S/14 congelado y memoria PatchCore con coreset k-center greedy.【F:backend/app.py†L40-L118】【F:backend/patchcore.py†L1-L200】
-- **Flujo completo en la GUI**: gestión de datasets por `(role_id, roi_id)`, entrenamiento (`/fit_ok`), calibración (`/calibrate_ng`) e inferencia (`/infer`) usando el ROI canónico exportado desde los adorners existentes.【F:instructions_codex_gui_workflow.md†L1-L120】
-- **Heatmaps y contornos**: el backend devuelve mapas de calor en PNG Base64 y regiones con área en px/mm² listos para superponer en la GUI.【F:backend/app.py†L118-L199】
-- **Persistencia por rol/ROI**: embeddings, índices e información de calibración se almacenan en `models/<role>/<roi>/` para reutilizar entrenamientos previos.【F:backend/storage.py†L1-L200】
-- **Documentación extensa**: guías de arquitectura, datos, despliegue, logging y MCP sincronizadas con la implementación actual.
+- **Pipeline good-only**: el backend extrae embeddings con `DinoV2Features` (`vit_small_patch14_dinov2.lvd142m`) y construye memoria PatchCore con coreset k-center greedy antes de guardar `memory.npz` por `(role_id, roi_id)`.【F:backend/app.py†L40-L118】【F:backend/storage.py†L1-L64】
+- **Inferencia con heatmaps**: `InferenceEngine.run` genera mapas de calor, calcula percentiles (p99 por defecto) y devuelve regiones filtradas por área en mm² junto con el PNG base64 listo para superponer en la GUI.【F:backend/infer.py†L17-L132】【F:backend/infer.py†L136-L181】
+- **GUI orquestada**: `MainWindow.xaml.cs` delega en `Workflow/BackendClient.cs` para llamar a `/fit_ok`, `/calibrate_ng` e `/infer`, mientras `Workflow/DatasetManager.cs` persiste muestras en `datasets/<role>/<roi>/<ok|ng>/` con metadatos JSON (`shape_json`, `mm_per_px`, ángulo, timestamp).【F:gui/BrakeDiscInspector_GUI_ROI/MainWindow.xaml.cs†L1-L160】【F:gui/BrakeDiscInspector_GUI_ROI/Workflow/BackendClient.cs†L20-L173】【F:gui/BrakeDiscInspector_GUI_ROI/Workflow/DatasetManager.cs†L18-L80】
+- **Sincronización ROI↔heatmap**: el pipeline de exportación reutiliza los adorners existentes (`RoiAdorner`, `RoiRotateAdorner`, `RoiOverlay`) y mantiene coherencia con la máscara enviada al backend (`shape` JSON).【F:gui/BrakeDiscInspector_GUI_ROI/RoiAdorner.cs†L1-L200】【F:backend/roi_mask.py†L1-L160】
+- **Documentación operativa**: guías para despliegue, logging y MCP alineadas con el estado del código a octubre de 2025.
 
 ---
 
@@ -49,34 +43,23 @@ La documentación está organizada para que cualquier colaborador (humano o agen
 BrakeDiscInspector/
 ├─ backend/
 │  ├─ app.py                 # FastAPI con /health, /fit_ok, /calibrate_ng, /infer
-│  ├─ features.py            # Extractor DINOv2 (timm)
-│  ├─ patchcore.py           # Memoria PatchCore y kNN (FAISS/sklearn)
-│  ├─ infer.py               # Posprocesado: heatmap, score, contornos
-│  ├─ calib.py               # Selección de umbral con 0–3 NG
-│  ├─ roi_mask.py            # Construcción de máscaras rect/círculo/annulus
-│  ├─ storage.py             # Persistencia en models/<role>/<roi>/
-│  ├─ requirements.txt       # Dependencias (torch, timm, fastapi, faiss, etc.)
-│  └─ README_backend.md      # Guía específica del servicio
+│  ├─ features.py            # Wrapper DINOv2 (timm) y normalización
+│  ├─ patchcore.py           # Memoria PatchCore + coreset + kNN/FAISS
+│  ├─ infer.py               # Heatmap, percentiles, contornos y regiones
+│  ├─ calib.py               # Selección de threshold con percentiles OK/NG
+│  ├─ storage.py             # Artefactos persistidos en models/<role>/<roi>/
+│  └─ requirements.txt       # Dependencias (torch 2.x, timm, faiss, fastapi…)
 ├─ gui/
 │  └─ BrakeDiscInspector_GUI_ROI/
-│     ├─ App.xaml / App.xaml.cs
-│     ├─ MainWindow.xaml / MainWindow.xaml.cs
-│     ├─ Workflow/BackendClient.cs (cliente HTTP async)
-│     ├─ ROI/                # Modelos y adorners existentes (no modificar)
-│     ├─ Overlays/           # Sincronización imagen ↔ canvas
-│     └─ Workflow/DatasetManager.cs  # Gestión de muestras OK/NG y metadatos
-├─ docs/
-│  └─ mcp/                   # Maintenance & Communication Plan (MCP)
-├─ scripts/                  # Utilidades (PowerShell) para entorno Windows
-├─ README.md                 # Este archivo
-├─ ARCHITECTURE.md           # Arquitectura actualizada
-├─ API_REFERENCE.md          # Contratos FastAPI
-├─ DATA_FORMATS.md           # Esquemas de requests/responses
-├─ DEV_GUIDE.md              # Preparación de entorno y flujos de trabajo
-├─ DEPLOYMENT.md             # Despliegue local, laboratorio y producción
-├─ LOGGING.md                # Política de logging y observabilidad
-├─ CONTRIBUTING.md           # Normas de contribución
-└─ agents.md                 # Playbook para agentes/IA colaboradores
+│     ├─ MainWindow.xaml / .cs        # Layout principal y comandos
+│     ├─ Workflow/BackendClient.cs    # Cliente HTTP async (fit/calibrate/infer)
+│     ├─ Workflow/DatasetManager.cs   # Exportación PNG + JSON de ROIs canónicos
+│     ├─ ROI/*.cs                     # Modelos y adorners (no modificar geometría)
+│     └─ RoiOverlay.cs                # Sincronización imagen ↔ canvas (Stretch=Uniform)
+├─ docs/mcp/                # Maintenance & Communication Plan
+├─ scripts/                 # Utilidades PowerShell para entorno Windows
+├─ *.md                     # Guías actualizadas (README, API, datos, despliegue…)
+└─ agents.md                # Playbook y restricciones para contribuciones asistidas
 ```
 
 ---
@@ -89,19 +72,16 @@ BrakeDiscInspector/
    ```bash
    cd backend
    python -m venv .venv
-   source .venv/bin/activate      # PowerShell: .venv\Scripts\Activate.ps1
+   source .venv/bin/activate      # PowerShell: .venv\\Scripts\\Activate.ps1
    pip install -r requirements.txt
    ```
 2. Lanzar el servicio en desarrollo:
    ```bash
-   uvicorn backend.app:app --reload --port 8000
+   uvicorn backend.app:app --reload --host 127.0.0.1 --port 8000
    ```
-3. Verificar estado:
+3. Verificar estado y entrenar un rol de ejemplo:
    ```bash
    curl http://127.0.0.1:8000/health
-   ```
-4. Entrenar la memoria con muestras OK (ejemplo):
-   ```bash
    curl -X POST http://127.0.0.1:8000/fit_ok \
         -F role_id=Master1 \
         -F roi_id=Pattern \
@@ -109,56 +89,56 @@ BrakeDiscInspector/
         -F images=@datasets/Master1/Pattern/ok/sample_001.png
    ```
 
-Los artefactos se guardarán automáticamente en `backend/models/Master1/Pattern/`.
+Los artefactos se guardan en `backend/models/Master1/Pattern/` (`memory.npz`, `index.faiss`, `calib.json`).
 
 ### GUI (WPF / .NET 8)
 
-1. Abrir `gui/BrakeDiscInspector_GUI_ROI.sln` en Visual Studio 2022 o superior.
-2. Restaurar paquetes NuGet (`OpenCvSharp4`, `OpenCvSharp4.runtime.win`, `OpenCvSharp4.Extensions`, `CommunityToolkit.Mvvm`).
-3. Configurar `appsettings.json`:
+1. Abrir `gui/BrakeDiscInspector_GUI_ROI/BrakeDiscInspector_GUI_ROI.sln` en Visual Studio 2022+.
+2. Restaurar paquetes NuGet (`OpenCvSharp4`, `OpenCvSharp4.runtime.win`, `CommunityToolkit.Mvvm`, etc.).
+3. Ajustar `appsettings.json`:
    ```json
    {
      "Backend": {
        "BaseUrl": "http://127.0.0.1:8000",
-       "DatasetRoot": "C:\\data\\brakedisc\\datasets"
+       "DatasetRoot": "C:\\data\\brakedisc\\datasets",
+       "MmPerPx": 0.20
      }
    }
    ```
 4. Flujo recomendado:
-   1. Dibujar y rotar el ROI con los adorners existentes.
-   2. Guardar muestras OK/NG desde el panel **Dataset** (la GUI exporta PNG + metadata JSON).
-   3. Ejecutar **Train memory (fit_ok)** y revisar `n_embeddings`, `coreset_size` y `token_shape`.
-   4. (Opcional) Ejecutar **Calibrate threshold** aportando scores OK/NG.
-   5. Lanzar **Infer current ROI** para obtener `score`, `threshold` y heatmap superpuesto.
+   1. Dibujar la ROI (rect/círculo/annulus) y asegurar cobertura adecuada.
+   2. Guardar muestras OK/NG desde la pestaña **Dataset** (genera PNG + metadata JSON con `shape_json`).
+   3. Ejecutar **Train memory (`/fit_ok`)** y revisar `n_embeddings`, `coreset_size`, `token_shape`.
+   4. (Opcional) Recolectar scores y lanzar **Calibrate (`/calibrate_ng`)**.
+   5. Ejecutar **Infer current ROI** para obtener `score`, `threshold`, heatmap y `regions`.
 
 ### Variables y rutas clave
 
-| Componente | Variable/Ruta | Descripción |
-|------------|---------------|-------------|
-| Backend | `MODELS_DIR` | Cambia la carpeta donde se guardan `memory.npz`, `index.faiss` y `calib.json`. |
-| Backend | `CORESET_RATE`, `INPUT_SIZE`, `DEVICE` | Ajustan hiperparámetros de PatchCore y del extractor DINOv2. |
-| GUI | `appsettings.json:Backend.BaseUrl` | URL del servicio FastAPI (se puede sobrescribir con `BRAKEDISC_BACKEND_BASEURL`). |
-| GUI | `appsettings.json:Backend.DatasetRoot` | Carpeta donde la GUI guarda `datasets/<role>/<roi>/<ok|ng>/`. |
-| Compartido | `datasets/<role>/<roi>/manifest.json` | (Opcional) Estado del dataset y del entrenamiento por ROI. |
+| Componente | Clave | Descripción |
+|------------|-------|-------------|
+| Backend | `MODELS_DIR` | Carpeta raíz donde se guardan memoria (`memory.npz`), índice (`index.faiss`) y calibración (`calib.json`). |
+| Backend | `CORESET_RATE`, `INPUT_SIZE`, `DEVICE` | Hiperparámetros leídos en `app.py`/`features.py` para controlar el coreset y el dispositivo. |
+| GUI | `Backend.BaseUrl` | URL del servicio FastAPI (se puede sobrescribir con variables `BRAKEDISC_BACKEND_*`). |
+| GUI | `DatasetRoot` | Ruta donde `DatasetManager` crea `datasets/<role>/<roi>/<ok|ng>/`. |
 
 ---
 
 ## 🔗 API principal
 
-- `GET /health` → estado del servicio, dispositivo y versión del modelo base.
-- `POST /fit_ok` → recibe lotes de ROI OK, construye memoria PatchCore y persiste embeddings/índices.
-- `POST /calibrate_ng` → calcula umbral por `(role_id, roi_id)` a partir de scores OK/NG y guarda `calib.json`.
-- `POST /infer` → infiere sobre un ROI canónico y devuelve `score`, `threshold`, `heatmap_png_base64`, `regions` y `token_shape`.
+- `GET /health` → Estado del servicio, dispositivo (`cpu`/`cuda`), modelo base y versión.
+- `POST /fit_ok` → Construye memoria PatchCore a partir de PNG/JPG OK, devuelve `n_embeddings`, `coreset_size`, `token_shape`, ratios del coreset.
+- `POST /calibrate_ng` → Persiste `calib.json` con `threshold`, percentiles OK/NG, `mm_per_px` y `area_mm2_thr`.
+- `POST /infer` → Genera `score`, `threshold` (si calibrado), `heatmap_png_base64`, `regions` (bbox + áreas px/mm²) y `token_shape` para sincronizar overlays.
 
-Detalles ampliados y ejemplos en [API_REFERENCE.md](API_REFERENCE.md) y [DATA_FORMATS.md](DATA_FORMATS.md).
+Más ejemplos y payloads detallados en [API_REFERENCE.md](API_REFERENCE.md) y [DATA_FORMATS.md](DATA_FORMATS.md).
 
 ---
 
 ## 📐 ROI y shapes
 
-- Los ROIs se dibujan en la GUI con adorners existentes (`RoiAdorner`, `RoiRotateAdorner`, `RoiOverlay`).
-- El backend siempre recibe **ROI canónico** (crop + rotación ya aplicados) y, opcionalmente, una máscara `shape` en coordenadas del ROI (`rect`, `circle`, `annulus`).
-- La GUI mantiene letterboxing sincronizado para que los heatmaps retornados encajen de forma exacta sobre la imagen original.
+- La GUI exporta siempre ROIs **canónicos** (crop + rotación) reutilizando el pipeline compartido con “Save Master/Pattern”.
+- El backend acepta una máscara opcional `shape` (`rect`, `circle`, `annulus`) expresada en píxeles del ROI canónico; la usa para enmascarar el heatmap antes de calcular el score y las regiones.【F:backend/roi_mask.py†L1-L160】
+- `InferenceEngine` devuelve `regions` en coordenadas del ROI canónico; la GUI convierte áreas a mm² usando el `mm_per_px` suministrado.
 
 Más detalles prácticos en [ROI_AND_MATCHING_SPEC.md](ROI_AND_MATCHING_SPEC.md).
 
@@ -167,60 +147,17 @@ Más detalles prácticos en [ROI_AND_MATCHING_SPEC.md](ROI_AND_MATCHING_SPEC.md)
 ## 📚 Documentación relacionada
 
 - **Arquitectura y contratos**
-  - [ARCHITECTURE.md](ARCHITECTURE.md) — componentes, diagrama de flujo y reglas de coordinación GUI↔backend.
-  - [ROI_AND_MATCHING_SPEC.md](ROI_AND_MATCHING_SPEC.md) — geometría detallada, shapes y conversiones.
-  - [API_REFERENCE.md](API_REFERENCE.md) — endpoints HTTP con ejemplos `curl`.
-  - [DATA_FORMATS.md](DATA_FORMATS.md) — esquemas JSON, PNG y artefactos persistidos.
+  - [ARCHITECTURE.md](ARCHITECTURE.md) — Componentes, diagramas y flujo extremo a extremo.
+  - [API_REFERENCE.md](API_REFERENCE.md) — Endpoints FastAPI con ejemplos `curl`.
+  - [DATA_FORMATS.md](DATA_FORMATS.md) — Esquemas de requests, responses y artefactos.
+  - [ROI_AND_MATCHING_SPEC.md](ROI_AND_MATCHING_SPEC.md) — Geometría ROI, máscaras y conversiones.
 - **Operación y desarrollo**
-  - [DEV_GUIDE.md](DEV_GUIDE.md) — setup, scripts y estándares de código.
-  - [DEPLOYMENT.md](DEPLOYMENT.md) — despliegue local/LAN/producción y smoke tests.
-  - [LOGGING.md](LOGGING.md) — política de logging y correlación de eventos.
-  - [backend/README_backend.md](backend/README_backend.md) — referencia operativa del servicio FastAPI.
+  - [DEV_GUIDE.md](DEV_GUIDE.md) — Preparación de entorno, scripts, estándares de código.
+  - [DEPLOYMENT.md](DEPLOYMENT.md) — Despliegue local, laboratorio y producción.
+  - [LOGGING.md](LOGGING.md) — Política de logging y correlación GUI ↔ backend.
 - **Coordinación y agentes**
-  - [instructions_codex_gui_workflow.md](instructions_codex_gui_workflow.md) — checklist completo para desarrollar la GUI.
-  - [backend/agents_for_backend.md](backend/agents_for_backend.md) — playbook de mantenimiento del backend.
-  - [docs/mcp/overview.md](docs/mcp/overview.md) — Maintenance & Communication Plan y responsables.
-  - [docs/mcp/latest_updates.md](docs/mcp/latest_updates.md) — bitácora de cambios coordinados.
+  - [agents.md](agents.md) — Playbook con restricciones críticas (no alterar adorners ni contratos).
+  - [docs/mcp/overview.md](docs/mcp/overview.md) — Maintenance & Communication Plan.
+  - [docs/mcp/latest_updates.md](docs/mcp/latest_updates.md) — Registro cronológico de hitos.
 
----
-
-¿Quieres contribuir? Revisa [CONTRIBUTING.md](CONTRIBUTING.md) y participa 🚀
-
-## 📑 Documentación adicional
-
-- **[ARCHITECTURE.md](ARCHITECTURE.md)** → flujo GUI/Backend, diagrama mermaid.
-- **[API_REFERENCE.md](API_REFERENCE.md)** → endpoints, contratos, ejemplos curl.
-- **[ROI_AND_MATCHING_SPEC.md](ROI_AND_MATCHING_SPEC.md)** → definición ROI, rotación, annulus.
-- **[DATA_FORMATS.md](DATA_FORMATS.md)** → formatos de requests/responses.
-- **[DEV_GUIDE.md](DEV_GUIDE.md)** → setup local completo.
-- **[DEPLOYMENT.md](DEPLOYMENT.md)** → despliegue local/prod y tests.
-- **[LOGGING.md](LOGGING.md)** → niveles y rutas de logs.
-- **[CONTRIBUTING.md](CONTRIBUTING.md)** → normas para contribuir.
-- **[MCP Overview](docs/mcp/overview.md)** → responsables, cadencia de releases y registro de artefactos.
-- **[MCP Latest Updates](docs/mcp/latest_updates.md)** → historial cronológico de decisiones MCP.
-
----
-
-## ✅ Checklist para Codex
-
-- [x] Documentación enlazada desde este README.  
-- [x] Estructura clara: backend, gui, scripts, docs.  
-- [x] Explicación de cada endpoint y flujo GUI-backend.  
-- [x] Instrucciones de instalación y ejecución.  
-- [x] Convenciones de ROI y rotación descritas.  
-- [x] Scripts auxiliares (`setup_dev.ps1`, `run_backend.ps1`, etc.).  
-
-Con esto, cualquier agente Codex puede navegar el proyecto, entender los componentes y modificarlos sin ambigüedad.
-
-## Para Codex
-- [Arquitectura](ARCHITECTURE.md)
-- [API](API_REFERENCE.md)
-  - [ROI & Shapes](ROI_AND_MATCHING_SPEC.md)
-- [Datos](DATA_FORMATS.md)
-- [Dev Guide](DEV_GUIDE.md)
-- [Despliegue](DEPLOYMENT.md)
-- [Logging](LOGGING.md)
-- [Contribución](CONTRIBUTING.md)
-
-
----
+¿Quieres contribuir? Consulta [CONTRIBUTING.md](CONTRIBUTING.md) y comparte tus mejoras 🚀

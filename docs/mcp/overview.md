@@ -1,6 +1,6 @@
 # MCP Overview
 
-The Maintenance & Communication Plan (MCP) keeps all contributors aligned on how BrakeDiscInspector evolves. It complements the architectural, data-format and API guides by clarifying responsibilities, coordination workflows and artefact ownership.
+The Maintenance & Communication Plan (MCP) keeps all contributors aligned on how BrakeDiscInspector evolves. It complements the architectural, data-format and API guides by clarifying responsibilities, coordination workflows and artefact ownership. For rapid onboarding use `PROJECT_OVERVIEW.txt` alongside this document.
 
 ## Quick index
 
@@ -18,7 +18,7 @@ The Maintenance & Communication Plan (MCP) keeps all contributors aligned on how
 The MCP covers every change that can affect:
 
 - The FastAPI backend in [`backend/`](../../backend) and its contracts (`/health`, `/fit_ok`, `/calibrate_ng`, `/infer`).
-- The WPF GUI in [`gui/`](../../gui) that manages ROI datasets and interacts with the backend.
+- The WPF GUI in [`gui/`](../../gui) that manages ROI datasets and interacts with the backend via `BackendClient`/`DatasetManager`.
 - Shared datasets, trained artefacts under `backend/models/<role>/<roi>/`, and calibration thresholds persisted in `calib.json`.
 - Operational tooling (PowerShell scripts, logging, deployment flows) referenced across the repository.
 
@@ -27,7 +27,7 @@ The MCP covers every change that can affect:
 | Role | Primary Responsibilities | Reference Material |
 |------|--------------------------|--------------------|
 | MCP Maintainer | Curate this documentation, track action items, publish updates in [`latest_updates.md`](latest_updates.md). | This folder |
-| Backend Lead | Own API/contract stability, PatchCore artefacts, deployment readiness. | [`API_REFERENCE.md`](../../API_REFERENCE.md), [`backend/README_backend.md`](../../backend/README_backend.md) |
+| Backend Lead | Own API/contract stability, PatchCore artefacts, deployment readiness. | [`API_REFERENCE.md`](../../API_REFERENCE.md), [`backend/app.py`](../../backend/app.py) |
 | GUI Lead | Coordinate GUI release cadence, ROI tooling updates, dataset UX. | [`ARCHITECTURE.md`](../../ARCHITECTURE.md), [`DEV_GUIDE.md`](../../DEV_GUIDE.md) |
 | Data Steward | Version datasets, manage `models/<role>/<roi>/memory.npz` and `calib.json`, ensure mm/px consistency. | [`DATA_FORMATS.md`](../../DATA_FORMATS.md), [`ROI_AND_MATCHING_SPEC.md`](../../ROI_AND_MATCHING_SPEC.md) |
 
@@ -37,7 +37,7 @@ The MCP covers every change that can affect:
 2. **Assess impact** with relevant role owners (backend, GUI, data). Confirm compatibility with existing artefacts.
 3. **Validate** using procedures in [`DEV_GUIDE.md`](../../DEV_GUIDE.md) and smoke tests from [`DEPLOYMENT.md`](../../DEPLOYMENT.md).
 4. **Document** the outcome:
-   - Update the pertinent guide(s).
+   - Update the pertinent guide(s) and, if needed, `PROJECT_OVERVIEW.txt`.
    - Record the summary in [`latest_updates.md`](latest_updates.md) with date, owner, links to evidence.
 5. **Communicate** the release to the wider team (Slack/email) with links to the updated markdown files.
 
@@ -85,6 +85,6 @@ Expectations are centralised in [`LOGGING.md`](../../LOGGING.md):
 
 ## Maintaining this Folder
 
-- Scope limited to MCP coordination topics.
-- Add a dated entry to [`latest_updates.md`](latest_updates.md) for every meaningful change.
-- Cross-link new MCP documents from here and ensure README references remain valid.
+- Scope limitado a coordinación MCP.
+- Añadir una entrada fechada a [`latest_updates.md`](latest_updates.md) por cada cambio significativo.
+- Asegurar que `PROJECT_OVERVIEW.txt` y las guías enlazadas reflejan cualquier decisión reciente.
