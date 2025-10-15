@@ -2604,33 +2604,6 @@ namespace BrakeDiscInspector_GUI_ROI
                       .ToList();
             foreach (var s in old) CanvasROI.Children.Remove(s);
 
-            // 2) Helper to draw a cross at a canvas point
-            void DrawCroSWPointssAt(SWPoint p, double size = 12.0, double th = 2.0)
-            {
-                var h = new System.Windows.Shapes.Line
-                {
-                    X1 = p.X - size, Y1 = p.Y,
-                    X2 = p.X + size, Y2 = p.Y,
-                    Stroke = System.Windows.Media.Brushes.Lime,
-                    StrokeThickness = th,
-                    IsHitTestVisible = false,
-                    Tag = "AnalysisCross"
-                };
-                var v = new System.Windows.Shapes.Line
-                {
-                    X1 = p.X, Y1 = p.Y - size,
-                    X2 = p.X, Y2 = p.Y + size,
-                    Stroke = System.Windows.Media.Brushes.Lime,
-                    StrokeThickness = th,
-                    IsHitTestVisible = false,
-                    Tag = "AnalysisCross"
-                };
-                CanvasROI.Children.Add(h);
-                CanvasROI.Children.Add(v);
-                System.Windows.Controls.Panel.SetZIndex(h, int.MaxValue - 1);
-                System.Windows.Controls.Panel.SetZIndex(v, int.MaxValue - 1);
-            }
-
             // 3) Convert IMAGE-space → CANVAS and draw
             if (_lastM1CenterPx.HasValue)
             {
@@ -5960,6 +5933,33 @@ namespace BrakeDiscInspector_GUI_ROI
             RedrawAnalysisCrosses();
             _overlayNeedsRedraw = false;
             return;
+        }
+
+        // Helper moved to class scope so it is visible at call sites (fixes CS0103)
+        private void DrawCrossAt(SWPoint p, double size = 12.0, double th = 2.0)
+        {
+            var h = new System.Windows.Shapes.Line
+            {
+                X1 = p.X - size, Y1 = p.Y,
+                X2 = p.X + size, Y2 = p.Y,
+                Stroke = System.Windows.Media.Brushes.Lime,
+                StrokeThickness = th,
+                IsHitTestVisible = false,
+                Tag = "AnalysisCross"
+            };
+            var v = new System.Windows.Shapes.Line
+            {
+                X1 = p.X, Y1 = p.Y - size,
+                X2 = p.X, Y2 = p.Y + size,
+                Stroke = System.Windows.Media.Brushes.Lime,
+                StrokeThickness = th,
+                IsHitTestVisible = false,
+                Tag = "AnalysisCross"
+            };
+            CanvasROI?.Children.Add(h);
+            CanvasROI?.Children.Add(v);
+            System.Windows.Controls.Panel.SetZIndex(h, int.MaxValue - 1);
+            System.Windows.Controls.Panel.SetZIndex(v, int.MaxValue - 1);
         }
 
 
