@@ -1289,7 +1289,7 @@ namespace BrakeDiscInspector_GUI_ROI
                     try
                     {
                         // Prefer persisted inspection ROI if available; else current on-screen inspection
-                        SeedInspectionBaselineOnce(_layout?.Inspection ?? _layout?.InspectionBaseline, seedKey);
+                        SeedInspectionBaselineOnce(_layout?.InspectionBaseline ?? _layout?.Inspection, seedKey);
                     }
                     catch { /* ignore */ }
                 }
@@ -4033,13 +4033,21 @@ namespace BrakeDiscInspector_GUI_ROI
                 InspLog($"[Seed] Skip: already seeded for key='{_lastImageSeedKey}'");
                 return;
             }
-            if (insp == null)
+            // Always prefer the persisted inspection baseline when seeding.
+            var baseline = _layout?.InspectionBaseline;
+            if (baseline == null)
             {
-                InspLog("[Seed] Skip: insp is null");
+                // Fallback only if the persisted baseline is not available yet.
+                baseline = insp ?? _layout?.Inspection;
+            }
+
+            if (baseline == null)
+            {
+                InspLog("[Seed] Skip: baseline is null");
                 return;
             }
 
-            _inspectionBaselineFixed = insp.Clone();
+            _inspectionBaselineFixed = baseline.Clone();
             _inspectionBaselineSeededForImage = true;
             _lastImageSeedKey = seedKey;
             InspLog($"[Seed] Fixed baseline SEEDED (key='{seedKey}') from: {FInsp(_inspectionBaselineFixed)}");
@@ -4104,12 +4112,13 @@ namespace BrakeDiscInspector_GUI_ROI
             InspLog($"[Analyze] Key='{__seedKeyNow}' BEFORE insp: {FInsp(insp)}  M1=({master1.X:F3},{master1.Y:F3}) M2=({master2.X:F3},{master2.Y:F3})");
 
             // DEFENSIVE: do NOT re-seed here if already seeded for this image
-            if (_useFixedInspectionBaseline && !_inspectionBaselineSeededForImage && insp != null)
+            var fallbackBaseline = _layout?.InspectionBaseline ?? insp;
+            if (_useFixedInspectionBaseline && !_inspectionBaselineSeededForImage && fallbackBaseline != null)
             {
                 // Only seed if the image key is different (should not happen if [3] ran properly)
                 if (!string.Equals(__seedKeyNow, _lastImageSeedKey, System.StringComparison.Ordinal))
                 {
-                    SeedInspectionBaselineOnce(insp, __seedKeyNow);
+                    SeedInspectionBaselineOnce(fallbackBaseline, __seedKeyNow);
                     InspLog("[Analyze] Fallback seed performed (unexpected), key differed.");
                 }
                 else
@@ -4128,9 +4137,30 @@ namespace BrakeDiscInspector_GUI_ROI
             if (insp == null)
                 return;
 
-            var baselineInspection = _useFixedInspectionBaseline
-                                      ? (_inspectionBaselineFixed ?? (_inspectionBaselineFixed = insp.Clone()))
-                                      : (GetInspectionBaselineClone() ?? insp.Clone());
+            RoiModel? baselineInspection;
+            if (_useFixedInspectionBaseline)
+            {
+                baselineInspection = _inspectionBaselineFixed;
+                if (baselineInspection == null)
+                {
+                    var persistedBaseline = GetInspectionBaselineClone();
+                    if (persistedBaseline != null)
+                    {
+                        _inspectionBaselineFixed = persistedBaseline;
+                        baselineInspection = _inspectionBaselineFixed;
+                        if (!_inspectionBaselineSeededForImage)
+                        {
+                            _inspectionBaselineSeededForImage = true;
+                            _lastImageSeedKey = __seedKeyNow;
+                            InspLog("[Analyze] Fallback seed from persisted baseline.");
+                        }
+                    }
+                }
+            }
+            else
+            {
+                baselineInspection = GetInspectionBaselineClone() ?? insp.Clone();
+            }
 
             RoiModel? __baseM1P = null, __baseM1S = null, __baseM2P = null, __baseM2S = null;
             if (!_freezeMasterShapesOnAnalyze)
@@ -4928,7 +4958,7 @@ namespace BrakeDiscInspector_GUI_ROI
                     InspLog($"[Seed] New image detected, oldKey='{_lastImageSeedKey}' newKey='{seedKey}' -> reset baseline.");
                     try
                     {
-                        SeedInspectionBaselineOnce(_layout?.Inspection ?? _layout?.InspectionBaseline, seedKey);
+                        SeedInspectionBaselineOnce(_layout?.InspectionBaseline ?? _layout?.Inspection, seedKey);
                     }
                     catch { /* ignore */ }
                 }
@@ -4961,7 +4991,7 @@ namespace BrakeDiscInspector_GUI_ROI
                     InspLog($"[Seed] New image detected, oldKey='{_lastImageSeedKey}' newKey='{seedKey}' -> reset baseline.");
                     try
                     {
-                        SeedInspectionBaselineOnce(_layout?.Inspection ?? _layout?.InspectionBaseline, seedKey);
+                        SeedInspectionBaselineOnce(_layout?.InspectionBaseline ?? _layout?.Inspection, seedKey);
                     }
                     catch { /* ignore */ }
                 }
