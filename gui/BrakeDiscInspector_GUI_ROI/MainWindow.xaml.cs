@@ -4187,6 +4187,8 @@ namespace BrakeDiscInspector_GUI_ROI
 
             double m1NewX = master1.X, m1NewY = master1.Y;
             double m2NewX = master2.X, m2NewY = master2.Y;
+            var m1_new = new System.Windows.Point(m1NewX, m1NewY);
+            var m2_new = new System.Windows.Point(m2NewX, m2NewY);
 
             bool haveLast = !double.IsNaN(_lastAccM1X) && !double.IsNaN(_lastAccM2X);
             if (haveLast)
@@ -4311,7 +4313,7 @@ namespace BrakeDiscInspector_GUI_ROI
                     }
                     else
                     {
-                        InspLog("[Analyze] Master shapes frozen (UI only). Crosses will show detection movement.");
+                        RepositionMastersAndSubRois(m1_new, m2_new);
                     }
 
                     if (_lastHeatmapRoi != null && __baseHeat != null)
@@ -5990,6 +5992,93 @@ namespace BrakeDiscInspector_GUI_ROI
             CanvasROI?.Children.Add(v);
             System.Windows.Controls.Panel.SetZIndex(h, int.MaxValue - 1);
             System.Windows.Controls.Panel.SetZIndex(v, int.MaxValue - 1);
+        }
+
+        /* ======================
+         * Repositioning helpers (class scope)
+         * ====================== */
+        private void SetRoiCenterImg(RoiModel roi, double cxImg, double cyImg)
+        {
+            // Update in IMAGE space; the current Transform will map to canvas
+            roi.CX = cxImg;
+            roi.CY = cyImg;
+            roi.Left = cxImg - (roi.Width  * 0.5);
+            roi.Top  = cyImg - (roi.Height * 0.5);
+        }
+
+        private void RecenterAnchoredToPivot(
+            RoiModel roi,
+            System.Windows.Point pivotBase,
+            System.Windows.Point pivotNew,
+            double scale,
+            double cosΔ,
+            double sinΔ)
+        {
+            // Vector in IMAGE space from base pivot to ROI center
+            double vx = roi.CX - pivotBase.X;
+            double vy = roi.CY - pivotBase.Y;
+
+            // Rotate + scale
+            double vxr = scale * (cosΔ * vx - sinΔ * vy);
+            double vyr = scale * (sinΔ * vx + cosΔ * vy);
+
+            // New center in IMAGE space
+            SetRoiCenterImg(roi, pivotNew.X + vxr, pivotNew.Y + vyr);
+        }
+
+        private void LogDeltaToCross(string label, double roiCxImg, double roiCyImg, double crossCxImg, double crossCyImg)
+        {
+            // Convert both centers to CANVAS to verify Δ in UI pixels
+            var crossCanvas = ImagePxToCanvasPt(crossCxImg, crossCyImg);
+            var roiCanvas   = ImagePxToCanvasPt(roiCxImg,   roiCyImg);
+            double dx = roiCanvas.X - crossCanvas.X;
+            double dy = roiCanvas.Y - crossCanvas.Y;
+            _log.Info($"[AlignCheck] {label}: Cross(canvas)=({crossCanvas.X:F3},{crossCanvas.Y:F3}) " +
+                      $"ROI(canvas)=({roiCanvas.X:F3},{roiCanvas.Y:F3}) Δ=({dx:F3},{dy:F3})");
+        }
+
+        /** Reposition master pattern ROIs to cross centers and anchor master inspections.
+         * Requires: _m1BaseX/_m1BaseY and _m2BaseX/_m2BaseY are the baseline master pivots (IMAGE coords).
+         * Params m1_new, m2_new are the detected master centers for the current image (IMAGE coords).
+         */
+        private void RepositionMastersAndSubRois(System.Windows.Point m1_new, System.Windows.Point m2_new)
+        {
+            // 1) Compute BASE→NEW similarity using saved master baselines
+            var m1_base = new System.Windows.Point(_m1BaseX, _m1BaseY);
+            var m2_base = new System.Windows.Point(_m2BaseX, _m2BaseY);
+
+            double dxB = m2_base.X - m1_base.X, dyB = m2_base.Y - m1_base.Y;
+            double dxN = m2_new.X - m1_new.X, dyN = m2_new.Y - m1_new.Y;
+            double lenB = Math.Sqrt(dxB * dxB + dyB * dyB);
+            double lenN = Math.Sqrt(dxN * dxN + dyN * dyN);
+            double scale = (lenB > 1e-6) ? (lenN / lenB) : 1.0;
+            double angB = Math.Atan2(dyB, dxB);
+            double angN = Math.Atan2(dyN, dxN);
+            double angΔ = angN - angB;
+            double cosΔ = Math.Cos(angΔ), sinΔ = Math.Sin(angΔ);
+
+            // 2) Center master pattern ROIs on detected cross centers (IMAGE space)
+            if (_layout?.Master1Pattern != null)
+                SetRoiCenterImg(_layout.Master1Pattern, m1_new.X, m1_new.Y);
+            if (_layout?.Master2Pattern != null)
+                SetRoiCenterImg(_layout.Master2Pattern, m2_new.X, m2_new.Y);
+
+            // 3) Recenter master inspections anchored to their respective master using same transform
+            if (_layout?.Master1Inspection != null)
+                RecenterAnchoredToPivot(_layout.Master1Inspection, m1_base, m1_new, scale, cosΔ, sinΔ);
+            if (_layout?.Master2Inspection != null)
+                RecenterAnchoredToPivot(_layout.Master2Inspection, m2_base, m2_new, scale, cosΔ, sinΔ);
+
+            // 4) Verification logs (Δ in canvas pixels between ROI and cross)
+            if (_layout?.Master1Pattern != null)
+                LogDeltaToCross("M1 Pattern", _layout.Master1Pattern.CX, _layout.Master1Pattern.CY, m1_new.X, m1_new.Y);
+            if (_layout?.Master2Pattern != null)
+                LogDeltaToCross("M2 Pattern", _layout.Master2Pattern.CX, _layout.Master2Pattern.CY, m2_new.X, m2_new.Y);
+
+            if (_layout?.Master1Inspection != null)
+                LogDeltaToCross("M1 Insp", _layout.Master1Inspection.CX, _layout.Master1Inspection.CY, m1_new.X, m1_new.Y);
+            if (_layout?.Master2Inspection != null)
+                LogDeltaToCross("M2 Insp", _layout.Master2Inspection.CX, _layout.Master2Inspection.CY, m2_new.X, m2_new.Y);
         }
 
 
