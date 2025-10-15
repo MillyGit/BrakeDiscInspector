@@ -5997,13 +5997,30 @@ namespace BrakeDiscInspector_GUI_ROI
         /* ======================
          * Repositioning helpers (class scope)
          * ====================== */
+        // ===== Helpers: logging, centering and anchored reposition (class scope) =====
+        [System.Diagnostics.Conditional("DEBUG")]
+        private void LogInfo(string message)
+        {
+            System.Diagnostics.Debug.WriteLine(message);
+        }
+
         private void SetRoiCenterImg(RoiModel roi, double cxImg, double cyImg)
         {
-            // Update in IMAGE space; the current Transform will map to canvas
+            // Update in IMAGE space; canvas mapping is handled by current Transform
             roi.CX = cxImg;
             roi.CY = cyImg;
             roi.Left = cxImg - (roi.Width  * 0.5);
             roi.Top  = cyImg - (roi.Height * 0.5);
+        }
+
+        private void LogDeltaToCross(string label, double roiCxImg, double roiCyImg, double crossCxImg, double crossCyImg)
+        {
+            var crossCanvas = ImagePxToCanvasPt(crossCxImg, crossCyImg);
+            var roiCanvas   = ImagePxToCanvasPt(roiCxImg,   roiCyImg);
+            double dx = roiCanvas.X - crossCanvas.X;
+            double dy = roiCanvas.Y - crossCanvas.Y;
+            LogInfo($"[AlignCheck] {label}: Cross(canvas)=({crossCanvas.X:F3},{crossCanvas.Y:F3}) " +
+                    $"ROI(canvas)=({roiCanvas.X:F3},{roiCanvas.Y:F3}) Δ=({dx:F3},{dy:F3})");
         }
 
         private void RecenterAnchoredToPivot(
@@ -6014,71 +6031,72 @@ namespace BrakeDiscInspector_GUI_ROI
             double cosΔ,
             double sinΔ)
         {
-            // Vector in IMAGE space from base pivot to ROI center
             double vx = roi.CX - pivotBase.X;
             double vy = roi.CY - pivotBase.Y;
-
-            // Rotate + scale
             double vxr = scale * (cosΔ * vx - sinΔ * vy);
             double vyr = scale * (sinΔ * vx + cosΔ * vy);
-
-            // New center in IMAGE space
             SetRoiCenterImg(roi, pivotNew.X + vxr, pivotNew.Y + vyr);
         }
 
-        private void LogDeltaToCross(string label, double roiCxImg, double roiCyImg, double crossCxImg, double crossCyImg)
+        private bool TryGetMasterInspection(int masterId, out RoiModel roi)
         {
-            // Convert both centers to CANVAS to verify Δ in UI pixels
-            var crossCanvas = ImagePxToCanvasPt(crossCxImg, crossCyImg);
-            var roiCanvas   = ImagePxToCanvasPt(roiCxImg,   roiCyImg);
-            double dx = roiCanvas.X - crossCanvas.X;
-            double dy = roiCanvas.Y - crossCanvas.Y;
-            _log.Info($"[AlignCheck] {label}: Cross(canvas)=({crossCanvas.X:F3},{crossCanvas.Y:F3}) " +
-                      $"ROI(canvas)=({roiCanvas.X:F3},{roiCanvas.Y:F3}) Δ=({dx:F3},{dy:F3})");
+            roi = null;
+            if (_layout == null) return false;
+
+            string[] candidates = new[]
+            {
+                masterId == 1 ? "Master1Inspection" : "Master2Inspection",
+                masterId == 1 ? "Master1Inspect"    : "Master2Inspect",
+                masterId == 1 ? "InspectionMaster1" : "InspectionMaster2",
+                masterId == 1 ? "M1Inspection"      : "M2Inspection",
+                masterId == 1 ? "M1Inspect"         : "M2Inspect"
+            };
+
+            var t = _layout.GetType();
+            foreach (var name in candidates)
+            {
+                var p = t.GetProperty(name,
+                    System.Reflection.BindingFlags.Public |
+                    System.Reflection.BindingFlags.Instance |
+                    System.Reflection.BindingFlags.IgnoreCase);
+                if (p != null && typeof(RoiModel).IsAssignableFrom(p.PropertyType))
+                {
+                    var val = p.GetValue(_layout) as RoiModel;
+                    if (val != null) { roi = val; return true; }
+                }
+            }
+            return false;
         }
 
-        /** Reposition master pattern ROIs to cross centers and anchor master inspections.
-         * Requires: _m1BaseX/_m1BaseY and _m2BaseX/_m2BaseY are the baseline master pivots (IMAGE coords).
-         * Params m1_new, m2_new are the detected master centers for the current image (IMAGE coords).
-         */
         private void RepositionMastersAndSubRois(System.Windows.Point m1_new, System.Windows.Point m2_new)
         {
-            // 1) Compute BASE→NEW similarity using saved master baselines
             var m1_base = new System.Windows.Point(_m1BaseX, _m1BaseY);
             var m2_base = new System.Windows.Point(_m2BaseX, _m2BaseY);
 
             double dxB = m2_base.X - m1_base.X, dyB = m2_base.Y - m1_base.Y;
             double dxN = m2_new.X - m1_new.X, dyN = m2_new.Y - m1_new.Y;
-            double lenB = Math.Sqrt(dxB * dxB + dyB * dyB);
-            double lenN = Math.Sqrt(dxN * dxN + dyN * dyN);
-            double scale = (lenB > 1e-6) ? (lenN / lenB) : 1.0;
-            double angB = Math.Atan2(dyB, dxB);
-            double angN = Math.Atan2(dyN, dxN);
+            double lenB = System.Math.Sqrt(dxB * dxB + dyB * dyB);
+            double lenN = System.Math.Sqrt(dxN * dxN + dyN * dyN);
+            double scale = (lenB > 1e-6) ? (lenN / lenB) : 1.0; // respects analyze scale lock: we don't change ROI sizes
+            double angB = System.Math.Atan2(dyB, dxB);
+            double angN = System.Math.Atan2(dyN, dxN);
             double angΔ = angN - angB;
-            double cosΔ = Math.Cos(angΔ), sinΔ = Math.Sin(angΔ);
+            double cosΔ = System.Math.Cos(angΔ), sinΔ = System.Math.Sin(angΔ);
 
-            // 2) Center master pattern ROIs on detected cross centers (IMAGE space)
-            if (_layout?.Master1Pattern != null)
-                SetRoiCenterImg(_layout.Master1Pattern, m1_new.X, m1_new.Y);
-            if (_layout?.Master2Pattern != null)
-                SetRoiCenterImg(_layout.Master2Pattern, m2_new.X, m2_new.Y);
+            // Center master pattern ROIs on detected cross centers
+            if (_layout?.Master1Pattern != null) SetRoiCenterImg(_layout.Master1Pattern, m1_new.X, m1_new.Y);
+            if (_layout?.Master2Pattern != null) SetRoiCenterImg(_layout.Master2Pattern, m2_new.X, m2_new.Y);
 
-            // 3) Recenter master inspections anchored to their respective master using same transform
-            if (_layout?.Master1Inspection != null)
-                RecenterAnchoredToPivot(_layout.Master1Inspection, m1_base, m1_new, scale, cosΔ, sinΔ);
-            if (_layout?.Master2Inspection != null)
-                RecenterAnchoredToPivot(_layout.Master2Inspection, m2_base, m2_new, scale, cosΔ, sinΔ);
+            // Anchor master inspections to their master (if present). We do NOT touch Width/Height here.
+            if (TryGetMasterInspection(1, out var m1Insp)) RecenterAnchoredToPivot(m1Insp, m1_base, m1_new, scale, cosΔ, sinΔ);
+            if (TryGetMasterInspection(2, out var m2Insp)) RecenterAnchoredToPivot(m2Insp, m2_base, m2_new, scale, cosΔ, sinΔ);
 
-            // 4) Verification logs (Δ in canvas pixels between ROI and cross)
-            if (_layout?.Master1Pattern != null)
-                LogDeltaToCross("M1 Pattern", _layout.Master1Pattern.CX, _layout.Master1Pattern.CY, m1_new.X, m1_new.Y);
-            if (_layout?.Master2Pattern != null)
-                LogDeltaToCross("M2 Pattern", _layout.Master2Pattern.CX, _layout.Master2Pattern.CY, m2_new.X, m2_new.Y);
+            // Logs for quick visual verification in canvas pixels
+            if (_layout?.Master1Pattern != null) LogDeltaToCross("M1 Pattern", _layout.Master1Pattern.CX, _layout.Master1Pattern.CY, m1_new.X, m1_new.Y);
+            if (_layout?.Master2Pattern != null) LogDeltaToCross("M2 Pattern", _layout.Master2Pattern.CX, _layout.Master2Pattern.CY, m2_new.X, m2_new.Y);
 
-            if (_layout?.Master1Inspection != null)
-                LogDeltaToCross("M1 Insp", _layout.Master1Inspection.CX, _layout.Master1Inspection.CY, m1_new.X, m1_new.Y);
-            if (_layout?.Master2Inspection != null)
-                LogDeltaToCross("M2 Insp", _layout.Master2Inspection.CX, _layout.Master2Inspection.CY, m2_new.X, m2_new.Y);
+            if (TryGetMasterInspection(1, out m1Insp)) LogDeltaToCross("M1 Insp", m1Insp.CX, m1Insp.CY, m1_new.X, m1_new.Y);
+            if (TryGetMasterInspection(2, out m2Insp)) LogDeltaToCross("M2 Insp", m2Insp.CX, m2Insp.CY, m2_new.X, m2_new.Y);
         }
 
 
