@@ -2605,7 +2605,7 @@ namespace BrakeDiscInspector_GUI_ROI
             foreach (var s in old) CanvasROI.Children.Remove(s);
 
             // 2) Helper to draw a cross at a canvas point
-            void DrawCrossAt(WpfPoint p, double size = 12.0, double th = 2.0)
+            void DrawCroSWPointssAt(SWPoint p, double size = 12.0, double th = 2.0)
             {
                 var h = new System.Windows.Shapes.Line
                 {
