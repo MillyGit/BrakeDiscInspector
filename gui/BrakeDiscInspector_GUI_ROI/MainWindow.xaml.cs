@@ -102,9 +102,6 @@ namespace BrakeDiscInspector_GUI_ROI
         private const double ANALYZE_POS_TOL_PX = 1.0;    // <=1 px considered the same
         private const double ANALYZE_ANG_TOL_DEG = 0.5;   // <=0.5° considered the same
 
-        // UI-only: keep masters visually static on Analyze (recommended: true)
-        private bool _freezeMasterShapesOnAnalyze = true;
-
         private bool _lockAnalyzeScale = true;                  // Size lock already in use; keep it true
 
         private static readonly string InspAlignLogPath = System.IO.Path.Combine(
@@ -4101,8 +4098,13 @@ namespace BrakeDiscInspector_GUI_ROI
             target.R      = baseline.R      * scale;
             target.RInner = baseline.RInner * scale;
 
-            // NOTE: we do NOT modify any angle property on the ROI shape,
-            // because circles/annulus are rotation-invariant and rectangles in this app are axis-aligned.
+            // Apply angle rotation for rectangular ROIs
+            if (baseline.Shape == RoiShape.Rectangle)
+            {
+                double angleBaseDeg = baseline.AngleDeg;
+                double angleDeltaDeg = angleDeltaRad * 180.0 / Math.PI;
+                target.AngleDeg = angleBaseDeg + angleDeltaDeg;
+            }
         }
 
         private void MoveInspectionTo(RoiModel insp, SWPoint master1, SWPoint master2)
@@ -4162,14 +4164,10 @@ namespace BrakeDiscInspector_GUI_ROI
                 baselineInspection = GetInspectionBaselineClone() ?? insp.Clone();
             }
 
-            RoiModel? __baseM1P = null, __baseM1S = null, __baseM2P = null, __baseM2S = null;
-            if (!_freezeMasterShapesOnAnalyze)
-            {
-                __baseM1P = _layout?.Master1Pattern?.Clone();
-                __baseM1S = _layout?.Master1Search ?.Clone();
-                __baseM2P = _layout?.Master2Pattern?.Clone();
-                __baseM2S = _layout?.Master2Search ?.Clone();
-            }
+            RoiModel? __baseM1P = _layout?.Master1Pattern?.Clone();
+            RoiModel? __baseM1S = _layout?.Master1Search ?.Clone();
+            RoiModel? __baseM2P = _layout?.Master2Pattern?.Clone();
+            RoiModel? __baseM2S = _layout?.Master2Search ?.Clone();
             var __baseHeat = _lastHeatmapRoi?.Clone();
 
             if (!_mastersSeededForImage)
@@ -4297,24 +4295,17 @@ namespace BrakeDiscInspector_GUI_ROI
             {
                 if (__canTransform && _layout != null)
                 {
-                    if (!_freezeMasterShapesOnAnalyze)
-                    {
-                        if (_layout.Master1Pattern != null && __baseM1P != null)
-                            ApplyRoiTransform(_layout.Master1Pattern, __baseM1P, m1OldX, m1OldY, m1NewX, m1NewY, effectiveScale, angDelta);
+                    if (_layout.Master1Pattern != null && __baseM1P != null)
+                        ApplyRoiTransform(_layout.Master1Pattern, __baseM1P, m1OldX, m1OldY, m1NewX, m1NewY, effectiveScale, angDelta);
 
-                        if (_layout.Master2Pattern != null && __baseM2P != null)
-                            ApplyRoiTransform(_layout.Master2Pattern, __baseM2P, m1OldX, m1OldY, m1NewX, m1NewY, effectiveScale, angDelta);
+                    if (_layout.Master2Pattern != null && __baseM2P != null)
+                        ApplyRoiTransform(_layout.Master2Pattern, __baseM2P, m1OldX, m1OldY, m1NewX, m1NewY, effectiveScale, angDelta);
 
-                        if (_layout.Master1Search != null && __baseM1S != null)
-                            ApplyRoiTransform(_layout.Master1Search,  __baseM1S, m1OldX, m1OldY, m1NewX, m1NewY, effectiveScale, angDelta);
+                    if (_layout.Master1Search != null && __baseM1S != null)
+                        ApplyRoiTransform(_layout.Master1Search,  __baseM1S, m1OldX, m1OldY, m1NewX, m1NewY, effectiveScale, angDelta);
 
-                        if (_layout.Master2Search != null && __baseM2S != null)
-                            ApplyRoiTransform(_layout.Master2Search,  __baseM2S, m1OldX, m1OldY, m1NewX, m1NewY, effectiveScale, angDelta);
-                    }
-                    else
-                    {
-                        RepositionMastersAndSubRois(m1_new, m2_new);
-                    }
+                    if (_layout.Master2Search != null && __baseM2S != null)
+                        ApplyRoiTransform(_layout.Master2Search,  __baseM2S, m1OldX, m1OldY, m1NewX, m1NewY, effectiveScale, angDelta);
 
                     if (_lastHeatmapRoi != null && __baseHeat != null)
                         ApplyRoiTransform(_lastHeatmapRoi, __baseHeat, m1OldX, m1OldY, m1NewX, m1NewY, effectiveScale, angDelta);
@@ -4329,7 +4320,7 @@ namespace BrakeDiscInspector_GUI_ROI
                         try { RedrawAnalysisCrosses(); } catch { }
                     }
 
-                    AppendLog("[UI] Unified transform applied to Inspection/Heatmap (masters frozen=" + _freezeMasterShapesOnAnalyze + ").");
+                    AppendLog("[UI] Unified transform applied to Inspection/Heatmap and master ROIs.");
                 }
             }
             catch (Exception ex)
