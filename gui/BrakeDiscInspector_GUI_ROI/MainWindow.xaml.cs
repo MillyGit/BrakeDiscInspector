@@ -1299,36 +1299,38 @@ namespace BrakeDiscInspector_GUI_ROI
 
             {
                 string key = ComputeImageSeedKey();
+                var m1p = _layout?.Master1Pattern;
+                var m2p = _layout?.Master2Pattern;
+
                 if (!string.Equals(key, _imageKeyForMasters, System.StringComparison.Ordinal))
                 {
                     _imageKeyForMasters = key;
                     _mastersSeededForImage = false;
-
-                    var m1p = _layout?.Master1Pattern;
-                    var m2p = _layout?.Master2Pattern;
-                    if (m1p != null && m2p != null)
-                    {
-                        // Use shape-aware centers so rectangular patterns don't yield (0,0)
-                        var (m1cx, m1cy) = m1p.GetCenter();
-                        var (m2cx, m2cy) = m2p.GetCenter();
-                        _m1BaseX = m1cx; _m1BaseY = m1cy;
-                        _m2BaseX = m2cx; _m2BaseY = m2cy;
-                        _mastersSeededForImage = true;
-
-                        // Optional: concise trace
-                        InspLog($"[Seed-M] New image: M1_base=({m1cx:F3},{m1cy:F3}) M2_base=({m2cx:F3},{m2cy:F3}) key='{key}'");
-                    }
-                    else
-                    {
-                        InspLog("[Seed-M] WARNING: Cannot seed masters baseline (missing Master1Pattern/Master2Pattern).");
-                    }
-
                     _lastAccM1X = _lastAccM1Y = _lastAccM2X = _lastAccM2Y = double.NaN;
                     InspLog("[Analyze] Reset last-accepted M1/M2 for new image.");
                 }
                 else
                 {
                     InspLog($"[Seed-M] Same image key='{key}', keep current masters baseline.");
+                }
+
+                // Seed masters BASE pivots once per image using true geometric centers
+                if (!_mastersSeededForImage && m1p != null && m2p != null)
+                {
+                    // GetCenter() must be shape-aware: Rectangle -> (X,Y), Circle/Annulus -> (CX,CY)
+                    var (m1cx, m1cy) = m1p.GetCenter();
+                    var (m2cx, m2cy) = m2p.GetCenter();
+
+                    _m1BaseX = m1cx; _m1BaseY = m1cy;
+                    _m2BaseX = m2cx; _m2BaseY = m2cy;
+                    _mastersSeededForImage = true;
+
+                    InspLog($"[Seed-M] New image: M1_base=({m1cx:F3},{m1cy:F3}) M2_base=({m2cx:F3},{m2cy:F3})");
+                }
+
+                if (!_mastersSeededForImage)
+                {
+                    InspLog("[Seed-M] WARNING: Cannot seed masters baseline (missing Master1Pattern/Master2Pattern).");
                 }
             }
 
@@ -4188,22 +4190,6 @@ namespace BrakeDiscInspector_GUI_ROI
             RoiModel? __baseM2S = _layout?.Master2Search ?.Clone();
             var __baseHeat = _lastHeatmapRoi?.Clone();
 
-            if (!_mastersSeededForImage)
-            {
-                var m1p = _layout?.Master1Pattern;
-                var m2p = _layout?.Master2Pattern;
-                if (m1p != null && m2p != null)
-                {
-                    // Use shape-aware centers so rectangular patterns don't yield (0,0)
-                    var (m1cx, m1cy) = m1p.GetCenter();
-                    var (m2cx, m2cy) = m2p.GetCenter();
-                    _m1BaseX = m1cx; _m1BaseY = m1cy;
-                    _m2BaseX = m2cx; _m2BaseY = m2cy;
-                    _mastersSeededForImage = true;
-                    InspLog($"[Analyze] DEFENSIVE seed of masters baseline (unexpected). M1=({m1cx:F3},{m1cy:F3}) M2=({m2cx:F3},{m2cy:F3})");
-                }
-            }
-
             double m1NewX = master1.X, m1NewY = master1.Y;
             double m2NewX = master2.X, m2NewY = master2.Y;
             var m1_new = new System.Windows.Point(m1NewX, m1NewY);
@@ -4250,6 +4236,11 @@ namespace BrakeDiscInspector_GUI_ROI
                 double angOldRad = Math.Atan2(dyOld, dxOld);
                 double angNewRad = Math.Atan2(dyNew, dxNew);
                 angDelta = angNewRad - angOldRad;
+
+                // Normalize angle delta to [-180°, +180°)
+                double deg = angDelta * 180.0 / Math.PI;
+                deg = (deg + 540.0) % 360.0 - 180.0;
+                angDelta = deg * Math.PI / 180.0;
 
                 InspLog($"[Transform] BASE→NEW: M1_base=({m1OldX:F3},{m1OldY:F3}) → M1_new=({m1NewX:F3},{m1NewY:F3}); " +
                         $"M2_base=({m2OldX:F3},{m2OldY:F3}) → M2_new=({m2NewX:F3},{m2NewY:F3}); angΔ={angDelta * 180 / Math.PI:F3}°, effScale={effectiveScale:F6}");
@@ -4330,6 +4321,9 @@ namespace BrakeDiscInspector_GUI_ROI
 
                     if (_lastHeatmapRoi != null && __baseHeat != null)
                         ApplyRoiTransform(_lastHeatmapRoi, __baseHeat, m1OldX, m1OldY, m1NewX, m1NewY, effectiveScale, angDelta);
+
+                    if (_layout?.Master1Pattern != null) SetRoiCenterImg(_layout.Master1Pattern, m1_new.X, m1_new.Y);
+                    if (_layout?.Master2Pattern != null) SetRoiCenterImg(_layout.Master2Pattern, m2_new.X, m2_new.Y);
 
                     try { ScheduleSyncOverlay(true); }
                     catch
@@ -6016,13 +6010,11 @@ namespace BrakeDiscInspector_GUI_ROI
             System.Diagnostics.Debug.WriteLine(message);
         }
 
-        private void SetRoiCenterImg(RoiModel roi, double cxImg, double cyImg)
+        private void SetRoiCenterImg(RoiModel r, double cx, double cy)
         {
-            // Update in IMAGE space; canvas mapping is handled by current Transform
-            roi.CX = cxImg;
-            roi.CY = cyImg;
-            roi.Left = cxImg - (roi.Width  * 0.5);
-            roi.Top  = cyImg - (roi.Height * 0.5);
+            r.CX = cx; r.CY = cy;            // keep CX/CY coherent
+            r.Left = cx - r.Width * 0.5;
+            r.Top  = cy - r.Height * 0.5;
         }
 
         private void LogDeltaToCross(string label, double roiCxImg, double roiCyImg, double crossCxImg, double crossCyImg)
