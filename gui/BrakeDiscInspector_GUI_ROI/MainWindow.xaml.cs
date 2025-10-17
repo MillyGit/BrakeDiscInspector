@@ -1308,10 +1308,15 @@ namespace BrakeDiscInspector_GUI_ROI
                     var m2p = _layout?.Master2Pattern;
                     if (m1p != null && m2p != null)
                     {
-                        _m1BaseX = m1p.CX; _m1BaseY = m1p.CY;
-                        _m2BaseX = m2p.CX; _m2BaseY = m2p.CY;
+                        // Use shape-aware centers so rectangular patterns don't yield (0,0)
+                        var (m1cx, m1cy) = m1p.GetCenter();
+                        var (m2cx, m2cy) = m2p.GetCenter();
+                        _m1BaseX = m1cx; _m1BaseY = m1cy;
+                        _m2BaseX = m2cx; _m2BaseY = m2cy;
                         _mastersSeededForImage = true;
-                        InspLog($"[Seed-M] New image: seed M1_base=({_m1BaseX:F3},{_m1BaseY:F3}) M2_base=({_m2BaseX:F3},{_m2BaseY:F3}) key='{key}'");
+
+                        // Optional: concise trace
+                        InspLog($"[Seed-M] New image: M1_base=({m1cx:F3},{m1cy:F3}) M2_base=({m2cx:F3},{m2cy:F3}) key='{key}'");
                     }
                     else
                     {
@@ -4050,13 +4055,26 @@ namespace BrakeDiscInspector_GUI_ROI
             InspLog($"[Seed] Fixed baseline SEEDED (key='{seedKey}') from: {FInsp(_inspectionBaselineFixed)}");
         }
 
-        // Return a robust center for any RoiModel (prefer CX/CY; fallback to Left/Top/Width/Height)
+        // Return a robust center for any RoiModel (prefer shape-aware center)
         private static (double cx, double cy) CenterOf(RoiModel r)
         {
-            if (r == null) return (0, 0);
-            // Prefer explicit center if available
-            if (!double.IsNaN(r.CX) && !double.IsNaN(r.CY)) return (r.CX, r.CY);
-            return (r.Left + r.Width * 0.5, r.Top + r.Height * 0.5);
+            if (r == null)
+                return (0, 0);
+
+            switch (r.Shape)
+            {
+                case RoiShape.Rectangle:
+                    return (r.X, r.Y);
+                case RoiShape.Circle:
+                case RoiShape.Annulus:
+                    if (!double.IsNaN(r.CX) && !double.IsNaN(r.CY))
+                        return (r.CX, r.CY);
+                    return (r.X, r.Y);
+                default:
+                    if (!double.IsNaN(r.CX) && !double.IsNaN(r.CY))
+                        return (r.CX, r.CY);
+                    return (r.X, r.Y);
+            }
         }
 
         // Apply translation/rotation/scale to a target ROI using a baseline ROI and an old->new pivot
@@ -4176,10 +4194,13 @@ namespace BrakeDiscInspector_GUI_ROI
                 var m2p = _layout?.Master2Pattern;
                 if (m1p != null && m2p != null)
                 {
-                    _m1BaseX = m1p.CX; _m1BaseY = m1p.CY;
-                    _m2BaseX = m2p.CX; _m2BaseY = m2p.CY;
+                    // Use shape-aware centers so rectangular patterns don't yield (0,0)
+                    var (m1cx, m1cy) = m1p.GetCenter();
+                    var (m2cx, m2cy) = m2p.GetCenter();
+                    _m1BaseX = m1cx; _m1BaseY = m1cy;
+                    _m2BaseX = m2cx; _m2BaseY = m2cy;
                     _mastersSeededForImage = true;
-                    InspLog("[Analyze] DEFENSIVE seed of masters baseline (unexpected).");
+                    InspLog($"[Analyze] DEFENSIVE seed of masters baseline (unexpected). M1=({m1cx:F3},{m1cy:F3}) M2=({m2cx:F3},{m2cy:F3})");
                 }
             }
 
