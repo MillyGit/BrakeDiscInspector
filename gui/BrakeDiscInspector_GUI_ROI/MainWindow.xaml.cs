@@ -43,6 +43,7 @@ using RoiShapeType = BrakeDiscInspector_GUI_ROI.RoiShape;
 // --- BEGIN: UI/OCV type aliases ---
 using SWPoint = System.Windows.Point;
 using SWRect = System.Windows.Rect;
+using SWVector = System.Windows.Vector;
 using CvPoint = OpenCvSharp.Point;
 using CvRect = OpenCvSharp.Rect;
 // --- END: UI/OCV type aliases ---
@@ -103,6 +104,181 @@ namespace BrakeDiscInspector_GUI_ROI
         private const double ANALYZE_ANG_TOL_DEG = 0.5;   // <=0.5° considered the same
 
         private bool _lockAnalyzeScale = true;                  // Size lock already in use; keep it true
+
+        // ============================
+        // Global switches / options
+        // ============================
+
+        // Respect "scale lock" by default. If you want to allow scaling of the Inspection ROI
+        // *even when* the lock is ON, set this to true at runtime (e.g., via a checkbox).
+        private bool _allowInspectionScaleOverride = false;
+
+        // Freeze Master*Search movement on Analyze Master
+        private const bool FREEZE_MASTER_SEARCH_ON_ANALYZE = true;
+
+        // ============================
+        // Logging helpers (safe everywhere)
+        // ============================
+        [System.Diagnostics.Conditional("DEBUG")]
+        private void Dbg(string msg)
+        {
+            System.Diagnostics.Debug.WriteLine(msg);
+        }
+
+        private double NormalizeAngleRad(double ang)
+        {
+            // Normalize to [-pi, pi)
+            ang = (ang + Math.PI) % (2.0 * Math.PI);
+            if (ang < 0) ang += 2.0 * Math.PI;
+            return ang - Math.PI;
+        }
+
+        private SWVector Normalize(SWVector v)
+        {
+            double len = Math.Sqrt(v.X * v.X + v.Y * v.Y);
+            if (len < 1e-12) return new SWVector(0, 0);
+            return new SWVector(v.X / len, v.Y / len);
+        }
+
+        // True geometric center by shape; safe even if RoiModel lacks a GetCenter() helper.
+        private (double cx, double cy) GetCenterShapeAware(RoiModel r)
+        {
+            switch (r.Shape)
+            {
+                case RoiShape.Rectangle:
+                    return (r.X, r.Y);   // X,Y used as rectangle center in this project
+                case RoiShape.Circle:
+                case RoiShape.Annulus:
+                    // CX/CY store circle/annulus center
+                    return (r.CX, r.CY);
+                default:
+                    // Fallback: prefer CX/CY if set; else X/Y
+                    if (!double.IsNaN(r.CX) && !double.IsNaN(r.CY)) return (r.CX, r.CY);
+                    return (r.X, r.Y);
+            }
+        }
+
+        // Set center in IMAGE space; updates CX/CY and Left/Top
+        private void SetRoiCenterImg(RoiModel r, double cx, double cy)
+        {
+            r.CX = cx; r.CY = cy;
+            r.Left = cx - r.Width * 0.5;
+            r.Top  = cy - r.Height * 0.5;
+        }
+
+        // Place a label tangent to a circle/annulus at angle thetaDeg (IMAGE -> CANVAS)
+        private void PlaceLabelOnCircle(FrameworkElement label, RoiModel circle, double thetaDeg)
+        {
+            double theta = thetaDeg * Math.PI / 180.0;
+            double r = circle.Shape == RoiShape.Annulus
+                ? Math.Max(circle.R, circle.RInner)
+                : (circle.R > 0 ? circle.R : Math.Max(circle.Width, circle.Height) * 0.5);
+
+            double px = circle.CX + r * Math.Cos(theta);
+            double py = circle.CY + r * Math.Sin(theta);
+            var canvasPt = ImagePxToCanvasPt(px, py);
+
+            // Center the label and orient tangent
+            label.Measure(new System.Windows.Size(double.PositiveInfinity, double.PositiveInfinity));
+            Canvas.SetLeft(label, canvasPt.X - (label.DesiredSize.Width * 0.5));
+            Canvas.SetTop(label,  canvasPt.Y - (label.DesiredSize.Height * 0.5));
+            label.RenderTransform = new System.Windows.Media.RotateTransform(thetaDeg + 90.0,
+                label.DesiredSize.Width * 0.5, label.DesiredSize.Height * 0.5);
+        }
+
+        // Modern label factory: Border(black + neon-green) + TextBlock(white)
+        private FrameworkElement CreateStyledLabel(string text)
+        {
+            var tb = new System.Windows.Controls.TextBlock
+            {
+                Text = text,
+                Foreground = System.Windows.Media.Brushes.White,
+                FontFamily = new System.Windows.Media.FontFamily("Segoe UI"),
+                FontSize = 12,
+                FontWeight = System.Windows.FontWeights.SemiBold,
+                Margin = new System.Windows.Thickness(0),
+                Padding = new System.Windows.Thickness(6, 2, 6, 2)
+            };
+
+            var neon = (System.Windows.Media.SolidColorBrush)
+                (new System.Windows.Media.BrushConverter().ConvertFromString("#39FF14"));
+
+            var border = new System.Windows.Controls.Border
+            {
+                Child = tb,
+                Background = System.Windows.Media.Brushes.Black,
+                BorderBrush = neon,
+                BorderThickness = new System.Windows.Thickness(1.5),
+                CornerRadius = new System.Windows.CornerRadius(4)
+            };
+            System.Windows.Controls.Panel.SetZIndex(border, int.MaxValue);
+            return border;
+        }
+
+        // Reposition Inspection using local (s,t) frame w.r.t. M1->M2.
+        // Respects scale-lock by default; optional override via _allowInspectionScaleOverride.
+        private void RepositionInspectionUsingST(
+            RoiModel insp, RoiModel baselineInspection,
+            SWPoint m1_base, SWPoint m2_base,
+            SWPoint m1_new,  SWPoint m2_new,
+            bool lockAnalyzeScale)
+        {
+            // 1) Orthonormal frames
+            SWVector eB = Normalize(new SWVector(m2_base.X - m1_base.X, m2_base.Y - m1_base.Y));
+            if (eB.X == 0 && eB.Y == 0) return; // degenerate
+            SWVector nB = new SWVector(-eB.Y, eB.X);
+
+            SWVector eN = Normalize(new SWVector(m2_new.X - m1_new.X, m2_new.Y - m1_new.Y));
+            if (eN.X == 0 && eN.Y == 0) return; // degenerate
+            SWVector nN = new SWVector(-eN.Y, eN.X);
+
+            double lenB = Math.Sqrt(Math.Pow(m2_base.X - m1_base.X, 2) + Math.Pow(m2_base.Y - m1_base.Y, 2));
+            double lenN = Math.Sqrt(Math.Pow(m2_new.X  - m1_new.X,  2) + Math.Pow(m2_new.Y  - m1_new.Y,  2));
+            if (lenB < 1e-9) return;
+
+            // 2) Intrinsic coords of baseline center relative to M1_base
+            (double cx0, double cy0) = GetCenterShapeAware(baselineInspection);
+            SWVector v0 = new SWVector(cx0 - m1_base.X, cy0 - m1_base.Y);
+            double s = v0.X * eB.X + v0.Y * eB.Y;
+            double t = v0.X * nB.X + v0.Y * nB.Y;
+
+            // 3) Scale factor (lock respected by default; override available)
+            bool useScale = (!lockAnalyzeScale) || _allowInspectionScaleOverride;
+            double k = useScale ? (lenN / lenB) : 1.0;
+
+            // 4) New center using new frame
+            SWPoint cN = new SWPoint(
+                m1_new.X + k * (s * eN.X + t * nN.X),
+                m1_new.Y + k * (s * eN.Y + t * nN.Y)
+            );
+            SetRoiCenterImg(insp, cN.X, cN.Y);
+
+            // 5) Angle for rectangles (Δθ normalized)
+            double angB = Math.Atan2(eB.Y, eB.X);
+            double angN = Math.Atan2(eN.Y, eN.X);
+            double dAng = NormalizeAngleRad(angN - angB);
+            if (insp.Shape == RoiShape.Rectangle)
+                insp.AngleDeg = baselineInspection.AngleDeg + (dAng * 180.0 / Math.PI);
+
+            // 6) Optional scaling of dimensions (if allowed)
+            if (useScale)
+            {
+                switch (insp.Shape)
+                {
+                    case RoiShape.Rectangle:
+                        insp.Width  = baselineInspection.Width  * k;
+                        insp.Height = baselineInspection.Height * k;
+                        break;
+                    case RoiShape.Circle:
+                        insp.R = baselineInspection.R * k;
+                        break;
+                    case RoiShape.Annulus:
+                        insp.R      = baselineInspection.R      * k;
+                        insp.RInner = baselineInspection.RInner * k;
+                        break;
+                }
+            }
+        }
 
         private static readonly string InspAlignLogPath = System.IO.Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
@@ -179,7 +355,7 @@ namespace BrakeDiscInspector_GUI_ROI
         private bool UseAnnulus = false;
 
         private readonly Dictionary<string, Shape> _roiShapesById = new();
-        private readonly Dictionary<Shape, TextBlock> _roiLabels = new();
+        private readonly Dictionary<Shape, FrameworkElement> _roiLabels = new();
         private readonly Dictionary<RoiRole, CheckBox> _roiVisibilityCheckboxes = new();
         private readonly Dictionary<RoiRole, bool> _roiCheckboxHasRoi = new();
         private bool _roiVisibilityRefreshPending;
@@ -498,13 +674,13 @@ namespace BrakeDiscInspector_GUI_ROI
                         break;
                     }
 
-                    case System.Windows.Controls.TextBlock tb:
+                    case FrameworkElement fe when fe.Name != null && fe.Name.StartsWith("roiLabel_"):
                     {
                         // Las etiquetas de ROI no usan Tag; se nombran como "roiLabel_<texto_sin_espacios>"
                         // Para "Master 2" el Name es "roiLabel_Master_2"
-                        string name = tb.Name ?? string.Empty;
+                        string name = fe.Name;
                         bool keep = name.StartsWith("roiLabel_Master_2", System.StringComparison.OrdinalIgnoreCase);
-                        if (!keep) { toRemove.Add(tb); removed++; } else { kept++; }
+                        if (!keep) { toRemove.Add(fe); removed++; } else { kept++; }
                         break;
                     }
 
@@ -568,7 +744,9 @@ namespace BrakeDiscInspector_GUI_ROI
             else if (tag is RoiModel m) legendOrLabel = m.Label;
 
             string labelName = "roiLabel_" + ((legendOrLabel ?? string.Empty).Replace(" ", "_"));
-            var label = CanvasROI.Children.OfType<TextBlock>().FirstOrDefault(tb => tb.Name == labelName);
+            var label = CanvasROI.Children
+                .OfType<FrameworkElement>()
+                .FirstOrDefault(fe => fe.Name == labelName);
             if (label == null) return;
 
             // If Left/Top are not ready yet, defer positioning to next layout pass
@@ -580,11 +758,40 @@ namespace BrakeDiscInspector_GUI_ROI
                 return;
             }
 
-            // Measure and place label just above ROI bbox (4 px gap)
+            RoiModel? roi = null;
+            if (tag is RoiModel modelTag)
+                roi = modelTag;
+            else if (tag is ROI legacy && legacy is not null)
+            {
+                // legacy ROI lacks shape info; best-effort fallback using rectangle bbox
+                roi = new RoiModel
+                {
+                    Shape = RoiShape.Rectangle,
+                    Left = Canvas.GetLeft(shape),
+                    Top = Canvas.GetTop(shape),
+                    Width = shape.Width,
+                    Height = shape.Height
+                };
+            }
+
+            if (roi == null)
+                return;
+
             label.Measure(new System.Windows.Size(double.PositiveInfinity, double.PositiveInfinity));
-            double textH = label.DesiredSize.Height;
-            Canvas.SetLeft(label, left);
-            Canvas.SetTop(label,  top - (textH + 4));
+
+            switch (roi.Shape)
+            {
+                case RoiShape.Circle:
+                case RoiShape.Annulus:
+                    var roiImg = CanvasToImage(roi);
+                    PlaceLabelOnCircle(label, roiImg, 30.0);
+                    break;
+                default:
+                    Canvas.SetLeft(label, roi.Left + 6);
+                    Canvas.SetTop(label,  roi.Top - 6 - label.DesiredSize.Height);
+                    label.RenderTransform = null;
+                    break;
+            }
         }
 
         private void EnsureRoiLabel(Shape shape, object roi)
@@ -604,20 +811,31 @@ namespace BrakeDiscInspector_GUI_ROI
                 _lbl = "ROI";
 
             string labelName = "roiLabel_" + _lbl.Replace(" ", "_");
-            var existing = CanvasROI.Children.OfType<TextBlock>().FirstOrDefault(tb => tb.Name == labelName);
-            var label = existing ?? new TextBlock { Name = labelName };
+            var existing = CanvasROI.Children
+                .OfType<FrameworkElement>()
+                .FirstOrDefault(fe => fe.Name == labelName);
+            FrameworkElement label;
 
-            label.Text = _lbl;
+            if (existing == null)
+            {
+                label = CreateStyledLabel(_lbl);
+                label.Name = labelName;
+                label.IsHitTestVisible = false;
+            }
+            else
+            {
+                label = existing;
+                label.IsHitTestVisible = false;
+                if (label is System.Windows.Controls.Border border && border.Child is System.Windows.Controls.TextBlock tb)
+                {
+                    tb.Text = _lbl;
+                }
+            }
+
             EnsureRoiCheckbox(_lbl);
 
             if (existing == null)
             {
-                label.FontFamily = new FontFamily("Segoe UI");
-                label.FontSize = 12;
-                label.FontWeight = FontWeights.SemiBold;
-                label.IsHitTestVisible = false;
-                label.Foreground = Brushes.White;
-
                 CanvasROI.Children.Add(label);
                 Panel.SetZIndex(label, int.MaxValue);
             }
@@ -1314,18 +1532,17 @@ namespace BrakeDiscInspector_GUI_ROI
                     InspLog($"[Seed-M] Same image key='{key}', keep current masters baseline.");
                 }
 
-                // Seed masters BASE pivots once per image using true geometric centers
-                if (!_mastersSeededForImage && m1p != null && m2p != null)
+                // Seed masters BASE pivots once per image using true geometric centers (shape-aware)
+                if (!_mastersSeededForImage && _layout?.Master1Pattern != null && _layout?.Master2Pattern != null)
                 {
-                    // GetCenter() must be shape-aware: Rectangle -> (X,Y), Circle/Annulus -> (CX,CY)
-                    var (m1cx, m1cy) = m1p.GetCenter();
-                    var (m2cx, m2cy) = m2p.GetCenter();
+                    var (m1cx, m1cy) = GetCenterShapeAware(_layout.Master1Pattern);
+                    var (m2cx, m2cy) = GetCenterShapeAware(_layout.Master2Pattern);
 
                     _m1BaseX = m1cx; _m1BaseY = m1cy;
                     _m2BaseX = m2cx; _m2BaseY = m2cy;
                     _mastersSeededForImage = true;
 
-                    InspLog($"[Seed-M] New image: M1_base=({m1cx:F3},{m1cy:F3}) M2_base=({m2cx:F3},{m2cy:F3})");
+                    Dbg($"[Seed-M] New image: M1_base=({m1cx:F3},{m1cy:F3}) M2_base=({m2cx:F3},{m2cy:F3})");
                 }
 
                 if (!_mastersSeededForImage)
@@ -1410,7 +1627,10 @@ namespace BrakeDiscInspector_GUI_ROI
             {
                 var shapes = CanvasROI.Children.OfType<System.Windows.Shapes.Shape>().ToList();
                 foreach (var s in shapes) CanvasROI.Children.Remove(s);
-                var labels = CanvasROI.Children.OfType<System.Windows.Controls.TextBlock>().ToList();
+                var labels = CanvasROI.Children
+                    .OfType<FrameworkElement>()
+                    .Where(fe => fe.Name != null && fe.Name.StartsWith("roiLabel_"))
+                    .ToList();
                 foreach (var l in labels) CanvasROI.Children.Remove(l);
             }
             catch { /* ignore */ }
@@ -1489,8 +1709,9 @@ namespace BrakeDiscInspector_GUI_ROI
                     return "roiLabel_" + lbl.Replace(" ", "_");
                 }));
 
-                var toRemove = CanvasROI.Children.OfType<TextBlock>()
-                    .Where(tb => tb.Name.StartsWith("roiLabel_") && !validKeys.Contains(tb.Name))
+                var toRemove = CanvasROI.Children
+                    .OfType<FrameworkElement>()
+                    .Where(fe => fe.Name.StartsWith("roiLabel_") && !validKeys.Contains(fe.Name))
                     .ToList();
                 foreach (var tb in toRemove) CanvasROI.Children.Remove(tb);
             }
@@ -1755,19 +1976,28 @@ namespace BrakeDiscInspector_GUI_ROI
 
                 // Use unique TextBlock name derived from label text
                 string _labelName = "roiLabel_" + (_lbl ?? string.Empty).Replace(" ", "_");
-                var _existing = CanvasROI.Children.OfType<TextBlock>().FirstOrDefault(tb => tb.Name == _labelName);
-                var _label = _existing ?? new TextBlock { Name = _labelName };
-                _label.Text = string.IsNullOrWhiteSpace(_lbl) ? "ROI" : _lbl;
-                _label.FontFamily = new FontFamily("Segoe UI");
-                _label.FontSize = 12;
-                _label.FontWeight = FontWeights.SemiBold;
-                _label.Foreground = Brushes.White;
-                _label.IsHitTestVisible = false;
+                var _existing = CanvasROI.Children
+                    .OfType<FrameworkElement>()
+                    .FirstOrDefault(fe => fe.Name == _labelName);
+                FrameworkElement _label;
+                string finalText = string.IsNullOrWhiteSpace(_lbl) ? "ROI" : _lbl;
 
                 if (_existing == null)
                 {
+                    _label = CreateStyledLabel(finalText);
+                    _label.Name = _labelName;
+                    _label.IsHitTestVisible = false;
                     CanvasROI.Children.Add(_label);
                     Panel.SetZIndex(_label, int.MaxValue);
+                }
+                else
+                {
+                    _label = _existing;
+                    _label.IsHitTestVisible = false;
+                    if (_label is System.Windows.Controls.Border border && border.Child is System.Windows.Controls.TextBlock tb)
+                    {
+                        tb.Text = finalText;
+                    }
                 }
 
                 // Place label next to the ROI shape (may defer via Dispatcher if geometry not ready)
@@ -2757,26 +2987,26 @@ namespace BrakeDiscInspector_GUI_ROI
                 }
 
                 string labelName = "roiLabel_" + lbl.Replace(" ", "_");
-                var tb = CanvasROI.Children.OfType<TextBlock>()
+                var existingLabel = CanvasROI.Children
+                    .OfType<FrameworkElement>()
                     .FirstOrDefault(t => t.Name == labelName);
-                if (tb == null)
+                FrameworkElement label;
+                if (existingLabel == null)
                 {
-                    tb = new TextBlock
-                    {
-                        Name = labelName,
-                        Text = lbl,
-                        FontFamily = new FontFamily("Segoe UI"),
-                        FontSize = 12,
-                        FontWeight = FontWeights.SemiBold,
-                        Foreground = Brushes.White,
-                        IsHitTestVisible = false
-                    };
-                    CanvasROI.Children.Add(tb);
-                    Panel.SetZIndex(tb, int.MaxValue);
+                    label = CreateStyledLabel(lbl);
+                    label.Name = labelName;
+                    label.IsHitTestVisible = false;
+                    CanvasROI.Children.Add(label);
+                    Panel.SetZIndex(label, int.MaxValue);
                 }
                 else
                 {
-                    tb.Text = lbl;
+                    label = existingLabel;
+                    label.IsHitTestVisible = false;
+                    if (label is System.Windows.Controls.Border border && border.Child is System.Windows.Controls.TextBlock tbChild)
+                    {
+                        tbChild.Text = lbl;
+                    }
                 }
 
                 _previewShape.Tag = previewModel;
@@ -4057,28 +4287,6 @@ namespace BrakeDiscInspector_GUI_ROI
             InspLog($"[Seed] Fixed baseline SEEDED (key='{seedKey}') from: {FInsp(_inspectionBaselineFixed)}");
         }
 
-        // Return a robust center for any RoiModel (prefer shape-aware center)
-        private static (double cx, double cy) CenterOf(RoiModel r)
-        {
-            if (r == null)
-                return (0, 0);
-
-            switch (r.Shape)
-            {
-                case RoiShape.Rectangle:
-                    return (r.X, r.Y);
-                case RoiShape.Circle:
-                case RoiShape.Annulus:
-                    if (!double.IsNaN(r.CX) && !double.IsNaN(r.CY))
-                        return (r.CX, r.CY);
-                    return (r.X, r.Y);
-                default:
-                    if (!double.IsNaN(r.CX) && !double.IsNaN(r.CY))
-                        return (r.CX, r.CY);
-                    return (r.X, r.Y);
-            }
-        }
-
         // Apply translation/rotation/scale to a target ROI using a baseline ROI and an old->new pivot
         // angleDelta in RADIANS; pivotOld/new in IMAGE coordinates
         private static void ApplyRoiTransform(RoiModel target, RoiModel baseline,
@@ -4089,9 +4297,9 @@ namespace BrakeDiscInspector_GUI_ROI
             if (target == null || baseline == null) return;
 
             // Baseline center (image space)
-            var cBase = CenterOf(baseline);
-            double relX = cBase.cx - pivotOldX;
-            double relY = cBase.cy - pivotOldY;
+            var (baseCx, baseCy) = GetCenterShapeAware(baseline);
+            double relX = baseCx - pivotOldX;
+            double relY = baseCy - pivotOldY;
 
             double cos = Math.Cos(angleDeltaRad), sin = Math.Sin(angleDeltaRad);
             double relXr = scale * (cos * relX - sin * relY);
@@ -4119,12 +4327,9 @@ namespace BrakeDiscInspector_GUI_ROI
             target.RInner = baseline.RInner * scale;
 
             // Apply angle rotation for rectangular ROIs
-            if (baseline.Shape == RoiShape.Rectangle)
-            {
-                double angleBaseDeg = baseline.AngleDeg;
-                double angleDeltaDeg = angleDeltaRad * 180.0 / Math.PI;
-                target.AngleDeg = angleBaseDeg + angleDeltaDeg;
-            }
+            double dAngDeg = (angleDeltaRad * 180.0 / Math.PI);
+            if (target.Shape == RoiShape.Rectangle)
+                target.AngleDeg = baseline.AngleDeg + dAngDeg;
         }
 
         private void MoveInspectionTo(RoiModel insp, SWPoint master1, SWPoint master2)
@@ -4192,8 +4397,8 @@ namespace BrakeDiscInspector_GUI_ROI
 
             double m1NewX = master1.X, m1NewY = master1.Y;
             double m2NewX = master2.X, m2NewY = master2.Y;
-            var m1_new = new System.Windows.Point(m1NewX, m1NewY);
-            var m2_new = new System.Windows.Point(m2NewX, m2NewY);
+            var m1_new = new SWPoint(m1NewX, m1NewY);
+            var m2_new = new SWPoint(m2NewX, m2NewY);
 
             bool haveLast = !double.IsNaN(_lastAccM1X) && !double.IsNaN(_lastAccM2X);
             if (haveLast)
@@ -4214,10 +4419,14 @@ namespace BrakeDiscInspector_GUI_ROI
 
             double m1OldX = _m1BaseX, m1OldY = _m1BaseY;
             double m2OldX = _m2BaseX, m2OldY = _m2BaseY;
+            var m1_base = new SWPoint(_m1BaseX, _m1BaseY);
+            var m2_base = new SWPoint(_m2BaseX, _m2BaseY);
             double scale = 1.0;
             double effectiveScale = 1.0;
             double angDelta = 0.0;
             bool __canTransform = baselineInspection != null && _mastersSeededForImage;
+            SWVector eB = new SWVector(0, 0);
+            SWVector eN = new SWVector(0, 0);
 
             if (__canTransform)
             {
@@ -4237,6 +4446,9 @@ namespace BrakeDiscInspector_GUI_ROI
                 double angNewRad = Math.Atan2(dyNew, dxNew);
                 angDelta = angNewRad - angOldRad;
 
+                eB = Normalize(new SWVector(dxOld, dyOld));
+                eN = Normalize(new SWVector(dxNew, dyNew));
+
                 // Normalize angle delta to [-180°, +180°)
                 double deg = angDelta * 180.0 / Math.PI;
                 deg = (deg + 540.0) % 360.0 - 180.0;
@@ -4250,24 +4462,7 @@ namespace BrakeDiscInspector_GUI_ROI
             {
                 InspLog($"[Transform] INSPECT BEFORE: {FInsp(insp)}");
                 InspLog($"[Transform] pivotOld=({m1OldX:F3},{m1OldY:F3}), pivotNew=({m1NewX:F3},{m1NewY:F3}), effScale={effectiveScale:F6}, angΔ={angDelta*180/Math.PI:F3}°");
-
-                double __inspW0Lock = __inspW0;
-                double __inspH0Lock = __inspH0;
-                double __inspR0Lock = __inspR0;
-                double __inspRin0Lock = __inspRin0;
-
-                ApplyRoiTransform(insp, baselineInspection, m1OldX, m1OldY, m1NewX, m1NewY, effectiveScale, angDelta);
-
-                if (_lockAnalyzeScale && insp != null)
-                {
-                    double cx = insp.CX, cy = insp.CY;
-                    insp.Width  = __inspW0Lock;
-                    insp.Height = __inspH0Lock;
-                    insp.R      = __inspR0Lock;
-                    insp.RInner = __inspRin0Lock;
-                    insp.Left = cx - (__inspW0Lock * 0.5);
-                    insp.Top  = cy - (__inspH0Lock * 0.5);
-                }
+                RepositionInspectionUsingST(insp, baselineInspection, m1_base, m2_base, m1_new, m2_new, _lockAnalyzeScale);
 
                 InspLog($"[Transform] INSPECT AFTER : {FInsp(insp)}");
                 double dCx = insp.CX - baselineInspection.CX;
@@ -4314,18 +4509,17 @@ namespace BrakeDiscInspector_GUI_ROI
                         ApplyRoiTransform(_layout.Master2Pattern, __baseM2P, m1OldX, m1OldY, m1NewX, m1NewY, effectiveScale, angDelta);
 
                     // Congelar los ROIs Master Search durante Analyze (no desplazar ni rotar)
-                    const bool freezeMasterSearchOnAnalyze = true;
-                    if (!freezeMasterSearchOnAnalyze)
+                    if (!FREEZE_MASTER_SEARCH_ON_ANALYZE)
                     {
                         if (_layout.Master1Search != null && __baseM1S != null)
                             ApplyRoiTransform(_layout.Master1Search,  __baseM1S, m1OldX, m1OldY, m1NewX, m1NewY, effectiveScale, angDelta);
-                    
+
                         if (_layout.Master2Search != null && __baseM2S != null)
                             ApplyRoiTransform(_layout.Master2Search,  __baseM2S, m1OldX, m1OldY, m1NewX, m1NewY, effectiveScale, angDelta);
                     }
                     else
                     {
-                        InspLog("[Analyze] Master Search ROIs frozen: no transform applied");
+                        Dbg("[Analyze] Master Search ROIs frozen: no transform applied");
                     }
 
 
@@ -4334,6 +4528,19 @@ namespace BrakeDiscInspector_GUI_ROI
 
                     if (_layout?.Master1Pattern != null) SetRoiCenterImg(_layout.Master1Pattern, m1_new.X, m1_new.Y);
                     if (_layout?.Master2Pattern != null) SetRoiCenterImg(_layout.Master2Pattern, m2_new.X, m2_new.Y);
+
+                    double dAngDeg = 0.0;
+                    if (__canTransform)
+                    {
+                        double angBVec = Math.Atan2(eB.Y, eB.X);
+                        double angNVec = Math.Atan2(eN.Y, eN.X);
+                        dAngDeg = (angNVec - angBVec) * 180.0 / Math.PI;
+                        dAngDeg = ((dAngDeg + 540.0) % 360.0) - 180.0;
+                    }
+                    if (_layout?.Master1Pattern != null && __baseM1P != null && _layout.Master1Pattern.Shape == RoiShape.Rectangle)
+                        _layout.Master1Pattern.AngleDeg = __baseM1P.AngleDeg + dAngDeg;
+                    if (_layout?.Master2Pattern != null && __baseM2P != null && _layout.Master2Pattern.Shape == RoiShape.Rectangle)
+                        _layout.Master2Pattern.AngleDeg = __baseM2P.AngleDeg + dAngDeg;
 
                     try { ScheduleSyncOverlay(true); }
                     catch
@@ -6018,13 +6225,6 @@ namespace BrakeDiscInspector_GUI_ROI
         private void LogInfo(string message)
         {
             System.Diagnostics.Debug.WriteLine(message);
-        }
-
-        private void SetRoiCenterImg(RoiModel r, double cx, double cy)
-        {
-            r.CX = cx; r.CY = cy;            // keep CX/CY coherent
-            r.Left = cx - r.Width * 0.5;
-            r.Top  = cy - r.Height * 0.5;
         }
 
         private void LogDeltaToCross(string label, double roiCxImg, double roiCyImg, double crossCxImg, double crossCyImg)
