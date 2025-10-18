@@ -4313,11 +4313,21 @@ namespace BrakeDiscInspector_GUI_ROI
                     if (_layout.Master2Pattern != null && __baseM2P != null)
                         ApplyRoiTransform(_layout.Master2Pattern, __baseM2P, m1OldX, m1OldY, m1NewX, m1NewY, effectiveScale, angDelta);
 
-                    if (_layout.Master1Search != null && __baseM1S != null)
-                        ApplyRoiTransform(_layout.Master1Search,  __baseM1S, m1OldX, m1OldY, m1NewX, m1NewY, effectiveScale, angDelta);
+                    // Congelar los ROIs Master Search durante Analyze (no desplazar ni rotar)
+                    const bool freezeMasterSearchOnAnalyze = true;
+                    if (!freezeMasterSearchOnAnalyze)
+                    {
+                        if (_layout.Master1Search != null && __baseM1S != null)
+                            ApplyRoiTransform(_layout.Master1Search,  __baseM1S, m1OldX, m1OldY, m1NewX, m1NewY, effectiveScale, angDelta);
+                    
+                        if (_layout.Master2Search != null && __baseM2S != null)
+                            ApplyRoiTransform(_layout.Master2Search,  __baseM2S, m1OldX, m1OldY, m1NewX, m1NewY, effectiveScale, angDelta);
+                    }
+                    else
+                    {
+                        InspLog("[Analyze] Master Search ROIs frozen: no transform applied");
+                    }
 
-                    if (_layout.Master2Search != null && __baseM2S != null)
-                        ApplyRoiTransform(_layout.Master2Search,  __baseM2S, m1OldX, m1OldY, m1NewX, m1NewY, effectiveScale, angDelta);
 
                     if (_lastHeatmapRoi != null && __baseHeat != null)
                         ApplyRoiTransform(_lastHeatmapRoi, __baseHeat, m1OldX, m1OldY, m1NewX, m1NewY, effectiveScale, angDelta);
