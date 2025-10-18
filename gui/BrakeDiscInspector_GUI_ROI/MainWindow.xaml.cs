@@ -141,7 +141,7 @@ namespace BrakeDiscInspector_GUI_ROI
         }
 
         // True geometric center by shape; safe even if RoiModel lacks a GetCenter() helper.
-        private (double cx, double cy) GetCenterShapeAware(RoiModel r)
+        private static (double cx, double cy) GetCenterShapeAware(RoiModel r)
         {
             switch (r.Shape)
             {
@@ -159,7 +159,7 @@ namespace BrakeDiscInspector_GUI_ROI
         }
 
         // Set center in IMAGE space; updates CX/CY and Left/Top
-        private void SetRoiCenterImg(RoiModel r, double cx, double cy)
+        private static void SetRoiCenterImg(RoiModel r, double cx, double cy)
         {
             r.CX = cx; r.CY = cy;
             r.Left = cx - r.Width * 0.5;
