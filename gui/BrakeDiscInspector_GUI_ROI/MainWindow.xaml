@@ -25,7 +25,7 @@
           <StackPanel Margin="10">
             <Button x:Name="BtnLoadLayout" Content="Load Layout" Margin="0,0,0,8" Click="BtnLoadLayout_Click"/>
             <Button x:Name="BtnLoadModels" Content="Load Models" Margin="0,0,0,8"/>
-            <Button x:Name="BtnLoadImage" Content="Load Image" Click="BtnLoadImage_Click"/>
+            <Button x:Name="BtnLoadImage" Content="Cargar imagen" Click="BtnLoadImage_Click"/>
 
             <Separator Margin="0,12,0,12"/>
 
@@ -249,6 +249,27 @@
             </Grid>
           </Grid>
         </AdornerDecorator>
+      </Grid>
+      <!-- ===== HUD: bottom-right Heatmap slider (does not cover other buttons) ===== -->
+      <Grid x:Name="HudOverlay" Panel.ZIndex="1000" IsHitTestVisible="False">
+        <Border x:Name="HeatmapHUD"
+                HorizontalAlignment="Right"
+                VerticalAlignment="Bottom"
+                Margin="16"
+                Background="#CC000000"
+                CornerRadius="6"
+                Padding="8"
+                IsHitTestVisible="True">
+          <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+            <TextBlock Text="Heatmap"
+                       Foreground="#39FF14"
+                       FontFamily="Segoe UI" FontWeight="SemiBold" Margin="0,0,8,0"/>
+            <!-- Reuse your original binding or handler. Example binding: Value={Binding HeatmapOpacity, Mode=TwoWay} -->
+            <Slider x:Name="SldHeatmap"
+                    Width="160"
+                    Minimum="0" Maximum="1"/>
+          </StackPanel>
+        </Border>
       </Grid>
     </Grid>
   </Grid>
