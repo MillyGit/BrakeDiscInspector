@@ -70,6 +70,17 @@ namespace BrakeDiscInspector_GUI_ROI
         private WorkflowViewModel? _workflowViewModel;
         private double _heatmapOverlayOpacity = 0.6;
 
+        // Expose layout to XAML bindings (ItemsControl -> Layout.InspectionRois)
+        public MasterLayout Layout => _layout;
+
+        // Available model keys (stub: will be replaced by ModelRegistry keys)
+        public System.Collections.Generic.IReadOnlyList<string> AvailableModels { get; }
+            = new string[] { "default" };
+
+        // Available shapes (enum values)
+        public System.Collections.Generic.IReadOnlyList<RoiShape> AvailableShapes { get; }
+            = (RoiShape[])System.Enum.GetValues(typeof(RoiShape));
+
         // === ROI diagnostics ===
         private static readonly string RoiDiagLogPath =
             System.IO.Path.Combine(
@@ -1047,6 +1058,7 @@ namespace BrakeDiscInspector_GUI_ROI
         public MainWindow()
         {
             InitializeComponent();
+            if (this.DataContext == null) this.DataContext = this;
             this.SizeChanged += (s,e) =>
             {
                 try
@@ -1307,13 +1319,13 @@ namespace BrakeDiscInspector_GUI_ROI
 
             // Selección de tab acorde a estado
             if (_state == MasterState.DrawM1_Pattern || _state == MasterState.DrawM1_Search)
-                Tabs.SelectedItem = TabMaster1;
+                LeftTabs.SelectedItem = TabMaster1;
             else if (_state == MasterState.DrawM2_Pattern || _state == MasterState.DrawM2_Search)
-                Tabs.SelectedItem = TabMaster2;
+                LeftTabs.SelectedItem = TabMaster2;
             else if (_state == MasterState.DrawInspection)
-                Tabs.SelectedItem = TabInspection;
+                LeftTabs.SelectedItem = TabInspection;
             else
-                Tabs.SelectedItem = TabPresets;
+                LeftTabs.SelectedItem = TabPresets;
 
             if (_analysisViewActive && _state != MasterState.Ready)
             {
@@ -2860,9 +2872,9 @@ namespace BrakeDiscInspector_GUI_ROI
             }
 
             _analysisViewActive = true;
-            if (Tabs != null && TabPresets != null)
+            if (LeftTabs != null && TabPresets != null)
             {
-                Tabs.SelectedItem = TabPresets;
+                LeftTabs.SelectedItem = TabPresets;
             }
         }
 
