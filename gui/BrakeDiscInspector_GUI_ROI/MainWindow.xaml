@@ -249,7 +249,7 @@
         </AdornerDecorator>
       </Grid>
       <!-- ===== HUD: bottom-right Heatmap controls ===== -->
-      <Grid x:Name="HudOverlay" Panel.ZIndex="1000" IsHitTestVisible="False">
+      <Grid x:Name="HudOverlay" Panel.ZIndex="1000" IsHitTestVisible="True">
         <Border x:Name="HeatmapHUD"
                 HorizontalAlignment="Right"
                 VerticalAlignment="Bottom"
