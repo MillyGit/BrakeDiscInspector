@@ -5049,32 +5049,6 @@ namespace BrakeDiscInspector_GUI_ROI
             // 5) Lanzar análisis
             _ = AnalyzeMastersAsync();
         }
-
-
-
-        private async void BtnAnalyzeROI_Click(object sender, RoutedEventArgs e)
-        {
-            if (string.IsNullOrWhiteSpace(_currentImagePathWin)) { Snack("No hay imagen actual"); return; }
-            if (_layout.Inspection == null) { Snack("Falta ROI de Inspección"); return; }
-
-
-            var resp = await BackendAPI.InferAsync(_currentImagePathWin, _layout.Inspection, _preset, AppendLog);
-            if (!resp.ok || resp.result == null)
-            {
-                Snack(resp.error ?? "Error en Analyze");
-                return;
-            }
-
-            var result = resp.result;
-            bool pass = !result.threshold.HasValue || result.score <= result.threshold.Value;
-            string thrText = result.threshold.HasValue ? result.threshold.Value.ToString("0.###") : "n/a";
-            Snack(pass
-                ? $"Resultado OK (score={result.score:0.000}, thr={thrText})"
-                : $"Resultado NG (score={result.score:0.000}, thr={thrText})");
-        }
-
-
-
         // ====== Overlay persistente + Adorner ======
         private void OnRoiChanged(Shape shape, RoiModel roi)
         {
