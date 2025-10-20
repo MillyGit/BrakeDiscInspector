@@ -209,19 +209,20 @@ namespace BrakeDiscInspector_GUI_ROI
 
         private bool HasAllMastersAndInspectionsDefined()
         {
-            bool mastersReady =
-                _layout?.Master1Pattern != null && IsRoiSaved(_layout.Master1Pattern) &&
-                _layout?.Master1Search != null && IsRoiSaved(_layout.Master1Search) &&
-                _layout?.Master2Pattern != null && IsRoiSaved(_layout.Master2Pattern) &&
-                _layout?.Master2Search != null && IsRoiSaved(_layout.Master2Search);
-
-            if (!mastersReady)
+            if (_layout == null)
                 return false;
 
-            if (_layout?.Inspection != null && IsRoiSaved(_layout.Inspection))
-                return true;
+            if (!IsRoiSaved(_layout.Master1Pattern) || !IsRoiSaved(_layout.Master2Pattern))
+                return false;
 
-            return false;
+            if (!TryGetMasterInspection(1, out var master1Inspection) || !IsRoiSaved(master1Inspection))
+                return false;
+
+            if (!TryGetMasterInspection(2, out var master2Inspection) || !IsRoiSaved(master2Inspection))
+                return false;
+
+            var savedInspectionRois = CollectSavedInspectionRois();
+            return savedInspectionRois.Count > 0;
         }
 
         // Place a label tangent to a circle/annulus at angle thetaDeg (IMAGE -> CANVAS)
@@ -2961,16 +2962,59 @@ namespace BrakeDiscInspector_GUI_ROI
             };
         }
 
+        private IReadOnlyList<RoiModel> CollectSavedInspectionRois()
+        {
+            var results = new List<RoiModel>();
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+
+            void AddIfValid(RoiModel? roi)
+            {
+                if (roi == null)
+                    return;
+                if (!IsRoiSaved(roi))
+                    return;
+
+                var key = roi.Id;
+                if (string.IsNullOrEmpty(key))
+                    key = $"roi-{roi.GetHashCode():X}";
+
+                if (seen.Add(key))
+                    results.Add(roi);
+            }
+
+            if (_layout != null)
+            {
+                AddIfValid(_layout.Inspection);
+
+                // Include any additional inspection ROIs persisted on the layout
+                foreach (var prop in _layout.GetType().GetProperties(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance))
+                {
+                    if (!typeof(RoiModel).IsAssignableFrom(prop.PropertyType))
+                        continue;
+
+                    if (prop.GetValue(_layout) is RoiModel roi && roi.Role == RoiRole.Inspection)
+                        AddIfValid(roi);
+                }
+            }
+
+            if (_preset?.Rois != null)
+            {
+                foreach (var roi in _preset.Rois)
+                {
+                    if (roi?.Role == RoiRole.Inspection)
+                        AddIfValid(roi);
+                }
+            }
+
+            return results;
+        }
+
         private void UpdateRoiHud()
         {
             if (RoiHudStack == null || RoiHudOverlay == null)
                 return;
 
-            var savedInspectionRois = new List<(RoiModel roi, RoiRole role)>();
-            if (_layout?.Inspection != null && IsRoiSaved(_layout.Inspection))
-            {
-                savedInspectionRois.Add((_layout.Inspection, _layout.Inspection.Role));
-            }
+            var savedInspectionRois = CollectSavedInspectionRois();
 
             if (savedInspectionRois.Count == 0)
             {
@@ -2980,19 +3024,19 @@ namespace BrakeDiscInspector_GUI_ROI
             }
 
             RoiHudStack.Children.Clear();
-            foreach (var (roi, role) in savedInspectionRois)
+            foreach (var roi in savedInspectionRois)
             {
-                var item = CreateRoiHudItem(roi, role);
+                var item = CreateRoiHudItem(roi);
                 RoiHudStack.Children.Add(item);
             }
 
             RoiHudOverlay.Visibility = Visibility.Visible;
         }
 
-        private FrameworkElement CreateRoiHudItem(RoiModel roi, RoiRole role)
+        private FrameworkElement CreateRoiHudItem(RoiModel roi)
         {
             var labelText = ResolveRoiLabelText(roi) ?? roi.Label ?? "Inspection";
-            bool isVisible = IsRoiRoleVisible(role);
+            bool isVisible = IsRoiRoleVisible(roi.Role);
 
             var text = new TextBlock
             {
@@ -3026,13 +3070,13 @@ namespace BrakeDiscInspector_GUI_ROI
                 BorderThickness = new Thickness(1.5),
                 Margin = new Thickness(0, 0, 0, 6),
                 Child = stack,
-                Tag = role,
+                Tag = roi,
                 Cursor = Cursors.Hand
             };
 
             border.MouseLeftButtonUp += (s, e) =>
             {
-                ToggleRoiVisibility(role);
+                ToggleRoiVisibility(roi.Role);
                 e.Handled = true;
             };
 
@@ -6413,6 +6457,7 @@ namespace BrakeDiscInspector_GUI_ROI
 
             string[] candidates = new[]
             {
+                masterId == 1 ? "Master1Search"      : "Master2Search",
                 masterId == 1 ? "Master1Inspection" : "Master2Inspection",
                 masterId == 1 ? "Master1Inspect"    : "Master2Inspect",
                 masterId == 1 ? "InspectionMaster1" : "InspectionMaster2",
