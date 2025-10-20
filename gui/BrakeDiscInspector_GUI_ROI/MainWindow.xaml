@@ -248,6 +248,23 @@
           </Grid>
         </AdornerDecorator>
       </Grid>
+      <!-- ===== HUD: ROI list (top-left) ===== -->
+      <Grid x:Name="RoiHudOverlay"
+            HorizontalAlignment="Left"
+            VerticalAlignment="Top"
+            Margin="12"
+            Panel.ZIndex="900"
+            IsHitTestVisible="True"
+            Visibility="Collapsed">
+        <Border x:Name="RoiHudPanel"
+                Background="#CC000000"
+                BorderBrush="#39FF14"
+                BorderThickness="1.5"
+                CornerRadius="6"
+                Padding="8">
+          <StackPanel x:Name="RoiHudStack" />
+        </Border>
+      </Grid>
       <!-- ===== HUD: bottom-right Heatmap controls ===== -->
       <Grid x:Name="HudOverlay" Panel.ZIndex="1000" IsHitTestVisible="True">
         <Border x:Name="HeatmapHUD"
