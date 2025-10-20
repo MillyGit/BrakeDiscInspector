@@ -250,7 +250,7 @@
           </Grid>
         </AdornerDecorator>
       </Grid>
-      <!-- ===== HUD: bottom-right Heatmap slider (does not cover other buttons) ===== -->
+      <!-- ===== HUD: bottom-right Heatmap controls ===== -->
       <Grid x:Name="HudOverlay" Panel.ZIndex="1000" IsHitTestVisible="False">
         <Border x:Name="HeatmapHUD"
                 HorizontalAlignment="Right"
@@ -260,14 +260,14 @@
                 CornerRadius="6"
                 Padding="8"
                 IsHitTestVisible="True">
-          <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-            <TextBlock Text="Heatmap"
+          <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Spacing="8">
+            <CheckBox x:Name="ChkHeatmap" Content="Heatmap" IsChecked="True"/>
+            <TextBlock x:Name="HeatmapScaleLabel"
+                       Text="Heatmap Scale: 1.00"
                        Foreground="#39FF14"
-                       FontFamily="Segoe UI" FontWeight="SemiBold" Margin="0,0,8,0"/>
-            <!-- Reuse your original binding or handler. Example binding: Value={Binding HeatmapOpacity, Mode=TwoWay} -->
-            <Slider x:Name="SldHeatmap"
-                    Width="160"
-                    Minimum="0" Maximum="1"/>
+                       FontFamily="Segoe UI" FontWeight="SemiBold"/>
+            <Slider x:Name="HeatmapScaleSlider"
+                    Width="160" Minimum="0.10" Maximum="2.00" Value="1.00"/>
           </StackPanel>
         </Border>
       </Grid>

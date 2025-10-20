@@ -372,10 +372,12 @@ namespace BrakeDiscInspector_GUI_ROI
         private bool _roiVisibilityRefreshPending;
 
         private System.Windows.Controls.StackPanel _roiChecksPanel;
-        private System.Windows.Controls.CheckBox _chkHeatmap;
-        private double _heatmapNormMax = 1.0; // Global heatmap scale (1.0 = default). Lower -> brighter, Higher -> darker.
+        private CheckBox? _chkHeatmap;
         private Slider? _sldHeatmapScale;
         private TextBlock? _lblHeatmapScale;
+        private bool _heatmapCheckboxEventsHooked;
+        private bool _heatmapSliderEventsHooked;
+        private double _heatmapNormMax = 1.0; // Global heatmap scale (1.0 = default). Lower -> brighter, Higher -> darker.
 
         // Cache of last gray heatmap to recolor on-the-fly
         private byte[]? _lastHeatmapGray;
@@ -922,75 +924,56 @@ namespace BrakeDiscInspector_GUI_ROI
             return _roiChecksPanel;
         }
 
-        private void EnsureHeatmapScaleSlider()
+        private void WireExistingHeatmapControls()
         {
-            var host = GetOrCreateRoiChecksHost();
-
-            if (_sldHeatmapScale != null && _lblHeatmapScale != null)
+            _chkHeatmap ??= FindName("ChkHeatmap") as CheckBox;
+            if (_chkHeatmap != null && !_heatmapCheckboxEventsHooked)
             {
-                _lblHeatmapScale.Text = $"Heatmap Scale: {_heatmapNormMax:0.00}";
-                return;
+                _chkHeatmap.Checked += (_, __) =>
+                {
+                    if (HeatmapOverlay != null) HeatmapOverlay.Visibility = Visibility.Visible;
+                };
+                _chkHeatmap.Unchecked += (_, __) =>
+                {
+                    if (HeatmapOverlay != null) HeatmapOverlay.Visibility = Visibility.Collapsed;
+                };
+                _heatmapCheckboxEventsHooked = true;
             }
 
-            // Header label
-            _lblHeatmapScale = new TextBlock
-            {
-                Text = $"Heatmap Scale: {_heatmapNormMax:0.00}",
-                Margin = new Thickness(2, 6, 2, 2),
-                Foreground = Brushes.White,
-                FontWeight = FontWeights.SemiBold
-            };
+            _sldHeatmapScale ??= FindName("HeatmapScaleSlider") as Slider;
+            _lblHeatmapScale ??= FindName("HeatmapScaleLabel") as TextBlock;
 
-            // Slider: range 0.10 .. 2.00 (avoid zero)
-            _sldHeatmapScale = new Slider
+            if (_sldHeatmapScale != null)
             {
-                Minimum = 0.10,
-                Maximum = 2.00,
-                Value = _heatmapNormMax,
-                TickFrequency = 0.05,
-                IsSnapToTickEnabled = false,
-                Margin = new Thickness(2, 0, 2, 8),
-                Width = 180
-            };
+                _sldHeatmapScale.Minimum = 0.10;
+                _sldHeatmapScale.Maximum = 2.00;
+                _sldHeatmapScale.Value = _heatmapNormMax;
 
-            _sldHeatmapScale.ValueChanged += (s, e) =>
-            {
-                _heatmapNormMax = _sldHeatmapScale!.Value;
-                _lblHeatmapScale!.Text = $"Heatmap Scale: {_heatmapNormMax:0.00}";
-                try { RebuildHeatmapOverlayFromCache(); } catch {}
-            };
-
-            // Insert near the top (after Heatmap checkbox if present)
-            int insertAt = 0;
-            for (int i = 0; i < host.Children.Count; i++)
-            {
-                if (host.Children[i] is CheckBox cb && (cb.Content as string) == "Heatmap")
+                if (!_heatmapSliderEventsHooked)
                 {
-                    insertAt = i + 1;
-                    break;
+                    _sldHeatmapScale.ValueChanged += (_, __) =>
+                    {
+                        _heatmapNormMax = _sldHeatmapScale!.Value;
+                        if (_lblHeatmapScale != null)
+                            _lblHeatmapScale.Text = $"Heatmap Scale: {_heatmapNormMax:0.00}";
+                        try { RebuildHeatmapOverlayFromCache(); } catch { /* safe no-op */ }
+                    };
+                    _sldHeatmapScale.ValueChanged += HeatmapScaleSlider_ValueChangedSync;
+                    _heatmapSliderEventsHooked = true;
                 }
             }
-            host.Children.Insert(insertAt, _lblHeatmapScale);
-            host.Children.Insert(insertAt + 1, _sldHeatmapScale);
-        }
 
-        private void EnsureHeatmapCheckbox()
-        {
-            var host = GetOrCreateRoiChecksHost();
-            if (_chkHeatmap != null) return;
-
-            _chkHeatmap = new System.Windows.Controls.CheckBox
+            if (_lblHeatmapScale != null)
             {
-                Content = "Heatmap",
-                IsChecked = true,
-                Margin = new System.Windows.Thickness(2, 0, 2, 6)
-            };
-            _chkHeatmap.Foreground = Brushes.White;
-            _chkHeatmap.FontSize = 13;
-            _chkHeatmap.Checked += (s, e) => { if (HeatmapOverlay != null) HeatmapOverlay.Visibility = System.Windows.Visibility.Visible; };
-            _chkHeatmap.Unchecked += (s, e) => { if (HeatmapOverlay != null) HeatmapOverlay.Visibility = System.Windows.Visibility.Collapsed; };
+                _lblHeatmapScale.Text = $"Heatmap Scale: {_heatmapNormMax:0.00}";
+            }
 
-            host.Children.Insert(0, _chkHeatmap);
+            if (_chkHeatmap != null && HeatmapOverlay != null)
+            {
+                HeatmapOverlay.Visibility = _chkHeatmap.IsChecked == true
+                    ? Visibility.Visible
+                    : Visibility.Collapsed;
+            }
         }
 
         private void EnsureRoiCheckbox(string labelText)
@@ -1079,11 +1062,6 @@ namespace BrakeDiscInspector_GUI_ROI
                 }
                 catch {}
             };
-            EnsureHeatmapCheckbox();
-            EnsureHeatmapScaleSlider();
-            if (_sldHeatmapScale != null)
-                _sldHeatmapScale.ValueChanged += HeatmapScaleSlider_ValueChangedSync;
-
             try
             {
                 var ps = System.Windows.PresentationSource.FromVisual(this);
@@ -2357,7 +2335,7 @@ namespace BrakeDiscInspector_GUI_ROI
                     _lastHeatmapRoi = HeatmapRoiModel.From(export.RoiImage.Clone());
                     _heatmapOverlayOpacity = Math.Clamp(opacity, 0.0, 1.0);
                     EnterAnalysisView();
-                    EnsureHeatmapScaleSlider();
+                    WireExistingHeatmapControls();
 
                     CacheHeatmapGrayFromBitmapSource(heatmapSource);
                     RebuildHeatmapOverlayFromCache();
@@ -2901,6 +2879,8 @@ namespace BrakeDiscInspector_GUI_ROI
             ScheduleSyncOverlay(force: true);
             UpdateHeatmapOverlayLayoutAndClip();
             RedrawAnalysisCrosses();
+
+            WireExistingHeatmapControls();
         }
 
         private void MainWindow_SizeChanged(object sender, SizeChangedEventArgs e)
@@ -5680,7 +5660,7 @@ namespace BrakeDiscInspector_GUI_ROI
                     using var heatGray = new Mat();
                     OpenCvSharp.Cv2.CvtColor(heat, heatGray, OpenCvSharp.ColorConversionCodes.BGR2GRAY);
                     _lastHeatmapRoi = HeatmapRoiModel.From(BuildCurrentRoiModel());
-                    EnsureHeatmapScaleSlider();
+                    WireExistingHeatmapControls();
 
                     byte[] gray = new byte[heatGray.Rows * heatGray.Cols];
                     heatGray.GetArray(out byte[]? tmpGray);
