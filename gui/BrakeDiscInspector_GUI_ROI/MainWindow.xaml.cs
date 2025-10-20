@@ -419,6 +419,12 @@ namespace BrakeDiscInspector_GUI_ROI
         private readonly Dictionary<RoiRole, bool> _roiCheckboxHasRoi = new();
         private bool _roiVisibilityRefreshPending;
 
+        // Overlay visibility flags (do not affect freeze/geometry)
+        private bool _showMaster1PatternOverlay = true;
+        private bool _showMaster2PatternOverlay = true;
+        private bool _showMaster1SearchOverlay  = true;
+        private bool _showMaster2SearchOverlay  = true;
+
         private System.Windows.Controls.StackPanel _roiChecksPanel;
         private CheckBox? _chkHeatmap;
         private Slider? _sldHeatmapScale;
@@ -431,14 +437,26 @@ namespace BrakeDiscInspector_GUI_ROI
         private byte[]? _lastHeatmapGray;
         private int _lastHeatmapW, _lastHeatmapH;
 
-        private IEnumerable<RoiModel> SavedRois => new[]
+        private IEnumerable<RoiModel> SavedRois
         {
-            _layout.Master1Pattern,
-            _layout.Master1Search,
-            _layout.Master2Pattern,
-            _layout.Master2Search,
-            _layout.Inspection
-        }.OfType<RoiModel>();
+            get
+            {
+                if (_layout.Master1Pattern != null && _showMaster1PatternOverlay)
+                    yield return _layout.Master1Pattern;
+
+                if (_layout.Master2Pattern != null && _showMaster2PatternOverlay)
+                    yield return _layout.Master2Pattern;
+
+                if (_layout.Master1Search != null && _showMaster1SearchOverlay)
+                    yield return _layout.Master1Search;
+
+                if (_layout.Master2Search != null && _showMaster2SearchOverlay)
+                    yield return _layout.Master2Search;
+
+                if (_layout.Inspection != null)
+                    yield return _layout.Inspection;
+            }
+        }
 
         private sealed class HeatmapRoiModel : RoiModel
         {
@@ -3011,26 +3029,105 @@ namespace BrakeDiscInspector_GUI_ROI
 
         private void UpdateRoiHud()
         {
-            if (RoiHudStack == null || RoiHudOverlay == null)
+            if (RoiHudStack == null || RoiHudOverlay == null || _layout == null)
                 return;
 
-            var savedInspectionRois = CollectSavedInspectionRois();
+            int count = 0;
+            RoiHudStack.Children.Clear();
 
-            if (savedInspectionRois.Count == 0)
+            // Masters (Patterns)
+            if (_layout.Master1Pattern != null && IsRoiSaved(_layout.Master1Pattern))
             {
-                RoiHudStack.Children.Clear();
-                RoiHudOverlay.Visibility = Visibility.Collapsed;
-                return;
+                RoiHudStack.Children.Add(CreateHudItem("Master 1 (Pattern)",
+                    () => _showMaster1PatternOverlay,
+                    v  => _showMaster1PatternOverlay = v));
+                count++;
+            }
+            if (_layout.Master2Pattern != null && IsRoiSaved(_layout.Master2Pattern))
+            {
+                RoiHudStack.Children.Add(CreateHudItem("Master 2 (Pattern)",
+                    () => _showMaster2PatternOverlay,
+                    v  => _showMaster2PatternOverlay = v));
+                count++;
             }
 
-            RoiHudStack.Children.Clear();
+            // Master Searches
+            if (_layout.Master1Search != null && IsRoiSaved(_layout.Master1Search))
+            {
+                RoiHudStack.Children.Add(CreateHudItem("Master 1 Search",
+                    () => _showMaster1SearchOverlay,
+                    v  => _showMaster1SearchOverlay = v));
+                count++;
+            }
+            if (_layout.Master2Search != null && IsRoiSaved(_layout.Master2Search))
+            {
+                RoiHudStack.Children.Add(CreateHudItem("Master 2 Search",
+                    () => _showMaster2SearchOverlay,
+                    v  => _showMaster2SearchOverlay = v));
+                count++;
+            }
+
+            // Inspection ROIs (saved only)
+            var savedInspectionRois = CollectSavedInspectionRois();
             foreach (var roi in savedInspectionRois)
             {
-                var item = CreateRoiHudItem(roi);
-                RoiHudStack.Children.Add(item);
+                RoiHudStack.Children.Add(CreateRoiHudItem(roi));
+                count++;
             }
 
-            RoiHudOverlay.Visibility = Visibility.Visible;
+            RoiHudOverlay.Visibility = (count > 0) ? Visibility.Visible : Visibility.Collapsed;
+        }
+
+        private FrameworkElement CreateHudItem(string label, Func<bool> getVisible, Action<bool> setVisible)
+        {
+            bool isVisible = getVisible();
+
+            var text = new TextBlock
+            {
+                Text = label,
+                Foreground = Brushes.White,
+                FontFamily = new FontFamily("Segoe UI"),
+                FontSize = 12,
+                FontWeight = FontWeights.SemiBold,
+                Margin = new Thickness(6, 2, 6, 2),
+                VerticalAlignment = VerticalAlignment.Center
+            };
+
+            var eye = new TextBlock
+            {
+                Text = isVisible ? "👁" : "🚫",
+                Foreground = isVisible ? Brushes.Lime : Brushes.Gray,
+                FontSize = 12,
+                Margin = new Thickness(6, 2, 0, 2),
+                VerticalAlignment = VerticalAlignment.Center
+            };
+
+            var sp = new StackPanel { Orientation = Orientation.Horizontal };
+            sp.Children.Add(text);
+            sp.Children.Add(eye);
+
+            var border = new Border
+            {
+                CornerRadius = new CornerRadius(4),
+                Background = Brushes.Black,
+                BorderBrush = isVisible ? (Brush)new BrushConverter().ConvertFromString("#39FF14") : Brushes.DimGray,
+                BorderThickness = new Thickness(1.5),
+                Margin = new Thickness(0, 0, 0, 6),
+                Child = sp,
+                Cursor = Cursors.Hand
+            };
+
+            border.MouseLeftButtonUp += (s, e) =>
+            {
+                bool now = !getVisible();
+                setVisible(now);
+                eye.Text = now ? "👁" : "🚫";
+                border.BorderBrush = now ? (Brush)new BrushConverter().ConvertFromString("#39FF14") : Brushes.DimGray;
+                try { RedrawAllRois(); } catch { }
+                e.Handled = true;
+            };
+
+            return border;
         }
 
         private FrameworkElement CreateRoiHudItem(RoiModel roi)
@@ -3097,6 +3194,7 @@ namespace BrakeDiscInspector_GUI_ROI
         {
             try
             {
+                RedrawOverlaySafe();
                 RequestRoiVisibilityRefresh();
                 UpdateRoiHud();
                 RedrawAnalysisCrosses();
