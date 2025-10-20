@@ -52,6 +52,14 @@ namespace BrakeDiscInspector_GUI_ROI
 {
     public partial class MainWindow : System.Windows.Window
     {
+        static MainWindow()
+        {
+            if (RoiHudAccentBrush.CanFreeze && !RoiHudAccentBrush.IsFrozen)
+            {
+                RoiHudAccentBrush.Freeze();
+            }
+        }
+
         private enum MasterState { DrawM1_Pattern, DrawM1_Search, DrawM2_Pattern, DrawM2_Search, DrawInspection, Ready }
         private enum RoiCorner { TopLeft, TopRight, BottomRight, BottomLeft }
         private MasterState _state = MasterState.DrawM1_Pattern;
@@ -66,6 +74,7 @@ namespace BrakeDiscInspector_GUI_ROI
         private BitmapImage? _imgSourceBI;
         private int _imgW, _imgH;
         private bool _hasLoadedImage;
+        private bool _isFirstImageLoaded = false;
 
         private WorkflowViewModel? _workflowViewModel;
         private double _heatmapOverlayOpacity = 0.6;
@@ -127,6 +136,8 @@ namespace BrakeDiscInspector_GUI_ROI
         // Freeze Master*Search movement on Analyze Master
         private const bool FREEZE_MASTER_SEARCH_ON_ANALYZE = true;
 
+        private static readonly SolidColorBrush RoiHudAccentBrush = new SolidColorBrush(Color.FromRgb(0x39, 0xFF, 0x14));
+
         // ============================
         // Logging helpers (safe everywhere)
         // ============================
@@ -175,6 +186,42 @@ namespace BrakeDiscInspector_GUI_ROI
             r.CX = cx; r.CY = cy;
             r.Left = cx - r.Width * 0.5;
             r.Top  = cy - r.Height * 0.5;
+        }
+
+        private static bool IsRoiSaved(RoiModel? r)
+        {
+            if (r == null) return false;
+
+            static bool finite(double value) => !double.IsNaN(value) && !double.IsInfinity(value);
+
+            switch (r.Shape)
+            {
+                case RoiShape.Rectangle:
+                    return finite(r.X) && finite(r.Y) && r.Width > 0 && r.Height > 0;
+                case RoiShape.Circle:
+                    return finite(r.CX) && finite(r.CY) && r.R > 0;
+                case RoiShape.Annulus:
+                    return finite(r.CX) && finite(r.CY) && r.R > 0 && r.RInner >= 0 && r.R > r.RInner;
+                default:
+                    return false;
+            }
+        }
+
+        private bool HasAllMastersAndInspectionsDefined()
+        {
+            bool mastersReady =
+                _layout?.Master1Pattern != null && IsRoiSaved(_layout.Master1Pattern) &&
+                _layout?.Master1Search != null && IsRoiSaved(_layout.Master1Search) &&
+                _layout?.Master2Pattern != null && IsRoiSaved(_layout.Master2Pattern) &&
+                _layout?.Master2Search != null && IsRoiSaved(_layout.Master2Search);
+
+            if (!mastersReady)
+                return false;
+
+            if (_layout?.Inspection != null && IsRoiSaved(_layout.Inspection))
+                return true;
+
+            return false;
         }
 
         // Place a label tangent to a circle/annulus at angle thetaDeg (IMAGE -> CANVAS)
@@ -1200,6 +1247,7 @@ namespace BrakeDiscInspector_GUI_ROI
             UpdateRoiVisibilityCheckbox(RoiRole.Inspection, _layout.Inspection);
 
             RequestRoiVisibilityRefresh();
+            UpdateRoiHud();
         }
 
         private void UpdateRoiVisibilityCheckbox(RoiRole role, RoiModel? model)
@@ -1227,6 +1275,7 @@ namespace BrakeDiscInspector_GUI_ROI
         private void RoiVisibilityCheckChanged(object sender, RoutedEventArgs e)
         {
             RequestRoiVisibilityRefresh();
+            UpdateRoiHud();
         }
 
         private void RequestRoiVisibilityRefresh()
@@ -1471,10 +1520,15 @@ namespace BrakeDiscInspector_GUI_ROI
 
             // 🔧 clave: forzar reprogramación aunque el scheduler se hubiera quedado “true”
 
-            ClearCanvasShapesAndLabels();   // remove all shapes & labels from previous image
-            _roiShapesById.Clear();
-            _roiLabels.Clear();
-            try { if (_previewShape != null) { CanvasROI.Children.Remove(_previewShape); _previewShape = null; } } catch { }
+            if (_isFirstImageLoaded)
+            {
+                ClearViewerForNewImage();
+            }
+            else
+            {
+                _isFirstImageLoaded = true;
+            }
+
             RedrawOverlay();
 
             ScheduleSyncOverlay(force: true);
@@ -1482,6 +1536,20 @@ namespace BrakeDiscInspector_GUI_ROI
             AppendLog($"Imagen cargada: {_imgW}x{_imgH}  (Canvas: {CanvasROI.ActualWidth:0}x{CanvasROI.ActualHeight:0})");
             RedrawOverlaySafe();
             ClearHeatmapOverlay();
+
+            if (HasAllMastersAndInspectionsDefined())
+            {
+                try
+                {
+                    _ = AnalyzeMastersAsync();
+                }
+                catch (Exception ex)
+                {
+                    Debug.WriteLine($"[AutoAnalyze] Failed: {ex.Message}");
+                }
+            }
+
+            UpdateRoiHud();
 
             {
                 var seedKey = ComputeImageSeedKey();
@@ -1634,6 +1702,24 @@ namespace BrakeDiscInspector_GUI_ROI
                 _roiLabels?.Clear();
             }
             catch { /* ignore */ }
+        }
+
+        private void ClearViewerForNewImage()
+        {
+            try { ClearCanvasShapesAndLabels(); } catch { }
+            try { ClearCanvasInternalMaps(); } catch { }
+            try { DetachPreviewAndAdorner(); } catch { }
+            try { ResetAnalysisMarks(); } catch { }
+
+            if (RoiHudStack != null)
+            {
+                RoiHudStack.Children.Clear();
+            }
+
+            if (RoiHudOverlay != null)
+            {
+                RoiHudOverlay.Visibility = Visibility.Collapsed;
+            }
         }
 
         private void DetachPreviewAndAdorner()
@@ -2873,6 +2959,108 @@ namespace BrakeDiscInspector_GUI_ROI
                 RoiRole.Inspection => "Inspection",
                 _ => null
             };
+        }
+
+        private void UpdateRoiHud()
+        {
+            if (RoiHudStack == null || RoiHudOverlay == null)
+                return;
+
+            var savedInspectionRois = new List<(RoiModel roi, RoiRole role)>();
+            if (_layout?.Inspection != null && IsRoiSaved(_layout.Inspection))
+            {
+                savedInspectionRois.Add((_layout.Inspection, _layout.Inspection.Role));
+            }
+
+            if (savedInspectionRois.Count == 0)
+            {
+                RoiHudStack.Children.Clear();
+                RoiHudOverlay.Visibility = Visibility.Collapsed;
+                return;
+            }
+
+            RoiHudStack.Children.Clear();
+            foreach (var (roi, role) in savedInspectionRois)
+            {
+                var item = CreateRoiHudItem(roi, role);
+                RoiHudStack.Children.Add(item);
+            }
+
+            RoiHudOverlay.Visibility = Visibility.Visible;
+        }
+
+        private FrameworkElement CreateRoiHudItem(RoiModel roi, RoiRole role)
+        {
+            var labelText = ResolveRoiLabelText(roi) ?? roi.Label ?? "Inspection";
+            bool isVisible = IsRoiRoleVisible(role);
+
+            var text = new TextBlock
+            {
+                Text = labelText,
+                Foreground = Brushes.White,
+                FontFamily = new FontFamily("Segoe UI"),
+                FontSize = 12,
+                FontWeight = FontWeights.SemiBold,
+                Margin = new Thickness(6, 2, 6, 2),
+                VerticalAlignment = VerticalAlignment.Center
+            };
+
+            var eye = new TextBlock
+            {
+                Text = isVisible ? "👁" : "🚫",
+                Foreground = isVisible ? (Brush)RoiHudAccentBrush : Brushes.Gray,
+                FontSize = 12,
+                Margin = new Thickness(6, 2, 0, 2),
+                VerticalAlignment = VerticalAlignment.Center
+            };
+
+            var stack = new StackPanel { Orientation = Orientation.Horizontal };
+            stack.Children.Add(text);
+            stack.Children.Add(eye);
+
+            var border = new Border
+            {
+                CornerRadius = new CornerRadius(4),
+                Background = Brushes.Black,
+                BorderBrush = isVisible ? (Brush)RoiHudAccentBrush : Brushes.DimGray,
+                BorderThickness = new Thickness(1.5),
+                Margin = new Thickness(0, 0, 0, 6),
+                Child = stack,
+                Tag = role,
+                Cursor = Cursors.Hand
+            };
+
+            border.MouseLeftButtonUp += (s, e) =>
+            {
+                ToggleRoiVisibility(role);
+                e.Handled = true;
+            };
+
+            return border;
+        }
+
+        private void ToggleRoiVisibility(RoiRole role)
+        {
+            if (_roiVisibilityCheckboxes.TryGetValue(role, out var checkbox) && checkbox != null)
+            {
+                bool newState = checkbox.IsChecked != true;
+                checkbox.IsChecked = newState;
+                RedrawAllRois();
+            }
+        }
+
+        private void RedrawAllRois()
+        {
+            try
+            {
+                RequestRoiVisibilityRefresh();
+                UpdateRoiHud();
+                RedrawAnalysisCrosses();
+            }
+            catch
+            {
+                // no-op
+            }
         }
         private void MainWindow_Loaded(object sender, RoutedEventArgs e)
         {
