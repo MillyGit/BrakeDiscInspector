@@ -41,6 +41,9 @@ using LegacyROI = BrakeDiscInspector_GUI_ROI.ROI;
 using ROI = BrakeDiscInspector_GUI_ROI.RoiModel;
 using RoiShapeType = BrakeDiscInspector_GUI_ROI.RoiShape;
 // --- BEGIN: UI/OCV type aliases ---
+using SW = System.Windows;
+using SWM = System.Windows.Media;
+using SWShapes = System.Windows.Shapes;
 using SWPoint = System.Windows.Point;
 using SWRect = System.Windows.Rect;
 using SWVector = System.Windows.Vector;
@@ -147,7 +150,7 @@ namespace BrakeDiscInspector_GUI_ROI
             System.Diagnostics.Debug.WriteLine(msg);
         }
 
-        private double NormalizeAngleRad(double ang)
+        private static double NormalizeAngleRad(double ang)
         {
             // Normalize to [-pi, pi)
             ang = (ang + Math.PI) % (2.0 * Math.PI);
@@ -155,7 +158,9 @@ namespace BrakeDiscInspector_GUI_ROI
             return ang - Math.PI;
         }
 
-        private SWVector Normalize(SWVector v)
+        private static double AngleOf(SWVector v) => Math.Atan2(v.Y, v.X);
+
+        private static SWVector Normalize(SWVector v)
         {
             double len = Math.Sqrt(v.X * v.X + v.Y * v.Y);
             if (len < 1e-12) return new SWVector(0, 0);
@@ -186,6 +191,144 @@ namespace BrakeDiscInspector_GUI_ROI
             r.CX = cx; r.CY = cy;
             r.Left = cx - r.Width * 0.5;
             r.Top  = cy - r.Height * 0.5;
+        }
+
+        private static SWPoint MapBySt(SWPoint m1Base, SWPoint m2Base, SWPoint m1New, SWPoint m2New,
+                                       SWPoint roiBase, bool scaleLock)
+        {
+            var u0 = m2Base - m1Base;
+            var v0 = new SWVector(-u0.Y, u0.X);
+            var L0 = Math.Sqrt(u0.X * u0.X + u0.Y * u0.Y);
+            if (L0 < 1e-9) return roiBase;
+
+            u0 = new SWVector(u0.X / L0, u0.Y / L0);
+            var v0n = Normalize(v0);
+
+            var d0 = roiBase - m1Base;
+            double s = d0.X * u0.X + d0.Y * u0.Y;
+            double t = d0.X * v0n.X + d0.Y * v0n.Y;
+
+            var u1 = m2New - m1New;
+            var L1 = Math.Sqrt(u1.X * u1.X + u1.Y * u1.Y);
+            if (L1 < 1e-9) return roiBase;
+
+            var u1n = new SWVector(u1.X / L1, u1.Y / L1);
+            var v1n = new SWVector(-u1n.Y, u1n.X);
+
+            if (!scaleLock)
+            {
+                double k = L1 / L0;
+                s *= k;
+                t *= k;
+            }
+
+            return new SWPoint(
+                m1New.X + s * u1n.X + t * v1n.X,
+                m1New.Y + s * u1n.Y + t * v1n.Y);
+        }
+
+        private static double DeltaAngleFromFrames(SWPoint m1Base, SWPoint m2Base, SWPoint m1New, SWPoint m2New)
+        {
+            var a0 = AngleOf(m2Base - m1Base);
+            var a1 = AngleOf(m2New - m1New);
+            return NormalizeAngleRad(a1 - a0);
+        }
+
+        private void RepositionMastersToCrosses(SWPoint m1Cross, SWPoint m2Cross, bool scaleLock,
+                                                RoiModel? master1Baseline = null, RoiModel? master2Baseline = null)
+        {
+            if (_layout == null)
+                return;
+
+            var baselineM1 = master1Baseline ?? _layout.Master1Pattern?.Clone();
+            var baselineM2 = master2Baseline ?? _layout.Master2Pattern?.Clone();
+
+            if (_layout.Master1Pattern != null)
+                SetRoiCenterImg(_layout.Master1Pattern, m1Cross.X, m1Cross.Y);
+            if (_layout.Master2Pattern != null)
+                SetRoiCenterImg(_layout.Master2Pattern, m2Cross.X, m2Cross.Y);
+
+            if (baselineM1 == null || baselineM2 == null)
+                return;
+
+            var (m1bX, m1bY) = GetCenterShapeAware(baselineM1);
+            var (m2bX, m2bY) = GetCenterShapeAware(baselineM2);
+            var m1Base = new SWPoint(m1bX, m1bY);
+            var m2Base = new SWPoint(m2bX, m2bY);
+
+            double dAng = DeltaAngleFromFrames(m1Base, m2Base, m1Cross, m2Cross);
+
+            if (_layout.Master1Pattern != null && _layout.Master1Pattern.Shape == RoiShape.Rectangle)
+                _layout.Master1Pattern.AngleDeg = baselineM1.AngleDeg + dAng * (180.0 / Math.PI);
+
+            if (_layout.Master2Pattern != null && _layout.Master2Pattern.Shape == RoiShape.Rectangle)
+                _layout.Master2Pattern.AngleDeg = baselineM2.AngleDeg + dAng * (180.0 / Math.PI);
+        }
+
+        private void RepositionInspectionUsingSt(SWPoint m1Cross, SWPoint m2Cross, bool scaleLock,
+                                                 RoiModel? master1Baseline = null, RoiModel? master2Baseline = null)
+        {
+            if (_layout == null)
+                return;
+
+            var baselineM1 = master1Baseline ?? _layout.Master1Pattern?.Clone();
+            var baselineM2 = master2Baseline ?? _layout.Master2Pattern?.Clone();
+            if (baselineM1 == null || baselineM2 == null)
+                return;
+
+            var (m1bX, m1bY) = GetCenterShapeAware(baselineM1);
+            var (m2bX, m2bY) = GetCenterShapeAware(baselineM2);
+            var m1Base = new SWPoint(m1bX, m1bY);
+            var m2Base = new SWPoint(m2bX, m2bY);
+
+            var baseVec = m2Base - m1Base;
+            var newVec = m2Cross - m1Cross;
+            double len0 = Math.Sqrt(baseVec.X * baseVec.X + baseVec.Y * baseVec.Y);
+            double len1 = Math.Sqrt(newVec.X * newVec.X + newVec.Y * newVec.Y);
+            if (len0 < 1e-9 || len1 < 1e-9)
+                return;
+
+            double scaleRatio = len1 / len0;
+            bool effectiveScaleLock = scaleLock && !_allowInspectionScaleOverride;
+            double angleDelta = DeltaAngleFromFrames(m1Base, m2Base, m1Cross, m2Cross);
+
+            var roisToMove = new List<(RoiModel target, RoiModel baseline)>();
+            if (_layout.Inspection != null)
+                roisToMove.Add((_layout.Inspection, _layout.Inspection.Clone()));
+
+            foreach (var (target, baseline) in roisToMove)
+            {
+                if (target == null || baseline == null)
+                    continue;
+
+                double scaleFactor = effectiveScaleLock ? 1.0 : scaleRatio;
+
+                switch (target.Shape)
+                {
+                    case RoiShape.Rectangle:
+                        target.Width = baseline.Width * scaleFactor;
+                        target.Height = baseline.Height * scaleFactor;
+                        break;
+                    case RoiShape.Circle:
+                        target.R = baseline.R * scaleFactor;
+                        target.Width = baseline.Width * scaleFactor;
+                        target.Height = baseline.Height * scaleFactor;
+                        break;
+                    case RoiShape.Annulus:
+                        target.R = baseline.R * scaleFactor;
+                        target.RInner = baseline.RInner * scaleFactor;
+                        target.Width = baseline.Width * scaleFactor;
+                        target.Height = baseline.Height * scaleFactor;
+                        break;
+                }
+
+                var (cx, cy) = GetCenterShapeAware(baseline);
+                var mapped = MapBySt(m1Base, m2Base, m1Cross, m2Cross, new SWPoint(cx, cy), effectiveScaleLock);
+                SetRoiCenterImg(target, mapped.X, mapped.Y);
+
+                if (target.Shape == RoiShape.Rectangle)
+                    target.AngleDeg = baseline.AngleDeg + angleDelta * (180.0 / Math.PI);
+            }
         }
 
         private static bool IsRoiSaved(RoiModel? r)
@@ -272,71 +415,6 @@ namespace BrakeDiscInspector_GUI_ROI
             };
             System.Windows.Controls.Panel.SetZIndex(border, int.MaxValue);
             return border;
-        }
-
-        // Reposition Inspection using local (s,t) frame w.r.t. M1->M2.
-        // Respects scale-lock by default; optional override via _allowInspectionScaleOverride.
-        private void RepositionInspectionUsingST(
-            RoiModel insp, RoiModel baselineInspection,
-            SWPoint m1_base, SWPoint m2_base,
-            SWPoint m1_new,  SWPoint m2_new,
-            bool lockAnalyzeScale)
-        {
-            // 1) Orthonormal frames
-            SWVector eB = Normalize(new SWVector(m2_base.X - m1_base.X, m2_base.Y - m1_base.Y));
-            if (eB.X == 0 && eB.Y == 0) return; // degenerate
-            SWVector nB = new SWVector(-eB.Y, eB.X);
-
-            SWVector eN = Normalize(new SWVector(m2_new.X - m1_new.X, m2_new.Y - m1_new.Y));
-            if (eN.X == 0 && eN.Y == 0) return; // degenerate
-            SWVector nN = new SWVector(-eN.Y, eN.X);
-
-            double lenB = Math.Sqrt(Math.Pow(m2_base.X - m1_base.X, 2) + Math.Pow(m2_base.Y - m1_base.Y, 2));
-            double lenN = Math.Sqrt(Math.Pow(m2_new.X  - m1_new.X,  2) + Math.Pow(m2_new.Y  - m1_new.Y,  2));
-            if (lenB < 1e-9) return;
-
-            // 2) Intrinsic coords of baseline center relative to M1_base
-            (double cx0, double cy0) = GetCenterShapeAware(baselineInspection);
-            SWVector v0 = new SWVector(cx0 - m1_base.X, cy0 - m1_base.Y);
-            double s = v0.X * eB.X + v0.Y * eB.Y;
-            double t = v0.X * nB.X + v0.Y * nB.Y;
-
-            // 3) Scale factor (lock respected by default; override available)
-            bool useScale = (!lockAnalyzeScale) || _allowInspectionScaleOverride;
-            double k = useScale ? (lenN / lenB) : 1.0;
-
-            // 4) New center using new frame
-            SWPoint cN = new SWPoint(
-                m1_new.X + k * (s * eN.X + t * nN.X),
-                m1_new.Y + k * (s * eN.Y + t * nN.Y)
-            );
-            SetRoiCenterImg(insp, cN.X, cN.Y);
-
-            // 5) Angle for rectangles (Δθ normalized)
-            double angB = Math.Atan2(eB.Y, eB.X);
-            double angN = Math.Atan2(eN.Y, eN.X);
-            double dAng = NormalizeAngleRad(angN - angB);
-            if (insp.Shape == RoiShape.Rectangle)
-                insp.AngleDeg = baselineInspection.AngleDeg + (dAng * 180.0 / Math.PI);
-
-            // 6) Optional scaling of dimensions (if allowed)
-            if (useScale)
-            {
-                switch (insp.Shape)
-                {
-                    case RoiShape.Rectangle:
-                        insp.Width  = baselineInspection.Width  * k;
-                        insp.Height = baselineInspection.Height * k;
-                        break;
-                    case RoiShape.Circle:
-                        insp.R = baselineInspection.R * k;
-                        break;
-                    case RoiShape.Annulus:
-                        insp.R      = baselineInspection.R      * k;
-                        insp.RInner = baselineInspection.RInner * k;
-                        break;
-                }
-            }
         }
 
         private static readonly string InspAlignLogPath = System.IO.Path.Combine(
@@ -4393,6 +4471,27 @@ namespace BrakeDiscInspector_GUI_ROI
             _lastM2CenterPx = new CvPoint((int)System.Math.Round(c2.Value.X), (int)System.Math.Round(c2.Value.Y));
             RedrawAnalysisCrosses();
 
+            // === BEGIN: reposition Masters & Inspections ===
+            try
+            {
+                var crossM1 = c1.Value;
+                var crossM2 = c2.Value;
+                var master1Baseline = _layout?.Master1Pattern?.Clone();
+                var master2Baseline = _layout?.Master2Pattern?.Clone();
+                bool scaleLock = _lockAnalyzeScale;
+
+                RepositionMastersToCrosses(crossM1, crossM2, scaleLock, master1Baseline, master2Baseline);
+                RepositionInspectionUsingSt(crossM1, crossM2, scaleLock, master1Baseline, master2Baseline);
+
+                RedrawAllRois();
+                UpdateRoiHud();
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[AnalyzeMaster-Reposition] {ex.Message}");
+            }
+            // === END: reposition Masters & Inspections ===
+
             // 5) Reubicar inspección si existe
             if (_layout.Inspection == null)
             {
@@ -4711,9 +4810,7 @@ namespace BrakeDiscInspector_GUI_ROI
                 baselineInspection = GetInspectionBaselineClone() ?? insp.Clone();
             }
 
-            RoiModel? __baseM1P = _layout?.Master1Pattern?.Clone();
             RoiModel? __baseM1S = _layout?.Master1Search ?.Clone();
-            RoiModel? __baseM2P = _layout?.Master2Pattern?.Clone();
             RoiModel? __baseM2S = _layout?.Master2Search ?.Clone();
             var __baseHeat = _lastHeatmapRoi?.Clone();
 
@@ -4780,18 +4877,6 @@ namespace BrakeDiscInspector_GUI_ROI
                         $"M2_base=({m2OldX:F3},{m2OldY:F3}) → M2_new=({m2NewX:F3},{m2NewY:F3}); angΔ={angDelta * 180 / Math.PI:F3}°, effScale={effectiveScale:F6}");
             }
 
-            if (__canTransform && baselineInspection != null)
-            {
-                InspLog($"[Transform] INSPECT BEFORE: {FInsp(insp)}");
-                InspLog($"[Transform] pivotOld=({m1OldX:F3},{m1OldY:F3}), pivotNew=({m1NewX:F3},{m1NewY:F3}), effScale={effectiveScale:F6}, angΔ={angDelta*180/Math.PI:F3}°");
-                RepositionInspectionUsingST(insp, baselineInspection, m1_base, m2_base, m1_new, m2_new, _lockAnalyzeScale);
-
-                InspLog($"[Transform] INSPECT AFTER : {FInsp(insp)}");
-                double dCx = insp.CX - baselineInspection.CX;
-                double dCy = insp.CY - baselineInspection.CY;
-                InspLog($"[Transform] INSPECT Δ vs baseline: dCX={dCx:F3}, dCY={dCy:F3}");
-            }
-
             if (!__canTransform && _lockAnalyzeScale && insp != null)
             {
                 double cx = insp.CX, cy = insp.CY;
@@ -4824,12 +4909,6 @@ namespace BrakeDiscInspector_GUI_ROI
             {
                 if (__canTransform && _layout != null)
                 {
-                    if (_layout.Master1Pattern != null && __baseM1P != null)
-                        ApplyRoiTransform(_layout.Master1Pattern, __baseM1P, m1OldX, m1OldY, m1NewX, m1NewY, effectiveScale, angDelta);
-
-                    if (_layout.Master2Pattern != null && __baseM2P != null)
-                        ApplyRoiTransform(_layout.Master2Pattern, __baseM2P, m1OldX, m1OldY, m1NewX, m1NewY, effectiveScale, angDelta);
-
                     // Congelar los ROIs Master Search durante Analyze (no desplazar ni rotar)
                     if (!FREEZE_MASTER_SEARCH_ON_ANALYZE)
                     {
@@ -4848,22 +4927,6 @@ namespace BrakeDiscInspector_GUI_ROI
                     if (_lastHeatmapRoi != null && __baseHeat != null)
                         ApplyRoiTransform(_lastHeatmapRoi, __baseHeat, m1OldX, m1OldY, m1NewX, m1NewY, effectiveScale, angDelta);
 
-                    if (_layout?.Master1Pattern != null) SetRoiCenterImg(_layout.Master1Pattern, m1_new.X, m1_new.Y);
-                    if (_layout?.Master2Pattern != null) SetRoiCenterImg(_layout.Master2Pattern, m2_new.X, m2_new.Y);
-
-                    double dAngDeg = 0.0;
-                    if (__canTransform)
-                    {
-                        double angBVec = Math.Atan2(eB.Y, eB.X);
-                        double angNVec = Math.Atan2(eN.Y, eN.X);
-                        dAngDeg = (angNVec - angBVec) * 180.0 / Math.PI;
-                        dAngDeg = ((dAngDeg + 540.0) % 360.0) - 180.0;
-                    }
-                    if (_layout?.Master1Pattern != null && __baseM1P != null && _layout.Master1Pattern.Shape == RoiShape.Rectangle)
-                        _layout.Master1Pattern.AngleDeg = __baseM1P.AngleDeg + dAngDeg;
-                    if (_layout?.Master2Pattern != null && __baseM2P != null && _layout.Master2Pattern.Shape == RoiShape.Rectangle)
-                        _layout.Master2Pattern.AngleDeg = __baseM2P.AngleDeg + dAngDeg;
-
                     try { ScheduleSyncOverlay(true); }
                     catch
                     {
@@ -4874,7 +4937,7 @@ namespace BrakeDiscInspector_GUI_ROI
                         try { RedrawAnalysisCrosses(); } catch { }
                     }
 
-                    AppendLog("[UI] Unified transform applied to Inspection/Heatmap and master ROIs.");
+                    AppendLog("[UI] Unified transform applied to search/heatmap ROIs.");
                 }
             }
             catch (Exception ex)
