@@ -1,13 +1,17 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.Collections.Specialized;
 using System.ComponentModel;
 using System.IO;
 using System.Linq;
+using System.Net.Http;
 using System.Runtime.CompilerServices;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
+using Forms = System.Windows.Forms;
 
 namespace BrakeDiscInspector_GUI_ROI.Workflow
 {
@@ -20,6 +24,12 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
         private readonly Action<string> _log;
         private readonly Func<RoiExportResult, byte[], double, Task> _showHeatmapAsync;
         private readonly Action _clearHeatmap;
+        private readonly Action<bool?> _updateGlobalBadge;
+
+        private ObservableCollection<InspectionRoiConfig>? _inspectionRois;
+        private InspectionRoiConfig? _selectedInspectionRoi;
+        private bool? _hasFitEndpoint;
+        private bool? _hasCalibrateEndpoint;
 
         private bool _isBusy;
         private string _roleId = "Master1";
@@ -46,7 +56,8 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
             Func<string?> getSourceImagePath,
             Action<string> log,
             Func<RoiExportResult, byte[], double, Task> showHeatmapAsync,
-            Action clearHeatmap)
+            Action clearHeatmap,
+            Action<bool?> updateGlobalBadge)
         {
             _client = client ?? throw new ArgumentNullException(nameof(client));
             _datasetManager = datasetManager ?? throw new ArgumentNullException(nameof(datasetManager));
@@ -55,6 +66,7 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
             _log = log ?? (_ => { });
             _showHeatmapAsync = showHeatmapAsync ?? throw new ArgumentNullException(nameof(showHeatmapAsync));
             _clearHeatmap = clearHeatmap ?? throw new ArgumentNullException(nameof(clearHeatmap));
+            _updateGlobalBadge = updateGlobalBadge ?? (_ => { });
 
             _backendBaseUrl = _client.BaseUrl;
 
@@ -70,10 +82,120 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
             InferFromCurrentRoiCommand = CreateCommand(_ => InferCurrentAsync(), _ => !IsBusy);
             RefreshDatasetCommand = CreateCommand(_ => RefreshDatasetAsync(), _ => !IsBusy);
             RefreshHealthCommand = CreateCommand(_ => RefreshHealthAsync(), _ => !IsBusy);
+
+            BrowseDatasetCommand = CreateCommand(_ => BrowseDatasetAsync(), _ => !IsBusy && SelectedInspectionRoi != null);
+            TrainSelectedRoiCommand = CreateCommand(_ => TrainSelectedRoiAsync(), _ => !IsBusy && SelectedInspectionRoi != null);
+            CalibrateSelectedRoiCommand = CreateCommand(_ => CalibrateSelectedRoiAsync(), _ => !IsBusy && SelectedInspectionRoi != null);
+            EvaluateSelectedRoiCommand = CreateCommand(_ => EvaluateSelectedRoiAsync(), _ => !IsBusy && SelectedInspectionRoi != null && SelectedInspectionRoi.Enabled);
+            EvaluateAllRoisCommand = CreateCommand(_ => EvaluateAllRoisAsync(), _ => !IsBusy && HasAnyEnabledInspectionRoi());
         }
 
         public ObservableCollection<DatasetSample> OkSamples { get; }
         public ObservableCollection<DatasetSample> NgSamples { get; }
+
+        public ObservableCollection<InspectionRoiConfig> InspectionRois { get; private set; } = new();
+
+        public InspectionRoiConfig? SelectedInspectionRoi
+        {
+            get => _selectedInspectionRoi;
+            set
+            {
+                if (!ReferenceEquals(_selectedInspectionRoi, value))
+                {
+                    _selectedInspectionRoi = value;
+                    OnPropertyChanged();
+                    UpdateSelectedRoiState();
+                }
+            }
+        }
+
+        public void SetInspectionRoisCollection(ObservableCollection<InspectionRoiConfig>? rois)
+        {
+            if (ReferenceEquals(_inspectionRois, rois))
+            {
+                return;
+            }
+
+            if (_inspectionRois != null)
+            {
+                _inspectionRois.CollectionChanged -= InspectionRoisCollectionChanged;
+                foreach (var roi in _inspectionRois)
+                {
+                    roi.PropertyChanged -= InspectionRoiPropertyChanged;
+                }
+            }
+
+            _inspectionRois = rois;
+            InspectionRois = rois ?? new ObservableCollection<InspectionRoiConfig>();
+            OnPropertyChanged(nameof(InspectionRois));
+
+            if (_inspectionRois != null)
+            {
+                _inspectionRois.CollectionChanged += InspectionRoisCollectionChanged;
+                foreach (var roi in _inspectionRois)
+                {
+                    roi.PropertyChanged += InspectionRoiPropertyChanged;
+                }
+                if (_inspectionRois.Count > 0)
+                {
+                    SelectedInspectionRoi = _inspectionRois.FirstOrDefault();
+                }
+            }
+            else
+            {
+                SelectedInspectionRoi = null;
+            }
+
+            UpdateSelectedRoiState();
+            EvaluateAllRoisCommand.RaiseCanExecuteChanged();
+            UpdateGlobalBadge();
+        }
+
+        private void InspectionRoisCollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
+        {
+            if (e.OldItems != null)
+            {
+                foreach (InspectionRoiConfig roi in e.OldItems)
+                {
+                    roi.PropertyChanged -= InspectionRoiPropertyChanged;
+                }
+            }
+
+            if (e.NewItems != null)
+            {
+                foreach (InspectionRoiConfig roi in e.NewItems)
+                {
+                    roi.PropertyChanged += InspectionRoiPropertyChanged;
+                }
+            }
+
+            if (_inspectionRois != null && (SelectedInspectionRoi == null || !_inspectionRois.Contains(SelectedInspectionRoi)))
+            {
+                SelectedInspectionRoi = _inspectionRois.FirstOrDefault();
+            }
+
+            EvaluateAllRoisCommand.RaiseCanExecuteChanged();
+            UpdateGlobalBadge();
+        }
+
+        private void InspectionRoiPropertyChanged(object? sender, PropertyChangedEventArgs e)
+        {
+            if (e.PropertyName == nameof(InspectionRoiConfig.Enabled))
+            {
+                EvaluateAllRoisCommand.RaiseCanExecuteChanged();
+                EvaluateSelectedRoiCommand.RaiseCanExecuteChanged();
+            }
+
+            if (e.PropertyName == nameof(InspectionRoiConfig.LastResultOk) || e.PropertyName == nameof(InspectionRoiConfig.Enabled))
+            {
+                UpdateGlobalBadge();
+            }
+
+            if (ReferenceEquals(sender, SelectedInspectionRoi))
+            {
+                OnPropertyChanged(nameof(SelectedInspectionRoi));
+            }
+        }
 
         public DatasetSample? SelectedOkSample
         {
@@ -114,6 +236,11 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
         public AsyncCommand InferFromCurrentRoiCommand { get; }
         public AsyncCommand RefreshDatasetCommand { get; }
         public AsyncCommand RefreshHealthCommand { get; }
+        public AsyncCommand BrowseDatasetCommand { get; }
+        public AsyncCommand TrainSelectedRoiCommand { get; }
+        public AsyncCommand CalibrateSelectedRoiCommand { get; }
+        public AsyncCommand EvaluateSelectedRoiCommand { get; }
+        public AsyncCommand EvaluateAllRoisCommand { get; }
 
         public bool IsBusy
         {
@@ -336,6 +463,20 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
             InferFromCurrentRoiCommand.RaiseCanExecuteChanged();
             RefreshDatasetCommand.RaiseCanExecuteChanged();
             RefreshHealthCommand.RaiseCanExecuteChanged();
+            BrowseDatasetCommand.RaiseCanExecuteChanged();
+            TrainSelectedRoiCommand.RaiseCanExecuteChanged();
+            CalibrateSelectedRoiCommand.RaiseCanExecuteChanged();
+            EvaluateSelectedRoiCommand.RaiseCanExecuteChanged();
+            EvaluateAllRoisCommand.RaiseCanExecuteChanged();
+        }
+
+        private void UpdateSelectedRoiState()
+        {
+            BrowseDatasetCommand.RaiseCanExecuteChanged();
+            TrainSelectedRoiCommand.RaiseCanExecuteChanged();
+            CalibrateSelectedRoiCommand.RaiseCanExecuteChanged();
+            EvaluateSelectedRoiCommand.RaiseCanExecuteChanged();
+            EvaluateAllRoisCommand.RaiseCanExecuteChanged();
         }
 
         private async Task AddSampleAsync(bool isNg)
@@ -555,6 +696,218 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
             HealthSummary = $"{info.status ?? "ok"} — {info.device} — {info.model} ({info.version})";
         }
 
+        private async Task BrowseDatasetAsync()
+        {
+            var roi = SelectedInspectionRoi;
+            if (roi == null)
+            {
+                return;
+            }
+
+            await Application.Current.Dispatcher.InvokeAsync(() =>
+            {
+                using var dialog = new Forms.FolderBrowserDialog
+                {
+                    Description = "Select dataset folder",
+                    UseDescriptionForTitle = true,
+                };
+
+                if (!string.IsNullOrWhiteSpace(roi.DatasetPath) && Directory.Exists(roi.DatasetPath))
+                {
+                    dialog.SelectedPath = roi.DatasetPath;
+                }
+
+                if (dialog.ShowDialog() == Forms.DialogResult.OK)
+                {
+                    roi.DatasetPath = dialog.SelectedPath;
+                }
+            });
+        }
+
+        private async Task TrainSelectedRoiAsync()
+        {
+            EnsureRoleRoi();
+            var roi = SelectedInspectionRoi;
+            if (roi == null)
+            {
+                return;
+            }
+
+            if (string.IsNullOrWhiteSpace(roi.DatasetPath))
+            {
+                await ShowMessageAsync("Select a dataset path before training.");
+                return;
+            }
+
+            var entries = await Task.Run(() => LoadDatasetEntries(roi.DatasetPath!)).ConfigureAwait(false);
+            var okImages = entries.Where(e => e.IsOk).Select(e => e.Path).Where(File.Exists).ToList();
+            if (okImages.Count == 0)
+            {
+                await ShowMessageAsync("Dataset has no OK samples for training.");
+                return;
+            }
+
+            if (!await EnsureFitEndpointAsync().ConfigureAwait(false))
+            {
+                await ShowMessageAsync("Backend /fit_ok endpoint is not available.");
+                return;
+            }
+
+            try
+            {
+                var result = await _client.FitOkAsync(RoleId, roi.ModelKey, MmPerPx, okImages, roi.TrainMemoryFit).ConfigureAwait(false);
+                FitSummary = $"Embeddings={result.n_embeddings} Coreset={result.coreset_size} TokenShape=[{string.Join(',', result.token_shape ?? Array.Empty<int>())}]";
+            }
+            catch (HttpRequestException ex)
+            {
+                FitSummary = "Train failed";
+                await ShowMessageAsync($"Training failed: {ex.Message}", caption: "Train error");
+            }
+        }
+
+        private async Task CalibrateSelectedRoiAsync()
+        {
+            EnsureRoleRoi();
+            var roi = SelectedInspectionRoi;
+            if (roi == null)
+            {
+                return;
+            }
+
+            if (string.IsNullOrWhiteSpace(roi.DatasetPath))
+            {
+                await ShowMessageAsync("Select a dataset path before calibrating.");
+                return;
+            }
+
+            var entries = await Task.Run(() => LoadDatasetEntries(roi.DatasetPath!)).ConfigureAwait(false);
+            var okEntries = entries.Where(e => e.IsOk).ToList();
+            if (okEntries.Count == 0)
+            {
+                await ShowMessageAsync("Dataset has no OK samples for calibration.");
+                return;
+            }
+
+            var ngEntries = entries.Where(e => !e.IsOk).ToList();
+
+            var okScores = new List<double>();
+            foreach (var entry in okEntries)
+            {
+                var infer = await _client.InferAsync(RoleId, roi.ModelKey, MmPerPx, entry.Path).ConfigureAwait(false);
+                okScores.Add(infer.score);
+            }
+
+            var ngScores = new List<double>();
+            foreach (var entry in ngEntries)
+            {
+                var infer = await _client.InferAsync(RoleId, roi.ModelKey, MmPerPx, entry.Path).ConfigureAwait(false);
+                ngScores.Add(infer.score);
+            }
+
+            double? threshold = null;
+            if (await EnsureCalibrateEndpointAsync().ConfigureAwait(false))
+            {
+                try
+                {
+                    var calib = await _client.CalibrateAsync(RoleId, roi.ModelKey, MmPerPx, okScores, ngScores.Count > 0 ? ngScores : null).ConfigureAwait(false);
+                    threshold = calib.threshold;
+                    CalibrationSummary = $"Threshold={calib.threshold:0.###} OKµ={calib.ok_mean:0.###} NGµ={calib.ng_mean:0.###} Percentile={calib.score_percentile:0.###}";
+                }
+                catch (HttpRequestException ex)
+                {
+                    _log("[calibrate] backend error: " + ex.Message);
+                }
+            }
+
+            if (threshold == null)
+            {
+                threshold = ComputeYoudenThreshold(okScores, ngScores, roi.ThresholdDefault);
+                CalibrationSummary = $"Threshold={threshold:0.###} (local)";
+            }
+
+            roi.CalibratedThreshold = threshold;
+            OnPropertyChanged(nameof(SelectedInspectionRoi));
+            UpdateGlobalBadge();
+        }
+
+        private async Task EvaluateSelectedRoiAsync()
+        {
+            await EvaluateRoiAsync(SelectedInspectionRoi, CancellationToken.None).ConfigureAwait(false);
+        }
+
+        private async Task EvaluateAllRoisAsync()
+        {
+            if (_inspectionRois == null)
+            {
+                return;
+            }
+
+            foreach (var roi in _inspectionRois.Where(r => r.Enabled))
+            {
+                await EvaluateRoiAsync(roi, CancellationToken.None).ConfigureAwait(false);
+            }
+
+            UpdateGlobalBadge();
+        }
+
+        private async Task EvaluateRoiAsync(InspectionRoiConfig? roi, CancellationToken ct)
+        {
+            EnsureRoleRoi();
+            if (roi == null || !roi.Enabled)
+            {
+                return;
+            }
+
+            _log($"[eval] export ROI for {roi.Name}");
+            var export = await _exportRoiAsync().ConfigureAwait(false);
+            if (export == null)
+            {
+                _log("[eval] export cancelled");
+                return;
+            }
+
+            var result = await _client.InferAsync(RoleId, roi.ModelKey, MmPerPx, export.PngBytes, $"roi_{DateTime.UtcNow:yyyyMMddHHmmssfff}.png", export.ShapeJson, ct).ConfigureAwait(false);
+            _lastExport = export;
+            _lastInferResult = result;
+            InferenceScore = result.score;
+            InferenceThreshold = result.threshold;
+
+            if (result.threshold is > 0 double thresholdValue)
+            {
+                LocalThreshold = thresholdValue;
+            }
+
+            await Application.Current.Dispatcher.InvokeAsync(() =>
+            {
+                Regions.Clear();
+                if (result.regions != null)
+                {
+                    foreach (var region in result.regions)
+                    {
+                        Regions.Add(region);
+                    }
+                }
+            });
+
+            if (!string.IsNullOrWhiteSpace(result.heatmap_png_base64))
+            {
+                _lastHeatmapBytes = Convert.FromBase64String(result.heatmap_png_base64);
+                await _showHeatmapAsync(export, _lastHeatmapBytes, HeatmapOpacity).ConfigureAwait(false);
+            }
+            else
+            {
+                _lastHeatmapBytes = null;
+                _clearHeatmap();
+            }
+
+            roi.LastScore = result.score;
+            var decisionThreshold = roi.CalibratedThreshold ?? roi.ThresholdDefault;
+            roi.LastResultOk = result.score >= decisionThreshold;
+            roi.LastEvaluatedAt = DateTime.UtcNow;
+            OnPropertyChanged(nameof(SelectedInspectionRoi));
+            UpdateGlobalBadge();
+        }
+
         private void UpdateInferenceSummary()
         {
             if (InferenceScore == null)
@@ -585,6 +938,243 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
             if (string.IsNullOrWhiteSpace(RoiId))
                 RoiId = "DefaultRoi";
             _datasetManager.EnsureRoleRoiDirectories(RoleId, RoiId);
+        }
+
+        private async Task<bool> EnsureFitEndpointAsync()
+        {
+            if (_hasFitEndpoint.HasValue)
+            {
+                return _hasFitEndpoint.Value;
+            }
+
+            _hasFitEndpoint = await _client.SupportsEndpointAsync("fit_ok").ConfigureAwait(false);
+            return _hasFitEndpoint.Value;
+        }
+
+        private async Task<bool> EnsureCalibrateEndpointAsync()
+        {
+            if (_hasCalibrateEndpoint.HasValue)
+            {
+                return _hasCalibrateEndpoint.Value;
+            }
+
+            _hasCalibrateEndpoint = await _client.SupportsEndpointAsync("calibrate_ng").ConfigureAwait(false);
+            return _hasCalibrateEndpoint.Value;
+        }
+
+        private void UpdateGlobalBadge()
+        {
+            try
+            {
+                var state = CalcGlobalDiskOk();
+                if (Application.Current?.Dispatcher == null)
+                {
+                    _updateGlobalBadge(state);
+                    return;
+                }
+
+                if (Application.Current.Dispatcher.CheckAccess())
+                {
+                    _updateGlobalBadge(state);
+                }
+                else
+                {
+                    Application.Current.Dispatcher.BeginInvoke(new Action(() => _updateGlobalBadge(state)));
+                }
+            }
+            catch
+            {
+                // ignore badge errors
+            }
+        }
+
+        private bool? CalcGlobalDiskOk()
+        {
+            if (_inspectionRois == null)
+            {
+                return null;
+            }
+
+            var enabled = _inspectionRois.Where(r => r.Enabled).ToList();
+            if (enabled.Count == 0)
+            {
+                return null;
+            }
+
+            if (enabled.Any(r => r.LastResultOk == false))
+            {
+                return false;
+            }
+
+            if (enabled.All(r => r.LastResultOk == true))
+            {
+                return true;
+            }
+
+            return null;
+        }
+
+        private static async Task ShowMessageAsync(string message, string caption = "BrakeDiscInspector")
+        {
+            await Application.Current.Dispatcher.InvokeAsync(() =>
+            {
+                MessageBox.Show(message, caption, MessageBoxButton.OK, MessageBoxImage.Information);
+            });
+        }
+
+        private List<DatasetEntry> LoadDatasetEntries(string datasetPath)
+        {
+            var entries = new List<DatasetEntry>();
+            if (string.IsNullOrWhiteSpace(datasetPath))
+            {
+                return entries;
+            }
+
+            if (Directory.Exists(datasetPath))
+            {
+                var okDir = Path.Combine(datasetPath, "ok");
+                var ngDir = Path.Combine(datasetPath, "ng");
+
+                if (Directory.Exists(okDir) || Directory.Exists(ngDir))
+                {
+                    if (Directory.Exists(okDir))
+                    {
+                        entries.AddRange(EnumerateImages(okDir).Select(path => new DatasetEntry(path, true)));
+                    }
+
+                    if (Directory.Exists(ngDir))
+                    {
+                        entries.AddRange(EnumerateImages(ngDir).Select(path => new DatasetEntry(path, false)));
+                    }
+                }
+                else
+                {
+                    entries.AddRange(EnumerateImages(datasetPath).Select(path => new DatasetEntry(path, true)));
+                }
+
+                return entries;
+            }
+
+            if (File.Exists(datasetPath))
+            {
+                var baseDir = Path.GetDirectoryName(datasetPath);
+                foreach (var raw in File.ReadAllLines(datasetPath))
+                {
+                    var line = raw.Trim();
+                    if (string.IsNullOrEmpty(line))
+                    {
+                        continue;
+                    }
+
+                    var parts = line.Split(new[] { ',', ';', '\t' }, StringSplitOptions.RemoveEmptyEntries);
+                    if (parts.Length == 0)
+                    {
+                        continue;
+                    }
+
+                    var path = parts[0].Trim();
+                    if (!Path.IsPathRooted(path) && !string.IsNullOrEmpty(baseDir))
+                    {
+                        path = Path.GetFullPath(Path.Combine(baseDir!, path));
+                    }
+
+                    bool isOk = true;
+                    if (parts.Length > 1)
+                    {
+                        var label = parts[1].Trim().ToLowerInvariant();
+                        if (label is "ng" or "nok" or "fail" or "0")
+                        {
+                            isOk = false;
+                        }
+                        else if (label is "ok" or "1")
+                        {
+                            isOk = true;
+                        }
+                    }
+
+                    if (File.Exists(path))
+                    {
+                        entries.Add(new DatasetEntry(path, isOk));
+                    }
+                }
+            }
+
+            return entries;
+        }
+
+        private static IEnumerable<string> EnumerateImages(string directory)
+        {
+            if (!Directory.Exists(directory))
+            {
+                yield break;
+            }
+
+            string[] patterns = { "*.png", "*.jpg", "*.jpeg", "*.bmp", "*.tif", "*.tiff" };
+            foreach (var pattern in patterns)
+            {
+                foreach (var file in Directory.EnumerateFiles(directory, pattern, SearchOption.AllDirectories))
+                {
+                    yield return file;
+                }
+            }
+        }
+
+        private static double ComputeYoudenThreshold(IReadOnlyCollection<double> okScores, IReadOnlyCollection<double> ngScores, double defaultValue)
+        {
+            if (okScores.Count == 0)
+            {
+                return defaultValue;
+            }
+
+            if (ngScores.Count == 0)
+            {
+                return okScores.Average();
+            }
+
+            var all = okScores.Select(s => (Score: s, IsOk: true))
+                .Concat(ngScores.Select(s => (Score: s, IsOk: false)))
+                .OrderBy(pair => pair.Score)
+                .ToArray();
+
+            int totalOk = okScores.Count;
+            int totalNg = ngScores.Count;
+            int okAbove = totalOk;
+            int ngAbove = totalNg;
+
+            double bestJ = double.NegativeInfinity;
+            double bestThr = defaultValue;
+
+            for (int i = 0; i < all.Length; i++)
+            {
+                var current = all[i];
+                if (current.IsOk)
+                {
+                    okAbove--;
+                }
+                else
+                {
+                    ngAbove--;
+                }
+
+                double thr = current.Score;
+                double tpr = totalOk > 0 ? (double)okAbove / totalOk : 0;
+                double fpr = totalNg > 0 ? (double)ngAbove / totalNg : 0;
+                double j = tpr - fpr;
+                if (j > bestJ)
+                {
+                    bestJ = j;
+                    bestThr = thr;
+                }
+            }
+
+            return bestThr;
+        }
+
+        private sealed record DatasetEntry(string Path, bool IsOk);
+
+        private bool HasAnyEnabledInspectionRoi()
+        {
+            return _inspectionRois != null && _inspectionRois.Any(r => r.Enabled);
         }
 
         public event PropertyChangedEventHandler? PropertyChanged;

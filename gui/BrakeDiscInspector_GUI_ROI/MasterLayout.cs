@@ -36,9 +36,19 @@ namespace BrakeDiscInspector_GUI_ROI
         public static MasterLayout LoadOrNew(PresetFile preset)
         {
             var path = GetDefaultPath(preset);
-            if (!File.Exists(path)) return new MasterLayout();
-            var json = File.ReadAllText(path);
-            return JsonSerializer.Deserialize<MasterLayout>(json) ?? new MasterLayout();
+            MasterLayout layout;
+            if (!File.Exists(path))
+            {
+                layout = new MasterLayout();
+            }
+            else
+            {
+                var json = File.ReadAllText(path);
+                layout = JsonSerializer.Deserialize<MasterLayout>(json) ?? new MasterLayout();
+            }
+
+            EnsureInspectionRoiDefaults(layout);
+            return layout;
         }
 
         public static void Save(PresetFile preset, MasterLayout layout)
@@ -48,22 +58,61 @@ namespace BrakeDiscInspector_GUI_ROI
             var json = JsonSerializer.Serialize(layout, new JsonSerializerOptions { WriteIndented = true });
             File.WriteAllText(path, json);
         }
+        private static void EnsureInspectionRoiDefaults(MasterLayout layout)
+        {
+            for (int i = 0; i < layout.InspectionRois.Count; i++)
+            {
+                var roi = layout.InspectionRois[i];
+                if (string.IsNullOrWhiteSpace(roi.Name))
+                {
+                    roi.Name = $"Inspection {i + 1}";
+                }
+
+                if (string.IsNullOrWhiteSpace(roi.ModelKey))
+                {
+                    roi.ModelKey = $"inspection-{i + 1}";
+                }
+            }
+        }
     }
 
     public class InspectionRoiConfig : INotifyPropertyChanged
     {
+        private readonly int _index;
         private bool _enabled = true;
-        private string? _modelKey;
+        private string _modelKey;
         private double _threshold;
         private RoiShape _shape = RoiShape.Rectangle;
+        private string _name;
+        private string? _datasetPath;
+        private bool _trainMemoryFit;
+        private double? _calibratedThreshold;
+        private double _thresholdDefault = 0.5;
+        private double? _lastScore;
+        private bool? _lastResultOk;
+        private DateTime? _lastEvaluatedAt;
 
         public InspectionRoiConfig(int index)
         {
+            _index = index;
             DisplayName = $"ROI {index}";
-            _modelKey = "default";
+            _name = $"Inspection {index}";
+            _modelKey = $"inspection-{index}";
         }
 
         public string DisplayName { get; }
+
+        public string Name
+        {
+            get => _name;
+            set
+            {
+                var newValue = string.IsNullOrWhiteSpace(value) ? $"Inspection {_index}" : value;
+                if (string.Equals(_name, newValue, StringComparison.Ordinal)) return;
+                _name = newValue;
+                OnPropertyChanged();
+            }
+        }
 
         public bool Enabled
         {
@@ -76,13 +125,91 @@ namespace BrakeDiscInspector_GUI_ROI
             }
         }
 
-        public string? ModelKey
+        public string ModelKey
         {
             get => _modelKey;
             set
             {
-                if (_modelKey == value) return;
-                _modelKey = value;
+                var newValue = string.IsNullOrWhiteSpace(value) ? $"inspection-{_index}" : value;
+                if (string.Equals(_modelKey, newValue, StringComparison.Ordinal)) return;
+                _modelKey = newValue;
+                OnPropertyChanged();
+            }
+        }
+
+        public string? DatasetPath
+        {
+            get => _datasetPath;
+            set
+            {
+                if (string.Equals(_datasetPath, value, StringComparison.Ordinal)) return;
+                _datasetPath = value;
+                OnPropertyChanged();
+            }
+        }
+
+        public bool TrainMemoryFit
+        {
+            get => _trainMemoryFit;
+            set
+            {
+                if (_trainMemoryFit == value) return;
+                _trainMemoryFit = value;
+                OnPropertyChanged();
+            }
+        }
+
+        public double? CalibratedThreshold
+        {
+            get => _calibratedThreshold;
+            set
+            {
+                if (_calibratedThreshold == value) return;
+                _calibratedThreshold = value;
+                OnPropertyChanged();
+            }
+        }
+
+        public double ThresholdDefault
+        {
+            get => _thresholdDefault;
+            set
+            {
+                if (Math.Abs(_thresholdDefault - value) < double.Epsilon) return;
+                _thresholdDefault = value;
+                OnPropertyChanged();
+            }
+        }
+
+        public double? LastScore
+        {
+            get => _lastScore;
+            set
+            {
+                if (_lastScore == value) return;
+                _lastScore = value;
+                OnPropertyChanged();
+            }
+        }
+
+        public bool? LastResultOk
+        {
+            get => _lastResultOk;
+            set
+            {
+                if (_lastResultOk == value) return;
+                _lastResultOk = value;
+                OnPropertyChanged();
+            }
+        }
+
+        public DateTime? LastEvaluatedAt
+        {
+            get => _lastEvaluatedAt;
+            set
+            {
+                if (_lastEvaluatedAt == value) return;
+                _lastEvaluatedAt = value;
                 OnPropertyChanged();
             }
         }

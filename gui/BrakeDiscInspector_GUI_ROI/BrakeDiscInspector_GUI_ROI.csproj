@@ -3,6 +3,7 @@
                 <OutputType>WinExe</OutputType>
                 <TargetFramework>net8.0-windows</TargetFramework>
                 <UseWPF>true</UseWPF>
+                <UseWindowsForms>true</UseWindowsForms>
                 <EnableWindowsTargeting>true</EnableWindowsTargeting>
 
                 <!-- Arquitectura fija x64 para que cargue los nativos -->

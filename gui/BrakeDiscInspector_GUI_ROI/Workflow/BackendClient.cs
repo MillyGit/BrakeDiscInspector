@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Net.Http;
+using System.Net;
 using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
@@ -80,11 +81,41 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
         //  Endpoints
         // =========================
 
+        public async Task<bool> SupportsEndpointAsync(string relativePath, CancellationToken ct = default)
+        {
+            try
+            {
+                using var request = new HttpRequestMessage(HttpMethod.Options, relativePath);
+                using var response = await _httpClient.SendAsync(request, ct).ConfigureAwait(false);
+                if (response.StatusCode == HttpStatusCode.NotFound)
+                {
+                    return false;
+                }
+
+                if (response.StatusCode == HttpStatusCode.MethodNotAllowed)
+                {
+                    return true;
+                }
+
+                if ((int)response.StatusCode >= 200 && (int)response.StatusCode < 400)
+                {
+                    return true;
+                }
+
+                return response.StatusCode != HttpStatusCode.NotFound;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
         public async Task<FitOkResult> FitOkAsync(
             string roleId,
             string roiId,
             double mmPerPx,
             IEnumerable<string> okImagePaths,
+            bool memoryFit = false,
             CancellationToken ct = default)
         {
             if (string.IsNullOrWhiteSpace(roleId)) throw new ArgumentException("Role id required", nameof(roleId));
@@ -94,6 +125,7 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
             form.Add(new StringContent(roleId), "role_id");
             form.Add(new StringContent(roiId), "roi_id");
             form.Add(new StringContent(mmPerPx.ToString(CultureInfo.InvariantCulture)), "mm_per_px");
+            form.Add(new StringContent(memoryFit ? "true" : "false"), "memory_fit");
 
             bool hasImage = false;
             foreach (var path in okImagePaths)

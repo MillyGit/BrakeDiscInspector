@@ -5,7 +5,7 @@
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              mc:Ignorable="d"
              d:DesignHeight="600"
-             d:DesignWidth="600">
+             d:DesignWidth="480">
     <ScrollViewer VerticalScrollBarVisibility="Auto">
         <StackPanel Margin="10" Orientation="Vertical">
             <StackPanel.Resources>
@@ -13,7 +13,8 @@
                     <Setter Property="Margin" Value="0,0,0,12"/>
                 </Style>
             </StackPanel.Resources>
-            <GroupBox Header="Backend &amp; ROI">
+
+            <GroupBox Header="Backend">
                 <Grid Margin="8">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>
@@ -52,111 +53,98 @@
                 </Grid>
             </GroupBox>
 
-            <GroupBox Header="Dataset">
-                <Grid Margin="8">
-                    <Grid.RowDefinitions>
-                        <RowDefinition Height="Auto"/>
-                        <RowDefinition Height="*"/>
-                    </Grid.RowDefinitions>
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*"/>
-                        <ColumnDefinition Width="*"/>
-                    </Grid.ColumnDefinitions>
-
-                    <StackPanel Orientation="Horizontal" Grid.Row="0" Grid.ColumnSpan="2">
-                        <Button Content="Add OK from current ROI" Padding="12,4" Margin="0,0,8,0"
-                                Command="{Binding AddOkFromCurrentRoiCommand}"/>
-                        <Button Content="Add NG from current ROI" Padding="12,4" Margin="0,0,8,0"
-                                Command="{Binding AddNgFromCurrentRoiCommand}"/>
-                        <Button Content="Remove selected" Padding="12,4" Margin="0,0,8,0"
-                                Command="{Binding RemoveSelectedCommand}"/>
-                        <Button Content="Open folder" Padding="12,4" Margin="0,0,8,0"
-                                Command="{Binding OpenDatasetFolderCommand}"/>
-                        <Button Content="Refresh" Padding="12,4"
-                                Command="{Binding RefreshDatasetCommand}"/>
-                    </StackPanel>
-
-                    <GroupBox Header="OK" Margin="0,8,4,0" Grid.Row="1" Grid.Column="0">
-                        <ListBox ItemsSource="{Binding OkSamples}"
-                                 SelectedItem="{Binding SelectedOkSample}" Height="220"
-                                 ScrollViewer.HorizontalScrollBarVisibility="Disabled">
-                            <ListBox.ItemTemplate>
-                                <DataTemplate>
-                                    <StackPanel Orientation="Horizontal">
-                                        <Image Source="{Binding Thumbnail}" Width="120" Height="80" Stretch="UniformToFill" Margin="0,0,8,0"/>
-                                        <StackPanel>
-                                            <TextBlock Text="{Binding ImagePath}" TextWrapping="Wrap" Width="220"/>
-                                            <TextBlock Text="{Binding Metadata.timestamp}"/>
-                                        </StackPanel>
-                                    </StackPanel>
-                                </DataTemplate>
-                            </ListBox.ItemTemplate>
-                        </ListBox>
-                    </GroupBox>
-
-                    <GroupBox Header="NG" Margin="4,8,0,0" Grid.Row="1" Grid.Column="1">
-                        <ListBox ItemsSource="{Binding NgSamples}"
-                                 SelectedItem="{Binding SelectedNgSample}" Height="220"
-                                 ScrollViewer.HorizontalScrollBarVisibility="Disabled">
-                            <ListBox.ItemTemplate>
-                                <DataTemplate>
-                                    <StackPanel Orientation="Horizontal">
-                                        <Image Source="{Binding Thumbnail}" Width="120" Height="80" Stretch="UniformToFill" Margin="0,0,8,0"/>
-                                        <StackPanel>
-                                            <TextBlock Text="{Binding ImagePath}" TextWrapping="Wrap" Width="220"/>
-                                            <TextBlock Text="{Binding Metadata.timestamp}"/>
-                                        </StackPanel>
-                                    </StackPanel>
-                                </DataTemplate>
-                            </ListBox.ItemTemplate>
-                        </ListBox>
-                    </GroupBox>
-                </Grid>
-            </GroupBox>
-
-            <GroupBox Header="Train / Calibrate">
+            <GroupBox Header="Inspection ROI Actions">
                 <StackPanel Margin="8">
-                    <Button Content="Train memory (fit_ok)" Margin="0,0,0,8"
-                            Command="{Binding TrainFitCommand}" Padding="12,4" Width="220"/>
-                    <TextBlock Text="{Binding FitSummary}" TextWrapping="Wrap" Margin="0,0,0,8"/>
-                    <Button Content="Calibrate threshold" Margin="0,0,0,8"
-                            Command="{Binding CalibrateCommand}" Padding="12,4" Width="220"/>
-                    <TextBlock Text="{Binding CalibrationSummary}" TextWrapping="Wrap"/>
+                    <Grid x:Name="RoiActionsPanel">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="*"/>
+                        </Grid.RowDefinitions>
+
+                        <!-- ROI selector -->
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                            <TextBlock Text="Inspection ROI:" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                            <ComboBox x:Name="CmbInspectionRoi"
+                                      ItemsSource="{Binding InspectionRois}"
+                                      SelectedItem="{Binding SelectedInspectionRoi}"
+                                      DisplayMemberPath="Name" Width="180"/>
+                            <CheckBox Content="Enabled" IsChecked="{Binding SelectedInspectionRoi.Enabled}" Margin="8,0,0,0"/>
+                        </StackPanel>
+
+                        <!-- Identity -->
+                        <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,0,0,8">
+                            <TextBlock Text="Name" Width="70" VerticalAlignment="Center"/>
+                            <TextBox Text="{Binding SelectedInspectionRoi.Name}" Width="180" Margin="0,0,12,0"/>
+                            <TextBlock Text="ModelKey" Width="70" VerticalAlignment="Center"/>
+                            <TextBox Text="{Binding SelectedInspectionRoi.ModelKey}" Width="180"/>
+                        </StackPanel>
+
+                        <!-- Dataset & options -->
+                        <StackPanel Grid.Row="2" Orientation="Horizontal" Margin="0,0,0,8">
+                            <TextBlock Text="Dataset" Width="70" VerticalAlignment="Center"/>
+                            <TextBox Text="{Binding SelectedInspectionRoi.DatasetPath}" Width="320" Margin="0,0,8,0"/>
+                            <Button Content="Browse..." Command="{Binding BrowseDatasetCommand}" />
+                            <CheckBox Content="Memory-Fit" IsChecked="{Binding SelectedInspectionRoi.TrainMemoryFit}" Margin="12,0,0,0"/>
+                        </StackPanel>
+
+                        <!-- Actions -->
+                        <StackPanel Grid.Row="3" Orientation="Horizontal" Margin="0,0,0,8">
+                            <Button Content="Train" Command="{Binding TrainSelectedRoiCommand}" Margin="0,0,8,0"/>
+                            <Button Content="Calibrate" Command="{Binding CalibrateSelectedRoiCommand}" Margin="0,0,8,0"/>
+                            <Button Content="Evaluate current ROI" Command="{Binding EvaluateSelectedRoiCommand}" Margin="0,0,8,0"/>
+                            <Button Content="Evaluate All" Command="{Binding EvaluateAllRoisCommand}" />
+                        </StackPanel>
+
+                        <!-- Status -->
+                        <StackPanel Grid.Row="4" Orientation="Horizontal">
+                            <TextBlock Text="Score:" Margin="0,0,8,0"/>
+                            <TextBlock Text="{Binding SelectedInspectionRoi.LastScore, StringFormat=0.000}"/>
+                            <TextBlock Text="  |  Result:" Margin="8,0,8,0"/>
+                            <TextBlock Text="{Binding SelectedInspectionRoi.LastResultOk}"/>
+                            <TextBlock Text="  |  Calibrated Threshold:" Margin="8,0,8,0"/>
+                            <TextBlock Text="{Binding SelectedInspectionRoi.CalibratedThreshold, StringFormat=0.000}"/>
+                        </StackPanel>
+                    </Grid>
+
+                    <TextBlock Text="{Binding FitSummary}" TextWrapping="Wrap" Margin="0,12,0,0"/>
+                    <TextBlock Text="{Binding CalibrationSummary}" TextWrapping="Wrap" Margin="0,4,0,0"/>
+                    <TextBlock Text="{Binding InferenceSummary}" TextWrapping="Wrap" Margin="0,4,0,0"/>
                 </StackPanel>
             </GroupBox>
 
-            <GroupBox Header="Inference">
+            <GroupBox Header="Visualization">
                 <StackPanel Margin="8">
-                    <Button Content="Evaluate current ROI" Margin="0,0,0,8"
-                            Command="{Binding InferFromCurrentRoiCommand}" Padding="12,4" Width="220"/>
-                    <TextBlock Text="{Binding InferenceSummary}" TextWrapping="Wrap" Margin="0,0,0,8"/>
                     <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
                         <TextBlock Text="Heatmap opacity" VerticalAlignment="Center" Margin="0,0,8,0"/>
                         <Slider Minimum="0" Maximum="1" Width="200" Margin="0,0,8,0"
                                 Value="{Binding HeatmapOpacity, Mode=TwoWay}"/>
                         <TextBlock Text="{Binding HeatmapOpacity, StringFormat={}{0:F2}}" VerticalAlignment="Center"/>
                     </StackPanel>
-                    <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                    <StackPanel Orientation="Horizontal">
                         <TextBlock Text="Local threshold" VerticalAlignment="Center" Margin="0,0,8,0"/>
                         <Slider Minimum="0" Maximum="5" Width="200" Margin="0,0,8,0"
                                 Value="{Binding LocalThreshold, Mode=TwoWay}"/>
                         <TextBox Width="80" Text="{Binding LocalThreshold, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged, StringFormat={}{0:F3}}"/>
                     </StackPanel>
-                    <GroupBox Header="Regions" Margin="0,8,0,0">
-                        <ListView ItemsSource="{Binding Regions}" Height="160">
-                            <ListView.View>
-                                <GridView>
-                                    <GridViewColumn Header="x" DisplayMemberBinding="{Binding x, StringFormat={}{0:F1}}" Width="60"/>
-                                    <GridViewColumn Header="y" DisplayMemberBinding="{Binding y, StringFormat={}{0:F1}}" Width="60"/>
-                                    <GridViewColumn Header="w" DisplayMemberBinding="{Binding w, StringFormat={}{0:F1}}" Width="60"/>
-                                    <GridViewColumn Header="h" DisplayMemberBinding="{Binding h, StringFormat={}{0:F1}}" Width="60"/>
-                                    <GridViewColumn Header="area px" DisplayMemberBinding="{Binding area_px, StringFormat={}{0:F1}}" Width="80"/>
-                                    <GridViewColumn Header="area mm²" DisplayMemberBinding="{Binding area_mm2, StringFormat={}{0:F2}}" Width="100"/>
-                                </GridView>
-                            </ListView.View>
-                        </ListView>
-                    </GroupBox>
                 </StackPanel>
+            </GroupBox>
+
+            <GroupBox Header="Regions">
+                <ListView ItemsSource="{Binding Regions}" Height="160">
+                    <ListView.View>
+                        <GridView>
+                            <GridViewColumn Header="x" DisplayMemberBinding="{Binding x, StringFormat={}{0:F1}}" Width="60"/>
+                            <GridViewColumn Header="y" DisplayMemberBinding="{Binding y, StringFormat={}{0:F1}}" Width="60"/>
+                            <GridViewColumn Header="w" DisplayMemberBinding="{Binding w, StringFormat={}{0:F1}}" Width="60"/>
+                            <GridViewColumn Header="h" DisplayMemberBinding="{Binding h, StringFormat={}{0:F1}}" Width="60"/>
+                            <GridViewColumn Header="area px" DisplayMemberBinding="{Binding area_px, StringFormat={}{0:F1}}" Width="80"/>
+                            <GridViewColumn Header="area mm²" DisplayMemberBinding="{Binding area_mm2, StringFormat={}{0:F2}}" Width="100"/>
+                        </GridView>
+                    </ListView.View>
+                </ListView>
             </GroupBox>
         </StackPanel>
     </ScrollViewer>
