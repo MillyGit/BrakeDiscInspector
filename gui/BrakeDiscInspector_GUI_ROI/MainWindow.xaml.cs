@@ -1373,12 +1373,15 @@ namespace BrakeDiscInspector_GUI_ROI
                     () => _currentImagePathWin,
                     AppendLog,
                     ShowHeatmapOverlayAsync,
-                    ClearHeatmapOverlay);
+                    ClearHeatmapOverlay,
+                    UpdateGlobalBadge);
 
                 if (WorkflowHost != null)
                 {
                     WorkflowHost.DataContext = _workflowViewModel;
                 }
+
+                _workflowViewModel.SetInspectionRoisCollection(_layout?.InspectionRois);
 
                 Dispatcher.BeginInvoke(new Action(() =>
                 {
@@ -2673,6 +2676,38 @@ namespace BrakeDiscInspector_GUI_ROI
             catch (Exception ex)
             {
                 AppendLog("[heatmap] error: " + ex.Message);
+            }
+        }
+
+        public void UpdateGlobalBadge(bool? ok)
+        {
+            if (DiskStatusHUD == null || DiskStatusText == null)
+            {
+                return;
+            }
+
+            if (ok == null)
+            {
+                DiskStatusHUD.Visibility = Visibility.Collapsed;
+                return;
+            }
+
+            DiskStatusHUD.Visibility = Visibility.Visible;
+            if (ok.Value)
+            {
+                DiskStatusText.Text = "✅  DISK OK";
+                if (DiskStatusPanel != null)
+                {
+                    DiskStatusPanel.BorderBrush = (Brush)new BrushConverter().ConvertFromString("#39FF14");
+                }
+            }
+            else
+            {
+                DiskStatusText.Text = "❌  DISK NOK";
+                if (DiskStatusPanel != null)
+                {
+                    DiskStatusPanel.BorderBrush = Brushes.Red;
+                }
             }
         }
 
@@ -4720,50 +4755,17 @@ namespace BrakeDiscInspector_GUI_ROI
 
         private void LogToFileAndUI(string message)
         {
+#if DEBUG
             var stamped = $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}] {message}";
-
-            try
-            {
-                lock (_fileLogLock)
-                {
-                    var directory = System.IO.Path.GetDirectoryName(_fileLogPath);
-                    if (!string.IsNullOrEmpty(directory) && !Directory.Exists(directory))
-                    {
-                        Directory.CreateDirectory(directory);
-                    }
-
-                    System.IO.File.AppendAllText(_fileLogPath, stamped + Environment.NewLine, Encoding.UTF8);
-                }
-            }
-            catch
-            {
-                // ignore file logging errors
-            }
-
-            if (TrainLogText == null)
-            {
-                return;
-            }
-
-            if (!Dispatcher.CheckAccess())
-            {
-                var copy = stamped;
-                Dispatcher.BeginInvoke(new Action(() => AppendLogLine(copy)));
-                return;
-            }
-
-            AppendLogLine(stamped);
+            Debug.WriteLine(stamped);
+#endif
         }
 
         private void AppendLogLine(string line)
         {
-            if (TrainLogText == null)
-            {
-                return;
-            }
-
-            TrainLogText.AppendText(line + Environment.NewLine);
-            TrainLogText.ScrollToEnd();
+#if DEBUG
+            Debug.WriteLine(line);
+#endif
         }
 
         // --------- AppendLog (para evitar CS0119 en invocaciones) ---------
@@ -5828,6 +5830,7 @@ namespace BrakeDiscInspector_GUI_ROI
             _preset = PresetManager.Load(o.FileName);
             ApplyPresetToUI(_preset);
             _layout = MasterLayoutManager.LoadOrNew(_preset);
+            _workflowViewModel?.SetInspectionRoisCollection(_layout?.InspectionRois);
             EnsureInspectionBaselineInitialized();
             {
                 var seedKey = ComputeImageSeedKey();
@@ -5861,6 +5864,7 @@ namespace BrakeDiscInspector_GUI_ROI
         private void BtnLoadLayout_Click(object sender, RoutedEventArgs e)
         {
             _layout = MasterLayoutManager.LoadOrNew(_preset);
+            _workflowViewModel?.SetInspectionRoisCollection(_layout?.InspectionRois);
             EnsureInspectionBaselineInitialized();
             {
                 var seedKey = ComputeImageSeedKey();
