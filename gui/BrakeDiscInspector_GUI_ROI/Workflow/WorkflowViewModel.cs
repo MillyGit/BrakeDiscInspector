@@ -872,7 +872,8 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
             InferenceScore = result.score;
             InferenceThreshold = result.threshold;
 
-            if (result.threshold is > 0 double thresholdValue)
+            double thresholdValue = result.threshold;
+            if (thresholdValue > 0)
             {
                 LocalThreshold = thresholdValue;
             }
