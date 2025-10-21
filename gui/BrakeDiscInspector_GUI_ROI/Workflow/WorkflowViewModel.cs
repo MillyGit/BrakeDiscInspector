@@ -497,55 +497,49 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
                 return;
             }
 
-            string tempFile = Path.Combine(Path.GetTempPath(), $"roi_infer_{Guid.NewGuid():N}.png");
-            await File.WriteAllBytesAsync(tempFile, export.PngBytes).ConfigureAwait(false);
-            try
+            var inferFileName = $"roi_{DateTime.UtcNow:yyyyMMddHHmmssfff}.png";
+            _log($"[infer] POST role={RoleId} roi={RoiId} bytes={export.PngBytes.Length} imgHash={export.ImageHash} cropHash={export.CropHash} rect=({export.CropRect.X},{export.CropRect.Y},{export.CropRect.Width},{export.CropRect.Height})");
+
+            var result = await _client.InferAsync(RoleId, RoiId, MmPerPx, export.PngBytes, inferFileName, export.ShapeJson).ConfigureAwait(false);
+            _lastExport = export;
+            _lastInferResult = result;
+            InferenceScore = result.score;
+            InferenceThreshold = result.threshold;
+
+            // ANTES:
+            // LocalThreshold = result.threshold > 0 ? result.threshold : LocalThreshold;
+
+            // AHORA (elige una de las dos):
+            // Opción 1:
+            if (result.threshold.HasValue && result.threshold.Value > 0)
             {
-                var result = await _client.InferAsync(RoleId, RoiId, MmPerPx, tempFile, export.ShapeJson).ConfigureAwait(false);
-                _lastExport = export;
-                _lastInferResult = result;
-                InferenceScore = result.score;
-                InferenceThreshold = result.threshold;
-                
-                // ANTES:
-                // LocalThreshold = result.threshold > 0 ? result.threshold : LocalThreshold;
-                
-                // AHORA (elige una de las dos):
-                // Opción 1:
-                if (result.threshold.HasValue && result.threshold.Value > 0)
-                {
-                    LocalThreshold = result.threshold.Value;
-                }
-                // Opción 2 (C# 9+):
-                // LocalThreshold = result.threshold is > 0 var t ? t : LocalThreshold;
-                
-                await Application.Current.Dispatcher.InvokeAsync(() =>
-                {
-                    Regions.Clear();
-                    if (result.regions != null)
-                    {
-                        foreach (var region in result.regions)
-                        {
-                            Regions.Add(region);
-                        }
-                    }
-                });
-
-
-                if (!string.IsNullOrWhiteSpace(result.heatmap_png_base64))
-                {
-                    _lastHeatmapBytes = Convert.FromBase64String(result.heatmap_png_base64);
-                    await _showHeatmapAsync(export, _lastHeatmapBytes, HeatmapOpacity).ConfigureAwait(false);
-                }
-                else
-                {
-                    _lastHeatmapBytes = null;
-                    _clearHeatmap();
-                }
+                LocalThreshold = result.threshold.Value;
             }
-            finally
+            // Opción 2 (C# 9+):
+            // LocalThreshold = result.threshold is > 0 var t ? t : LocalThreshold;
+
+            await Application.Current.Dispatcher.InvokeAsync(() =>
             {
-                try { File.Delete(tempFile); } catch { }
+                Regions.Clear();
+                if (result.regions != null)
+                {
+                    foreach (var region in result.regions)
+                    {
+                        Regions.Add(region);
+                    }
+                }
+            });
+
+
+            if (!string.IsNullOrWhiteSpace(result.heatmap_png_base64))
+            {
+                _lastHeatmapBytes = Convert.FromBase64String(result.heatmap_png_base64);
+                await _showHeatmapAsync(export, _lastHeatmapBytes, HeatmapOpacity).ConfigureAwait(false);
+            }
+            else
+            {
+                _lastHeatmapBytes = null;
+                _clearHeatmap();
             }
         }
 

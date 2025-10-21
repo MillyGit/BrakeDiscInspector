@@ -10,10 +10,12 @@ using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Net.Http;
+using System.Reflection;
 using System.Reflection.Emit;
 using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
+using System.Security.Cryptography;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Documents;
@@ -75,6 +77,7 @@ namespace BrakeDiscInspector_GUI_ROI
         private string _currentImagePathWin = "";
         private string _currentImagePathBackend = "";
         private BitmapImage? _imgSourceBI;
+        private BitmapSource? _currentImageSource;
         private int _imgW, _imgH;
         private bool _hasLoadedImage;
         private bool _isFirstImageLoaded = false;
@@ -148,6 +151,120 @@ namespace BrakeDiscInspector_GUI_ROI
         private void Dbg(string msg)
         {
             System.Diagnostics.Debug.WriteLine(msg);
+        }
+
+        // -------- Logging shim (works with or without _log) --------
+        [System.Diagnostics.Conditional("DEBUG")]
+        private void LogDebug(string msg)
+        {
+            try
+            {
+                var loggerField = typeof(MainWindow).GetField("_log", BindingFlags.Instance | BindingFlags.NonPublic);
+                var logger = loggerField?.GetValue(this);
+                if (logger != null)
+                {
+                    var infoMethod = logger.GetType().GetMethod("Info", new[] { typeof(string) });
+                    infoMethod?.Invoke(logger, new object[] { msg });
+                }
+            }
+            catch
+            {
+                // ignore shim errors
+            }
+
+            Debug.WriteLine(msg);
+        }
+
+        // -------- Hashing / Pixel helpers --------
+        private static string HashSHA256(byte[] data)
+        {
+            using var sha = SHA256.Create();
+            var h = sha.ComputeHash(data);
+            return BitConverter.ToString(h).Replace("-", string.Empty);
+        }
+
+        private static byte[] GetPixels(BitmapSource bmp)
+        {
+            int stride = (bmp.PixelWidth * bmp.Format.BitsPerPixel + 7) / 8;
+            var pixels = new byte[stride * bmp.PixelHeight];
+            bmp.CopyPixels(pixels, stride, 0);
+            return pixels;
+        }
+
+        private static BitmapSource CropToBitmap(BitmapSource src, System.Windows.Int32Rect rect)
+        {
+            rect.X = Math.Max(0, Math.Min(rect.X, src.PixelWidth - 1));
+            rect.Y = Math.Max(0, Math.Min(rect.Y, src.PixelHeight - 1));
+            rect.Width = Math.Max(1, Math.Min(rect.Width, src.PixelWidth - rect.X));
+            rect.Height = Math.Max(1, Math.Min(rect.Height, src.PixelHeight - rect.Y));
+            var cropped = new CroppedBitmap(src, rect);
+            if (cropped.CanFreeze && !cropped.IsFrozen)
+            {
+                try { cropped.Freeze(); } catch { }
+            }
+            return cropped;
+        }
+
+        private void OnImageLoaded_SetCurrentSource(BitmapSource? src)
+        {
+            if (src == null)
+            {
+                _currentImageSource = null;
+                LogDebug("[ImageLoad] currentImage cleared (null).");
+                return;
+            }
+
+            BitmapSource snapshot = src;
+            if (!snapshot.IsFrozen)
+            {
+                try
+                {
+                    if (snapshot.CanFreeze)
+                    {
+                        snapshot.Freeze();
+                    }
+                    else
+                    {
+                        snapshot = snapshot.Clone();
+                        if (snapshot.CanFreeze && !snapshot.IsFrozen)
+                        {
+                            snapshot.Freeze();
+                        }
+                    }
+                }
+                catch
+                {
+                    try
+                    {
+                        snapshot = snapshot.Clone();
+                        if (snapshot.CanFreeze && !snapshot.IsFrozen)
+                        {
+                            snapshot.Freeze();
+                        }
+                    }
+                    catch
+                    {
+                        // swallow clone/freeze issues
+                    }
+                }
+            }
+
+            _currentImageSource = snapshot;
+            LogDebug($"[ImageLoad] currentImage set: {_currentImageSource?.PixelWidth}x{_currentImageSource?.PixelHeight} fmt={_currentImageSource?.Format}");
+        }
+
+        private static System.Windows.Int32Rect RoiRectImageSpace(RoiModel r)
+        {
+            double cx = !double.IsNaN(r.CX) ? r.CX : r.X;
+            double cy = !double.IsNaN(r.CY) ? r.CY : r.Y;
+            double w = r.Width > 0 ? r.Width : (r.R > 0 ? 2 * r.R : 1);
+            double h = r.Height > 0 ? r.Height : (r.R > 0 ? 2 * r.R : 1);
+
+            int x = (int)Math.Round(cx - w / 2.0);
+            int y = (int)Math.Round(cy - h / 2.0);
+            int W = Math.Max(1, (int)Math.Round(w));
+            int H = Math.Max(1, (int)Math.Round(h));
+            return new System.Windows.Int32Rect(x, y, W, H);
         }
 
         private static double NormalizeAngleRad(double ang)
@@ -1587,6 +1704,7 @@ namespace BrakeDiscInspector_GUI_ROI
             _imgSourceBI.EndInit();
 
             ImgMain.Source = _imgSourceBI;
+            OnImageLoaded_SetCurrentSource(_imgSourceBI);
             // RoiOverlay disabled: labels are now drawn on Canvas only
             // RoiOverlay.InvalidateOverlay();
             _imgW = _imgSourceBI.PixelWidth;
@@ -2515,10 +2633,16 @@ namespace BrakeDiscInspector_GUI_ROI
 
                 await Dispatcher.InvokeAsync(() =>
                 {
+                    ClearHeatmapOverlay();
                     _lastHeatmapRoi = HeatmapRoiModel.From(export.RoiImage.Clone());
                     _heatmapOverlayOpacity = Math.Clamp(opacity, 0.0, 1.0);
                     EnterAnalysisView();
                     WireExistingHeatmapControls();
+
+                    if (_chkHeatmap != null)
+                    {
+                        _chkHeatmap.IsChecked = true;
+                    }
 
                     CacheHeatmapGrayFromBitmapSource(heatmapSource);
                     RebuildHeatmapOverlayFromCache();
@@ -2534,11 +2658,16 @@ namespace BrakeDiscInspector_GUI_ROI
                     }
 
                     // OPTIONAL: bump overlay opacity a bit (visual only)
-                    if (HeatmapOverlay != null) HeatmapOverlay.Opacity = 0.90;
+                    if (HeatmapOverlay != null)
+                    {
+                        HeatmapOverlay.Visibility = Visibility.Visible;
+                        HeatmapOverlay.Opacity = 0.90;
+                    }
 
                     UpdateHeatmapOverlayLayoutAndClip();
 
                     _heatmapOverlayOpacity = HeatmapOverlay?.Opacity ?? _heatmapOverlayOpacity;
+                    LogDebug("[Eval] Heatmap overlay rebuilt and shown.");
                 }, DispatcherPriority.Render);
             }
             catch (Exception ex)
@@ -5268,24 +5397,72 @@ namespace BrakeDiscInspector_GUI_ROI
         private async Task<Workflow.RoiExportResult?> ExportCurrentRoiCanonicalAsync()
         {
             RoiModel? roiImage = null;
-            string? imagePath = null;
+            BitmapSource? imageSource = null;
 
             await Dispatcher.InvokeAsync(() =>
             {
+                RoiModel? candidate;
                 if (_tmpBuffer != null && _tmpBuffer.Role == RoiRole.Inspection)
                 {
-                    roiImage = _tmpBuffer.Clone();
+                    candidate = _tmpBuffer.Clone();
                 }
                 else if (_layout.Inspection != null)
                 {
-                    roiImage = _layout.Inspection.Clone();
+                    candidate = _layout.Inspection.Clone();
                 }
                 else
                 {
-                    roiImage = BuildCurrentRoiModel(RoiRole.Inspection);
+                    candidate = BuildCurrentRoiModel(RoiRole.Inspection);
                 }
 
-                imagePath = _currentImagePathWin;
+                if (candidate != null)
+                {
+                    roiImage = LooksLikeCanvasCoords(candidate)
+                        ? CanvasToImage(candidate)
+                        : candidate.Clone();
+                }
+
+                var src = _currentImageSource ?? ImgMain?.Source as BitmapSource;
+                if (src != null)
+                {
+                    if (!src.IsFrozen)
+                    {
+                        try
+                        {
+                            if (src.CanFreeze)
+                            {
+                                src.Freeze();
+                            }
+                            else
+                            {
+                                var clone = src.Clone();
+                                if (clone.CanFreeze && !clone.IsFrozen)
+                                {
+                                    clone.Freeze();
+                                }
+                                src = clone;
+                            }
+                        }
+                        catch
+                        {
+                            try
+                            {
+                                var clone = src.Clone();
+                                if (clone.CanFreeze && !clone.IsFrozen)
+                                {
+                                    clone.Freeze();
+                                }
+                                src = clone;
+                            }
+                            catch
+                            {
+                                // swallow clone issues
+                            }
+                        }
+                    }
+
+                    imageSource = src;
+                }
             });
 
             if (roiImage == null)
@@ -5294,24 +5471,143 @@ namespace BrakeDiscInspector_GUI_ROI
                 return null;
             }
 
-            if (string.IsNullOrWhiteSpace(imagePath) || !File.Exists(imagePath))
+            if (imageSource == null)
             {
                 Snack("Carga primero una imagen válida.");
+                LogDebug("[Eval] currentImageSource is NULL. Aborting export.");
                 return null;
             }
 
             return await Task.Run(() =>
             {
-                var roiClone = roiImage!.Clone();
-                if (!BackendAPI.TryPrepareCanonicalRoi(imagePath!, roiClone, out var payload, out _, AppendLog) || payload == null)
+                var roiForExport = roiImage!.Clone();
+                var roiRect = RoiRectImageSpace(roiForExport);
+
+                using var srcMat = BitmapSourceConverter.ToMat(imageSource);
+                if (srcMat.Empty())
                 {
-                    AppendLog("[export] canonical ROI preparation failed");
+                    LogDebug("[Eval] Source Mat empty.");
                     return null;
                 }
 
-                var shapeJson = payload.ShapeJson ?? string.Empty;
-                return new Workflow.RoiExportResult(payload.PngBytes, shapeJson, roiClone);
+                if (!RoiCropUtils.TryBuildRoiCropInfo(roiForExport, out var cropInfo))
+                {
+                    LogDebug("[Eval] TryBuildRoiCropInfo failed for inspection ROI.");
+                    return null;
+                }
+
+                if (!RoiCropUtils.TryGetRotatedCrop(srcMat, cropInfo, roiForExport.AngleDeg, out var cropMat, out var cropRect))
+                {
+                    LogDebug("[Eval] TryGetRotatedCrop failed for inspection ROI.");
+                    return null;
+                }
+
+                Mat? maskMat = null;
+                Mat? encodeMat = null;
+                try
+                {
+                    bool needsMask = roiForExport.Shape == RoiShape.Circle || roiForExport.Shape == RoiShape.Annulus;
+                    if (needsMask)
+                    {
+                        maskMat = RoiCropUtils.BuildRoiMask(cropInfo, cropRect);
+                    }
+
+                    encodeMat = RoiCropUtils.ConvertCropToBgra(cropMat, maskMat);
+                    if (!Cv2.ImEncode(".png", encodeMat, out var pngBytes) || pngBytes == null || pngBytes.Length == 0)
+                    {
+                        LogDebug("[Eval] Failed to encode ROI crop to PNG.");
+                        return null;
+                    }
+
+                    var cropBitmap = BitmapSourceConverter.ToBitmapSource(encodeMat);
+                    if (cropBitmap.CanFreeze && !cropBitmap.IsFrozen)
+                    {
+                        try { cropBitmap.Freeze(); } catch { }
+                    }
+
+                    var imgHash = HashSHA256(GetPixels(imageSource));
+                    var cropHash = HashSHA256(GetPixels(cropBitmap));
+                    var cropRectInt = new System.Windows.Int32Rect(cropRect.X, cropRect.Y, cropRect.Width, cropRect.Height);
+
+                    LogDebug($"[Eval] imgHash={imgHash} cropHash={cropHash} rect=({cropRectInt.X},{cropRectInt.Y},{cropRectInt.Width},{cropRectInt.Height}) roiRect=({roiRect.X},{roiRect.Y},{roiRect.Width},{roiRect.Height}) angle={roiForExport.AngleDeg:0.##}");
+
+                    var shapeJson = BuildShapeJsonForExport(roiForExport, cropInfo, cropRect);
+                    return new Workflow.RoiExportResult(pngBytes, shapeJson, roiForExport.Clone(), imgHash, cropHash, cropRectInt);
+                }
+                finally
+                {
+                    if (encodeMat != null && !ReferenceEquals(encodeMat, cropMat))
+                    {
+                        encodeMat.Dispose();
+                    }
+                    maskMat?.Dispose();
+                    cropMat.Dispose();
+                }
             }).ConfigureAwait(false);
+        }
+
+        private static string BuildShapeJsonForExport(RoiModel roi, RoiCropInfo cropInfo, Cv.Rect cropRect)
+        {
+            double w = cropRect.Width;
+            double h = cropRect.Height;
+
+            object shape = roi.Shape switch
+            {
+                RoiShape.Rectangle => new { kind = "rect", x = 0, y = 0, w, h },
+                RoiShape.Circle => new
+                {
+                    kind = "circle",
+                    cx = w / 2.0,
+                    cy = h / 2.0,
+                    r = Math.Min(w, h) / 2.0
+                },
+                RoiShape.Annulus => new
+                {
+                    kind = "annulus",
+                    cx = w / 2.0,
+                    cy = h / 2.0,
+                    r = ResolveOuterRadiusPx(cropInfo, cropRect),
+                    r_inner = ResolveInnerRadiusPx(cropInfo, cropRect)
+                },
+                _ => new { kind = "rect", x = 0, y = 0, w, h }
+            };
+
+            return JsonSerializer.Serialize(shape);
+        }
+
+        private static double ResolveOuterRadiusPx(RoiCropInfo cropInfo, Cv.Rect cropRect)
+        {
+            double outer = cropInfo.Radius > 0 ? cropInfo.Radius : Math.Max(cropInfo.Width, cropInfo.Height) / 2.0;
+            double scale = Math.Min(
+                cropRect.Width / Math.Max(cropInfo.Width, 1.0),
+                cropRect.Height / Math.Max(cropInfo.Height, 1.0));
+            double result = outer * scale;
+            if (result <= 0)
+            {
+                result = Math.Min(cropRect.Width, cropRect.Height) / 2.0;
+            }
+
+            return result;
+        }
+
+        private static double ResolveInnerRadiusPx(RoiCropInfo cropInfo, Cv.Rect cropRect)
+        {
+            if (cropInfo.Shape != RoiShape.Annulus)
+            {
+                return 0;
+            }
+
+            double scale = Math.Min(
+                cropRect.Width / Math.Max(cropInfo.Width, 1.0),
+                cropRect.Height / Math.Max(cropInfo.Height, 1.0));
+            double inner = Math.Clamp(cropInfo.InnerRadius, 0, cropInfo.Radius);
+            double result = inner * scale;
+            if (result < 0)
+            {
+                result = 0;
+            }
+
+            return result;
         }
 
         private async Task<bool> VerifyPathsAndConnectivityAsync()
