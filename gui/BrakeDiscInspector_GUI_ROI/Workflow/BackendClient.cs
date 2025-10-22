@@ -2,8 +2,9 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
-using System.Net.Http;
 using System.Net;
+using System.Net.Http;
+using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
@@ -207,8 +208,8 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
             if (!File.Exists(imagePath))
                 throw new FileNotFoundException("Inference image not found", imagePath);
 
-            await using var fs = File.OpenRead(imagePath);
-            return await _InferMultipartAsync(roleId, roiId, mmPerPx, fs, Path.GetFileName(imagePath), shapeJson, ct)
+            var bytes = await File.ReadAllBytesAsync(imagePath, ct).ConfigureAwait(false);
+            return await _InferMultipartAsync(roleId, roiId, mmPerPx, bytes, Path.GetFileName(imagePath), shapeJson, ct)
                    .ConfigureAwait(false);
         }
 
@@ -222,9 +223,8 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
             CancellationToken ct = default)
         {
             if (imageStream == null) throw new ArgumentNullException(nameof(imageStream));
-            if (imageStream.CanSeek) imageStream.Seek(0, SeekOrigin.Begin);
-
-            return await _InferMultipartAsync(roleId, roiId, mmPerPx, imageStream, fileName, shapeJson, ct)
+            var bytes = await ReadAllBytesAsync(imageStream, ct).ConfigureAwait(false);
+            return await _InferMultipartAsync(roleId, roiId, mmPerPx, bytes, fileName, shapeJson, ct)
                    .ConfigureAwait(false);
         }
 
@@ -240,8 +240,7 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
             if (imageBytes == null || imageBytes.Length == 0)
                 throw new ArgumentException("Image bytes are required", nameof(imageBytes));
 
-            await using var ms = new MemoryStream(imageBytes, writable: false);
-            return await _InferMultipartAsync(roleId, roiId, mmPerPx, ms, fileName, shapeJson, ct)
+            return await _InferMultipartAsync(roleId, roiId, mmPerPx, imageBytes, fileName, shapeJson, ct)
                    .ConfigureAwait(false);
         }
 
@@ -250,7 +249,7 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
             string roleId,
             string roiId,
             double mmPerPx,
-            Stream imageStream,
+            byte[] imageBytes,
             string fileName,
             string? shapeJson,
             CancellationToken ct)
@@ -260,10 +259,20 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
             form.Add(new StringContent(roiId), "roi_id");
             form.Add(new StringContent(mmPerPx.ToString(CultureInfo.InvariantCulture)), "mm_per_px");
 
-            var content = new StreamContent(imageStream);
-            content.Headers.ContentType =
-                new System.Net.Http.Headers.MediaTypeHeaderValue(GuessMediaType(fileName));
-            form.Add(content, "image", string.IsNullOrWhiteSpace(fileName) ? "roi" : fileName);
+            if (!string.IsNullOrWhiteSpace(roiId))
+            {
+                form.Add(new StringContent(roiId), "model_key");
+            }
+
+            var content = new ByteArrayContent(imageBytes);
+            var mediaType = GuessMediaType(fileName);
+            if (mediaType == "application/octet-stream")
+            {
+                mediaType = "image/png";
+            }
+            content.Headers.ContentType = new MediaTypeHeaderValue(mediaType);
+            var safeFileName = string.IsNullOrWhiteSpace(fileName) ? "roi.png" : fileName;
+            form.Add(content, "file", safeFileName);
 
             if (!string.IsNullOrWhiteSpace(shapeJson))
             {
@@ -318,6 +327,26 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
                 ".tif" or ".tiff" => "image/tiff",
                 _ => "application/octet-stream"
             };
+        }
+
+        private static async Task<byte[]> ReadAllBytesAsync(Stream stream, CancellationToken ct)
+        {
+            if (stream is MemoryStream memoryStream)
+            {
+                if (memoryStream.CanSeek)
+                {
+                    memoryStream.Seek(0, SeekOrigin.Begin);
+                }
+                return memoryStream.ToArray();
+            }
+
+            using var ms = new MemoryStream();
+            if (stream.CanSeek)
+            {
+                stream.Seek(0, SeekOrigin.Begin);
+            }
+            await stream.CopyToAsync(ms, ct).ConfigureAwait(false);
+            return ms.ToArray();
         }
 
         // Opciones JSON robustas
