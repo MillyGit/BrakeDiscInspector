@@ -5,6 +5,7 @@ using System.IO;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using BrakeDiscInspector_GUI_ROI.Workflow;
 
 namespace BrakeDiscInspector_GUI_ROI
 {
