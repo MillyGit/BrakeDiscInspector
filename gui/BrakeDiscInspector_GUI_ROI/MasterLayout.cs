@@ -4,6 +4,7 @@ using System.ComponentModel;
 using System.IO;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace BrakeDiscInspector_GUI_ROI
 {
@@ -91,6 +92,11 @@ namespace BrakeDiscInspector_GUI_ROI
         private double? _lastScore;
         private bool? _lastResultOk;
         private DateTime? _lastEvaluatedAt;
+        private bool _datasetReady;
+        private bool _isDatasetLoading;
+        private string _datasetStatus = string.Empty;
+        private int _datasetOkCount;
+        private int _datasetKoCount;
 
         public InspectionRoiConfig(int index)
         {
@@ -98,6 +104,7 @@ namespace BrakeDiscInspector_GUI_ROI
             DisplayName = $"ROI {index}";
             _name = $"Inspection {index}";
             _modelKey = $"inspection-{index}";
+            DatasetPreview = new ObservableCollection<DatasetPreviewItem>();
         }
 
         public string DisplayName { get; }
@@ -145,8 +152,12 @@ namespace BrakeDiscInspector_GUI_ROI
                 if (string.Equals(_datasetPath, value, StringComparison.Ordinal)) return;
                 _datasetPath = value;
                 OnPropertyChanged();
+                OnPropertyChanged(nameof(HasDatasetPath));
             }
         }
+
+        [JsonIgnore]
+        public bool HasDatasetPath => !string.IsNullOrWhiteSpace(_datasetPath);
 
         public bool TrainMemoryFit
         {
@@ -213,6 +224,74 @@ namespace BrakeDiscInspector_GUI_ROI
                 OnPropertyChanged();
             }
         }
+
+        [JsonIgnore]
+        public ObservableCollection<DatasetPreviewItem> DatasetPreview { get; }
+
+        [JsonIgnore]
+        public bool DatasetReady
+        {
+            get => _datasetReady;
+            set
+            {
+                if (_datasetReady == value) return;
+                _datasetReady = value;
+                OnPropertyChanged();
+            }
+        }
+
+        [JsonIgnore]
+        public bool IsDatasetLoading
+        {
+            get => _isDatasetLoading;
+            set
+            {
+                if (_isDatasetLoading == value) return;
+                _isDatasetLoading = value;
+                OnPropertyChanged();
+            }
+        }
+
+        [JsonIgnore]
+        public string DatasetStatus
+        {
+            get => _datasetStatus;
+            set
+            {
+                if (string.Equals(_datasetStatus, value, StringComparison.Ordinal)) return;
+                _datasetStatus = value;
+                OnPropertyChanged();
+            }
+        }
+
+        [JsonIgnore]
+        public int DatasetOkCount
+        {
+            get => _datasetOkCount;
+            set
+            {
+                if (_datasetOkCount == value) return;
+                _datasetOkCount = value;
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(DatasetCountsText));
+            }
+        }
+
+        [JsonIgnore]
+        public int DatasetKoCount
+        {
+            get => _datasetKoCount;
+            set
+            {
+                if (_datasetKoCount == value) return;
+                _datasetKoCount = value;
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(DatasetCountsText));
+            }
+        }
+
+        [JsonIgnore]
+        public string DatasetCountsText => $"OK: {DatasetOkCount} · KO: {DatasetKoCount}";
 
         public double Threshold
         {

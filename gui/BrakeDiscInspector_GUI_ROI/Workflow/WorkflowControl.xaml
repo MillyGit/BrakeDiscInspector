@@ -6,6 +6,9 @@
              mc:Ignorable="d"
              d:DesignHeight="600"
              d:DesignWidth="480">
+    <UserControl.Resources>
+        <BooleanToVisibilityConverter x:Key="BoolToVisibilityConverter"/>
+    </UserControl.Resources>
     <ScrollViewer VerticalScrollBarVisibility="Auto">
         <StackPanel Margin="10" Orientation="Vertical">
             <StackPanel.Resources>
@@ -53,66 +56,162 @@
                 </Grid>
             </GroupBox>
 
-            <GroupBox Header="Inspection ROI Actions">
-                <StackPanel Margin="8">
-                    <Grid x:Name="RoiActionsPanel">
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="Auto"/>
-                            <RowDefinition Height="Auto"/>
-                            <RowDefinition Height="Auto"/>
-                            <RowDefinition Height="Auto"/>
-                            <RowDefinition Height="*"/>
-                        </Grid.RowDefinitions>
-
-                        <!-- ROI selector -->
-                        <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
-                            <TextBlock Text="Inspection ROI:" VerticalAlignment="Center" Margin="0,0,8,0"/>
-                            <ComboBox x:Name="CmbInspectionRoi"
-                                      ItemsSource="{Binding InspectionRois}"
-                                      SelectedItem="{Binding SelectedInspectionRoi}"
-                                      DisplayMemberPath="Name" Width="180"/>
-                            <CheckBox Content="Enabled" IsChecked="{Binding SelectedInspectionRoi.Enabled}" Margin="8,0,0,0"/>
+            <GroupBox Header="Inspection ROIs">
+                <DockPanel Margin="8">
+                    <StackPanel DockPanel.Dock="Bottom" Margin="0,12,0,0">
+                        <TextBlock Text="{Binding FitSummary}" TextWrapping="Wrap"/>
+                        <TextBlock Text="{Binding CalibrationSummary}" TextWrapping="Wrap" Margin="0,4,0,0"/>
+                        <TextBlock Text="{Binding InferenceSummary}" TextWrapping="Wrap" Margin="0,4,0,8"/>
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                            <Button Content="Evaluate All"
+                                    Command="{Binding EvaluateAllRoisCommand}"
+                                    Padding="12,4"/>
                         </StackPanel>
+                    </StackPanel>
+                    <TabControl ItemsSource="{Binding InspectionRois}"
+                                SelectedItem="{Binding SelectedInspectionRoi}">
+                        <TabControl.ItemTemplate>
+                            <DataTemplate>
+                                <TextBlock Text="{Binding Name}"/>
+                            </DataTemplate>
+                        </TabControl.ItemTemplate>
+                        <TabControl.ContentTemplate>
+                            <DataTemplate>
+                                <Grid Margin="0,8,0,0">
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto"/>
+                                        <RowDefinition Height="Auto"/>
+                                        <RowDefinition Height="Auto"/>
+                                        <RowDefinition Height="Auto"/>
+                                        <RowDefinition Height="Auto"/>
+                                        <RowDefinition Height="*"/>
+                                        <RowDefinition Height="Auto"/>
+                                        <RowDefinition Height="Auto"/>
+                                    </Grid.RowDefinitions>
 
-                        <!-- Identity -->
-                        <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,0,0,8">
-                            <TextBlock Text="Name" Width="70" VerticalAlignment="Center"/>
-                            <TextBox Text="{Binding SelectedInspectionRoi.Name}" Width="180" Margin="0,0,12,0"/>
-                            <TextBlock Text="ModelKey" Width="70" VerticalAlignment="Center"/>
-                            <TextBox Text="{Binding SelectedInspectionRoi.ModelKey}" Width="180"/>
-                        </StackPanel>
+                                    <StackPanel Orientation="Horizontal">
+                                        <TextBlock Text="Name" Width="70" VerticalAlignment="Center"/>
+                                        <TextBox Text="{Binding Name}" Width="200" Margin="0,0,12,0"/>
+                                        <CheckBox Content="Enabled" IsChecked="{Binding Enabled}" VerticalAlignment="Center"/>
+                                    </StackPanel>
 
-                        <!-- Dataset & options -->
-                        <StackPanel Grid.Row="2" Orientation="Horizontal" Margin="0,0,0,8">
-                            <TextBlock Text="Dataset" Width="70" VerticalAlignment="Center"/>
-                            <TextBox Text="{Binding SelectedInspectionRoi.DatasetPath}" Width="320" Margin="0,0,8,0"/>
-                            <Button Content="Browse..." Command="{Binding BrowseDatasetCommand}" />
-                            <CheckBox Content="Memory-Fit" IsChecked="{Binding SelectedInspectionRoi.TrainMemoryFit}" Margin="12,0,0,0"/>
-                        </StackPanel>
+                                    <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,8,0,0">
+                                        <TextBlock Text="ModelKey" Width="70" VerticalAlignment="Center"/>
+                                        <TextBox Text="{Binding ModelKey}" Width="220" Margin="0,0,12,0"/>
+                                        <CheckBox Content="Memory-Fit" IsChecked="{Binding TrainMemoryFit}" VerticalAlignment="Center"/>
+                                    </StackPanel>
 
-                        <!-- Actions -->
-                        <StackPanel Grid.Row="3" Orientation="Horizontal" Margin="0,0,0,8">
-                            <Button Content="Train" Command="{Binding TrainSelectedRoiCommand}" Margin="0,0,8,0"/>
-                            <Button Content="Calibrate" Command="{Binding CalibrateSelectedRoiCommand}" Margin="0,0,8,0"/>
-                            <Button Content="Evaluate current ROI" Command="{Binding EvaluateSelectedRoiCommand}" Margin="0,0,8,0"/>
-                            <Button Content="Evaluate All" Command="{Binding EvaluateAllRoisCommand}" />
-                        </StackPanel>
+                                    <Grid Grid.Row="2" Margin="0,8,0,0">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Text="Dataset" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                                        <TextBox Grid.Column="1" Text="{Binding DatasetPath}" Margin="0,0,8,0" VerticalAlignment="Center"/>
+                                        <Button Grid.Column="2"
+                                                Content="Browse..."
+                                                Padding="12,4"
+                                                Command="{Binding DataContext.BrowseDatasetCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"/>
+                                    </Grid>
 
-                        <!-- Status -->
-                        <StackPanel Grid.Row="4" Orientation="Horizontal">
-                            <TextBlock Text="Score:" Margin="0,0,8,0"/>
-                            <TextBlock Text="{Binding SelectedInspectionRoi.LastScore, StringFormat=0.000}"/>
-                            <TextBlock Text="  |  Result:" Margin="8,0,8,0"/>
-                            <TextBlock Text="{Binding SelectedInspectionRoi.LastResultOk}"/>
-                            <TextBlock Text="  |  Calibrated Threshold:" Margin="8,0,8,0"/>
-                            <TextBlock Text="{Binding SelectedInspectionRoi.CalibratedThreshold, StringFormat=0.000}"/>
-                        </StackPanel>
-                    </Grid>
+                                    <StackPanel Grid.Row="3" Orientation="Horizontal" Margin="0,8,0,0">
+                                        <TextBlock Text="{Binding DatasetStatus}">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="FontWeight" Value="SemiBold"/>
+                                                    <Setter Property="Foreground" Value="DarkRed"/>
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding DatasetReady}" Value="True">
+                                                            <Setter Property="Foreground" Value="ForestGreen"/>
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                        <TextBlock Text="  "/>
+                                        <TextBlock Text="{Binding DatasetCountsText}"/>
+                                    </StackPanel>
 
-                    <TextBlock Text="{Binding FitSummary}" TextWrapping="Wrap" Margin="0,12,0,0"/>
-                    <TextBlock Text="{Binding CalibrationSummary}" TextWrapping="Wrap" Margin="0,4,0,0"/>
-                    <TextBlock Text="{Binding InferenceSummary}" TextWrapping="Wrap" Margin="0,4,0,0"/>
-                </StackPanel>
+                                    <ProgressBar Grid.Row="4" Height="4" Margin="0,4,0,0"
+                                                 IsIndeterminate="True"
+                                                 Visibility="{Binding IsDatasetLoading, Converter={StaticResource BoolToVisibilityConverter}}"/>
+
+                                    <ItemsControl Grid.Row="5" ItemsSource="{Binding DatasetPreview}" Margin="0,8,0,0">
+                                        <ItemsControl.ItemsPanel>
+                                            <ItemsPanelTemplate>
+                                                <WrapPanel/>
+                                            </ItemsPanelTemplate>
+                                        </ItemsControl.ItemsPanel>
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <StackPanel Width="120" Margin="0,0,8,8">
+                                                    <Border BorderBrush="#44000000" BorderThickness="1" CornerRadius="6">
+                                                        <Image Source="{Binding Thumbnail}" Height="70" Stretch="UniformToFill"/>
+                                                    </Border>
+                                                    <TextBlock HorizontalAlignment="Center" Margin="0,4,0,0">
+                                                        <TextBlock.Style>
+                                                            <Style TargetType="TextBlock">
+                                                                <Setter Property="Text" Value="KO"/>
+                                                                <Setter Property="Foreground" Value="DarkRed"/>
+                                                                <Style.Triggers>
+                                                                    <DataTrigger Binding="{Binding IsOk}" Value="True">
+                                                                        <Setter Property="Text" Value="OK"/>
+                                                                        <Setter Property="Foreground" Value="ForestGreen"/>
+                                                                    </DataTrigger>
+                                                                </Style.Triggers>
+                                                            </Style>
+                                                        </TextBlock.Style>
+                                                    </TextBlock>
+                                                </StackPanel>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+
+                                    <StackPanel Grid.Row="6" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,8,0,0">
+                                        <Button Content="Train"
+                                                Padding="12,4"
+                                                Margin="0,0,8,0"
+                                                Command="{Binding DataContext.TrainSelectedRoiCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"/>
+                                        <Button Content="Calibrate"
+                                                Padding="12,4"
+                                                Margin="0,0,8,0"
+                                                Command="{Binding DataContext.CalibrateSelectedRoiCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"/>
+                                        <Button Content="Evaluate ROI"
+                                                Padding="12,4"
+                                                Command="{Binding DataContext.EvaluateSelectedRoiCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"/>
+                                    </StackPanel>
+
+                                    <StackPanel Grid.Row="7" Orientation="Horizontal" Margin="0,8,0,0">
+                                        <TextBlock Text="Score:"/>
+                                        <TextBlock Text="{Binding LastScore, StringFormat={}{0:0.000}}" Margin="4,0,12,0"/>
+                                        <TextBlock Text="Threshold:"/>
+                                        <TextBlock Text="{Binding CalibratedThreshold, StringFormat={}{0:0.000}}" Margin="4,0,12,0"/>
+                                        <TextBlock Text="Result:"/>
+                                        <TextBlock Margin="4,0,0,0">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Text" Value="—"/>
+                                                    <Setter Property="Foreground" Value="Gray"/>
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding LastResultOk}" Value="True">
+                                                            <Setter Property="Text" Value="OK"/>
+                                                            <Setter Property="Foreground" Value="ForestGreen"/>
+                                                        </DataTrigger>
+                                                        <DataTrigger Binding="{Binding LastResultOk}" Value="False">
+                                                            <Setter Property="Text" Value="NOK"/>
+                                                            <Setter Property="Foreground" Value="DarkRed"/>
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                    </StackPanel>
+                                </Grid>
+                            </DataTemplate>
+                        </TabControl.ContentTemplate>
+                    </TabControl>
+                </DockPanel>
             </GroupBox>
 
             <GroupBox Header="Visualization">

@@ -48,6 +48,7 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
         private RoiExportResult? _lastExport;
         private byte[]? _lastHeatmapBytes;
         private InferResult? _lastInferResult;
+        private readonly Dictionary<InspectionRoiConfig, RoiDatasetAnalysis> _roiDatasetCache = new();
 
         public WorkflowViewModel(
             BackendClient client,
@@ -135,6 +136,20 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
                 foreach (var roi in _inspectionRois)
                 {
                     roi.PropertyChanged += InspectionRoiPropertyChanged;
+                    if (string.IsNullOrWhiteSpace(roi.DatasetStatus))
+                    {
+                        roi.DatasetStatus = roi.HasDatasetPath ? "Validating dataset..." : "Select a dataset";
+                    }
+                    if (roi.HasDatasetPath)
+                    {
+                        _ = RefreshRoiDatasetStateAsync(roi);
+                    }
+                    else
+                    {
+                        roi.DatasetReady = false;
+                        roi.DatasetOkCount = 0;
+                        roi.DatasetKoCount = 0;
+                    }
                 }
                 if (_inspectionRois.Count > 0)
                 {
@@ -189,6 +204,25 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
             if (e.PropertyName == nameof(InspectionRoiConfig.LastResultOk) || e.PropertyName == nameof(InspectionRoiConfig.Enabled))
             {
                 UpdateGlobalBadge();
+            }
+
+            if (e.PropertyName == nameof(InspectionRoiConfig.DatasetPath) && sender is InspectionRoiConfig roiChanged)
+            {
+                _roiDatasetCache.Remove(roiChanged);
+                if (!roiChanged.HasDatasetPath)
+                {
+                    roiChanged.DatasetPreview.Clear();
+                    roiChanged.DatasetReady = false;
+                    roiChanged.DatasetOkCount = 0;
+                    roiChanged.DatasetKoCount = 0;
+                    roiChanged.DatasetStatus = "Select a dataset";
+                }
+                else
+                {
+                    roiChanged.DatasetStatus = "Validating dataset...";
+                    roiChanged.DatasetPreview.Clear();
+                    _ = RefreshRoiDatasetStateAsync(roiChanged);
+                }
             }
 
             if (ReferenceEquals(sender, SelectedInspectionRoi))
@@ -704,24 +738,320 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
                 return;
             }
 
+            var choice = await Application.Current.Dispatcher.InvokeAsync(() =>
+                MessageBox.Show(
+                    "Choose Yes to browse a dataset folder (requires ok/ko).\nChoose No to load a CSV (filename,label).",
+                    "Dataset source",
+                    MessageBoxButton.YesNoCancel,
+                    MessageBoxImage.Question,
+                    MessageBoxResult.Yes));
+
+            if (choice == MessageBoxResult.Cancel)
+            {
+                return;
+            }
+
+            if (choice == MessageBoxResult.Yes)
+            {
+                await Application.Current.Dispatcher.InvokeAsync(() =>
+                {
+                    using var dialog = new Forms.FolderBrowserDialog
+                    {
+                        Description = "Select dataset folder",
+                        UseDescriptionForTitle = true,
+                    };
+
+                    if (!string.IsNullOrWhiteSpace(roi.DatasetPath) && Directory.Exists(roi.DatasetPath))
+                    {
+                        dialog.SelectedPath = roi.DatasetPath;
+                    }
+
+                    if (dialog.ShowDialog() == Forms.DialogResult.OK)
+                    {
+                        roi.DatasetPath = dialog.SelectedPath;
+                    }
+                });
+                return;
+            }
+
             await Application.Current.Dispatcher.InvokeAsync(() =>
             {
-                using var dialog = new Forms.FolderBrowserDialog
+                var dialog = new Microsoft.Win32.OpenFileDialog
                 {
-                    Description = "Select dataset folder",
-                    UseDescriptionForTitle = true,
+                    Title = "Select dataset CSV",
+                    Filter = "Dataset CSV (*.csv)|*.csv|All files (*.*)|*.*",
+                    CheckFileExists = true,
+                    Multiselect = false
                 };
 
-                if (!string.IsNullOrWhiteSpace(roi.DatasetPath) && Directory.Exists(roi.DatasetPath))
+                if (!string.IsNullOrWhiteSpace(roi.DatasetPath) && File.Exists(roi.DatasetPath))
                 {
-                    dialog.SelectedPath = roi.DatasetPath;
+                    dialog.InitialDirectory = Path.GetDirectoryName(roi.DatasetPath);
+                    dialog.FileName = Path.GetFileName(roi.DatasetPath);
                 }
 
-                if (dialog.ShowDialog() == Forms.DialogResult.OK)
+                if (dialog.ShowDialog() == true)
                 {
-                    roi.DatasetPath = dialog.SelectedPath;
+                    roi.DatasetPath = dialog.FileName;
                 }
             });
+        }
+
+        private async Task<RoiDatasetAnalysis> EnsureDatasetAnalysisAsync(InspectionRoiConfig roi, bool forceRefresh = false)
+        {
+            if (!forceRefresh && _roiDatasetCache.TryGetValue(roi, out var cached))
+            {
+                if (string.Equals(cached.DatasetPath, roi.DatasetPath, StringComparison.OrdinalIgnoreCase))
+                {
+                    return cached;
+                }
+            }
+
+            return await RefreshRoiDatasetStateAsync(roi).ConfigureAwait(false);
+        }
+
+        private async Task<RoiDatasetAnalysis> RefreshRoiDatasetStateAsync(InspectionRoiConfig roi)
+        {
+            var datasetPath = roi.DatasetPath;
+            roi.IsDatasetLoading = true;
+            roi.DatasetReady = false;
+            roi.DatasetStatus = roi.HasDatasetPath ? "Validating dataset..." : "Select a dataset";
+
+            var analysis = await Task.Run(() => AnalyzeDatasetPath(datasetPath)).ConfigureAwait(false);
+            _roiDatasetCache[roi] = analysis;
+
+            await Application.Current.Dispatcher.InvokeAsync(() =>
+            {
+                roi.IsDatasetLoading = false;
+                roi.DatasetOkCount = analysis.OkCount;
+                roi.DatasetKoCount = analysis.KoCount;
+                roi.DatasetReady = analysis.IsValid;
+                roi.DatasetStatus = analysis.StatusMessage;
+                roi.DatasetPreview.Clear();
+                foreach (var preview in analysis.PreviewItems)
+                {
+                    var item = DatasetPreviewItem.Create(preview.Path, preview.IsOk);
+                    if (item != null)
+                    {
+                        roi.DatasetPreview.Add(item);
+                    }
+                }
+            });
+
+            return analysis;
+        }
+
+        private static RoiDatasetAnalysis AnalyzeDatasetPath(string? datasetPath)
+        {
+            if (string.IsNullOrWhiteSpace(datasetPath))
+            {
+                return RoiDatasetAnalysis.Empty("Select a dataset");
+            }
+
+            if (Directory.Exists(datasetPath))
+            {
+                return AnalyzeFolderDataset(datasetPath);
+            }
+
+            if (File.Exists(datasetPath))
+            {
+                if (string.Equals(Path.GetExtension(datasetPath), ".csv", StringComparison.OrdinalIgnoreCase))
+                {
+                    return AnalyzeCsvDataset(datasetPath);
+                }
+
+                return RoiDatasetAnalysis.Empty("Dataset file must be a CSV with filename,label columns");
+            }
+
+            return RoiDatasetAnalysis.Empty("Dataset path not found");
+        }
+
+        private static RoiDatasetAnalysis AnalyzeFolderDataset(string folderPath)
+        {
+            try
+            {
+                var okDir = Path.Combine(folderPath, "ok");
+                var koDir = Path.Combine(folderPath, "ko");
+                var ngDir = Path.Combine(folderPath, "ng");
+
+                if (!Directory.Exists(okDir))
+                {
+                    return RoiDatasetAnalysis.Empty("Folder must contain /ok and /ko subfolders");
+                }
+
+                string? koBase = null;
+                bool usedNg = false;
+                if (Directory.Exists(koDir))
+                {
+                    koBase = koDir;
+                }
+                else if (Directory.Exists(ngDir))
+                {
+                    koBase = ngDir;
+                    usedNg = true;
+                }
+
+                if (koBase == null)
+                {
+                    return RoiDatasetAnalysis.Empty("Folder must contain /ok and /ko subfolders");
+                }
+
+                var okFiles = EnumerateImages(okDir);
+                var koFiles = EnumerateImages(koBase);
+
+                var entries = okFiles.Select(path => new DatasetEntry(path, true))
+                    .Concat(koFiles.Select(path => new DatasetEntry(path, false)))
+                    .ToList();
+
+                var preview = new List<(string Path, bool IsOk)>();
+                preview.AddRange(okFiles.Take(3).Select(p => (p, true)));
+                preview.AddRange(koFiles.Take(3).Select(p => (p, false)));
+
+                bool ready = okFiles.Count > 0 && koFiles.Count > 0;
+                string status = ready ? (usedNg ? "Dataset Ready ✅ (using /ng)" : "Dataset Ready ✅")
+                    : (okFiles.Count == 0 ? "Dataset missing OK samples" : "Dataset missing KO samples");
+
+                return new RoiDatasetAnalysis(folderPath, entries, okFiles.Count, koFiles.Count, ready, status, preview);
+            }
+            catch (Exception ex)
+            {
+                return RoiDatasetAnalysis.Empty($"Dataset error: {ex.Message}");
+            }
+        }
+
+        private static RoiDatasetAnalysis AnalyzeCsvDataset(string csvPath)
+        {
+            try
+            {
+                var entries = new List<DatasetEntry>();
+                var preview = new List<(string Path, bool IsOk)>();
+                int okCount = 0, koCount = 0;
+                int okPreview = 0, koPreview = 0;
+
+                using var reader = new StreamReader(csvPath);
+                string? header = reader.ReadLine();
+                if (header == null)
+                {
+                    return RoiDatasetAnalysis.Empty("CSV is empty");
+                }
+
+                var headers = header.Split(new[] { ',', ';', '\t' }, StringSplitOptions.None)
+                    .Select(h => h.Trim().ToLowerInvariant())
+                    .ToArray();
+
+                int filenameIndex = Array.FindIndex(headers, h => h is "filename" or "file" or "path");
+                int labelIndex = Array.FindIndex(headers, h => h is "label" or "class" or "target");
+
+                if (filenameIndex < 0 || labelIndex < 0)
+                {
+                    return RoiDatasetAnalysis.Empty("CSV must contain 'filename' and 'label' columns");
+                }
+
+                string? line;
+                var baseDir = Path.GetDirectoryName(csvPath) ?? string.Empty;
+                while ((line = reader.ReadLine()) != null)
+                {
+                    if (string.IsNullOrWhiteSpace(line))
+                    {
+                        continue;
+                    }
+
+                    var parts = line.Split(new[] { ',', ';', '\t' }, StringSplitOptions.None);
+                    if (parts.Length <= Math.Max(filenameIndex, labelIndex))
+                    {
+                        continue;
+                    }
+
+                    var rawPath = parts[filenameIndex].Trim().Trim('"');
+                    if (string.IsNullOrWhiteSpace(rawPath))
+                    {
+                        continue;
+                    }
+
+                    var resolvedPath = Path.IsPathRooted(rawPath)
+                        ? rawPath
+                        : Path.GetFullPath(Path.Combine(baseDir, rawPath));
+
+                    if (!File.Exists(resolvedPath))
+                    {
+                        continue;
+                    }
+
+                    var labelRaw = parts[labelIndex].Trim().Trim('"');
+                    var parsedLabel = TryParseDatasetLabel(labelRaw);
+                    if (parsedLabel == null)
+                    {
+                        continue;
+                    }
+
+                    bool isOk = parsedLabel.Value;
+                    entries.Add(new DatasetEntry(resolvedPath, isOk));
+                    if (isOk)
+                    {
+                        okCount++;
+                        if (okPreview < 3)
+                        {
+                            preview.Add((resolvedPath, true));
+                            okPreview++;
+                        }
+                    }
+                    else
+                    {
+                        koCount++;
+                        if (koPreview < 3)
+                        {
+                            preview.Add((resolvedPath, false));
+                            koPreview++;
+                        }
+                    }
+                }
+
+                bool ready = okCount > 0 && koCount > 0;
+                string status = ready ? "Dataset Ready ✅" : "CSV needs both OK and KO samples";
+                return new RoiDatasetAnalysis(csvPath, entries, okCount, koCount, ready, status, preview);
+            }
+            catch (Exception ex)
+            {
+                return RoiDatasetAnalysis.Empty($"CSV error: {ex.Message}");
+            }
+        }
+
+        private static bool? TryParseDatasetLabel(string labelRaw)
+        {
+            if (string.IsNullOrWhiteSpace(labelRaw))
+            {
+                return null;
+            }
+
+            var normalized = labelRaw.Trim().Trim('"').ToLowerInvariant();
+            return normalized switch
+            {
+                "ok" or "good" or "pass" or "1" or "true" => true,
+                "ko" or "ng" or "nok" or "fail" or "0" or "false" => false,
+                _ => null
+            };
+        }
+
+        private static List<string> EnumerateImages(string directory)
+        {
+            var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            if (!Directory.Exists(directory))
+            {
+                return new List<string>();
+            }
+
+            string[] patterns = { "*.png", "*.jpg", "*.jpeg", "*.bmp", "*.tif", "*.tiff" };
+            foreach (var pattern in patterns)
+            {
+                foreach (var file in Directory.EnumerateFiles(directory, pattern, SearchOption.AllDirectories))
+                {
+                    set.Add(file);
+                }
+            }
+
+            var list = set.ToList();
+            list.Sort(StringComparer.OrdinalIgnoreCase);
+            return list;
         }
 
         private async Task TrainSelectedRoiAsync()
@@ -733,14 +1063,20 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
                 return;
             }
 
-            if (string.IsNullOrWhiteSpace(roi.DatasetPath))
+            if (!roi.HasDatasetPath)
             {
                 await ShowMessageAsync("Select a dataset path before training.");
                 return;
             }
 
-            var entries = await Task.Run(() => LoadDatasetEntries(roi.DatasetPath!)).ConfigureAwait(false);
-            var okImages = entries.Where(e => e.IsOk).Select(e => e.Path).Where(File.Exists).ToList();
+            var analysis = await EnsureDatasetAnalysisAsync(roi).ConfigureAwait(false);
+            if (!analysis.IsValid)
+            {
+                await ShowMessageAsync(analysis.StatusMessage, caption: "Dataset not ready");
+                return;
+            }
+
+            var okImages = analysis.Entries.Where(e => e.IsOk).Select(e => e.Path).Where(File.Exists).ToList();
             if (okImages.Count == 0)
             {
                 await ShowMessageAsync("Dataset has no OK samples for training.");
@@ -774,21 +1110,27 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
                 return;
             }
 
-            if (string.IsNullOrWhiteSpace(roi.DatasetPath))
+            if (!roi.HasDatasetPath)
             {
                 await ShowMessageAsync("Select a dataset path before calibrating.");
                 return;
             }
 
-            var entries = await Task.Run(() => LoadDatasetEntries(roi.DatasetPath!)).ConfigureAwait(false);
-            var okEntries = entries.Where(e => e.IsOk).ToList();
+            var analysis = await EnsureDatasetAnalysisAsync(roi).ConfigureAwait(false);
+            if (!analysis.IsValid)
+            {
+                await ShowMessageAsync(analysis.StatusMessage, caption: "Dataset not ready");
+                return;
+            }
+
+            var okEntries = analysis.Entries.Where(e => e.IsOk).ToList();
             if (okEntries.Count == 0)
             {
                 await ShowMessageAsync("Dataset has no OK samples for calibration.");
                 return;
             }
 
-            var ngEntries = entries.Where(e => !e.IsOk).ToList();
+            var koEntries = analysis.Entries.Where(e => !e.IsOk).ToList();
 
             var okScores = new List<double>();
             foreach (var entry in okEntries)
@@ -798,7 +1140,7 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
             }
 
             var ngScores = new List<double>();
-            foreach (var entry in ngEntries)
+            foreach (var entry in koEntries)
             {
                 var infer = await _client.InferAsync(RoleId, roi.ModelKey, MmPerPx, entry.Path).ConfigureAwait(false);
                 ngScores.Add(infer.score);
@@ -858,6 +1200,15 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
                 return;
             }
 
+            if (!ValidateInferenceInputs(roi, out var validationError))
+            {
+                if (!string.IsNullOrWhiteSpace(validationError))
+                {
+                    await ShowMessageAsync(validationError, caption: "Cannot evaluate");
+                }
+                return;
+            }
+
             _log($"[eval] export ROI for {roi.Name}");
             var export = await _exportRoiAsync().ConfigureAwait(false);
             if (export == null)
@@ -866,46 +1217,118 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
                 return;
             }
 
-            var result = await _client.InferAsync(RoleId, roi.ModelKey, MmPerPx, export.PngBytes, $"roi_{DateTime.UtcNow:yyyyMMddHHmmssfff}.png", export.ShapeJson, ct).ConfigureAwait(false);
-            _lastExport = export;
-            _lastInferResult = result;
-            InferenceScore = result.score;
-            InferenceThreshold = result.threshold;
-
-            if (result.threshold is double thresholdValue && thresholdValue > 0)
+            if (export.PngBytes == null || export.PngBytes.Length == 0)
             {
-                LocalThreshold = thresholdValue;
+                _log("[eval] export produced empty payload");
+                await ShowMessageAsync("ROI crop is empty. Save the ROI layout and try again.", caption: "Inference aborted");
+                return;
             }
 
-            await Application.Current.Dispatcher.InvokeAsync(() =>
+            var inferFileName = $"roi_{DateTime.UtcNow:yyyyMMddHHmmssfff}.png";
+            try
             {
-                Regions.Clear();
-                if (result.regions != null)
+                var result = await _client.InferAsync(RoleId, roi.ModelKey, MmPerPx, export.PngBytes, inferFileName, export.ShapeJson, ct).ConfigureAwait(false);
+                _lastExport = export;
+                _lastInferResult = result;
+                InferenceScore = result.score;
+                InferenceThreshold = result.threshold;
+
+                if (result.threshold is double thresholdValue && thresholdValue > 0)
                 {
-                    foreach (var region in result.regions)
-                    {
-                        Regions.Add(region);
-                    }
+                    LocalThreshold = thresholdValue;
                 }
-            });
 
-            if (!string.IsNullOrWhiteSpace(result.heatmap_png_base64))
-            {
-                _lastHeatmapBytes = Convert.FromBase64String(result.heatmap_png_base64);
-                await _showHeatmapAsync(export, _lastHeatmapBytes, HeatmapOpacity).ConfigureAwait(false);
+                await Application.Current.Dispatcher.InvokeAsync(() =>
+                {
+                    Regions.Clear();
+                    if (result.regions != null)
+                    {
+                        foreach (var region in result.regions)
+                        {
+                            Regions.Add(region);
+                        }
+                    }
+                });
+
+                if (!string.IsNullOrWhiteSpace(result.heatmap_png_base64))
+                {
+                    _lastHeatmapBytes = Convert.FromBase64String(result.heatmap_png_base64);
+                    await _showHeatmapAsync(export, _lastHeatmapBytes, HeatmapOpacity).ConfigureAwait(false);
+                }
+                else
+                {
+                    _lastHeatmapBytes = null;
+                    _clearHeatmap();
+                }
+
+                roi.LastScore = result.score;
+                var decisionThreshold = roi.CalibratedThreshold ?? roi.ThresholdDefault;
+                roi.LastResultOk = result.score >= decisionThreshold;
+                roi.LastEvaluatedAt = DateTime.UtcNow;
+                OnPropertyChanged(nameof(SelectedInspectionRoi));
+                UpdateGlobalBadge();
             }
-            else
+            catch (HttpRequestException ex)
             {
+                var message = ExtractBackendError(ex);
+                _lastExport = export;
+                _lastInferResult = null;
                 _lastHeatmapBytes = null;
+                InferenceScore = null;
+                InferenceThreshold = null;
+                await Application.Current.Dispatcher.InvokeAsync(() =>
+                {
+                    Regions.Clear();
+                });
                 _clearHeatmap();
+                roi.LastScore = null;
+                roi.LastResultOk = null;
+                roi.LastEvaluatedAt = DateTime.UtcNow;
+                InferenceSummary = $"Inference failed: {message}";
+                await ShowMessageAsync(message, caption: "Inference error");
+                UpdateGlobalBadge();
+            }
+        }
+
+        private bool ValidateInferenceInputs(InspectionRoiConfig roi, out string? message)
+        {
+            if (_inspectionRois == null || !_inspectionRois.Contains(roi))
+            {
+                message = "Save the ROI layout before evaluating.";
+                return false;
             }
 
-            roi.LastScore = result.score;
-            var decisionThreshold = roi.CalibratedThreshold ?? roi.ThresholdDefault;
-            roi.LastResultOk = result.score >= decisionThreshold;
-            roi.LastEvaluatedAt = DateTime.UtcNow;
-            OnPropertyChanged(nameof(SelectedInspectionRoi));
-            UpdateGlobalBadge();
+            if (string.IsNullOrWhiteSpace(roi.ModelKey))
+            {
+                message = "ModelKey is required for inference.";
+                return false;
+            }
+
+            var sourceImage = _getSourceImagePath();
+            if (string.IsNullOrWhiteSpace(sourceImage) || !File.Exists(sourceImage))
+            {
+                message = "Load an inspection image before evaluating.";
+                return false;
+            }
+
+            message = null;
+            return true;
+        }
+
+        private static string ExtractBackendError(HttpRequestException ex)
+        {
+            var message = ex.Message;
+            int colonIndex = message.IndexOf(':');
+            if (colonIndex >= 0 && colonIndex < message.Length - 1)
+            {
+                var tail = message[(colonIndex + 1)..].Trim();
+                if (!string.IsNullOrWhiteSpace(tail))
+                {
+                    return tail;
+                }
+            }
+
+            return message;
         }
 
         private void UpdateInferenceSummary()
@@ -1022,103 +1445,6 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
             });
         }
 
-        private List<DatasetEntry> LoadDatasetEntries(string datasetPath)
-        {
-            var entries = new List<DatasetEntry>();
-            if (string.IsNullOrWhiteSpace(datasetPath))
-            {
-                return entries;
-            }
-
-            if (Directory.Exists(datasetPath))
-            {
-                var okDir = Path.Combine(datasetPath, "ok");
-                var ngDir = Path.Combine(datasetPath, "ng");
-
-                if (Directory.Exists(okDir) || Directory.Exists(ngDir))
-                {
-                    if (Directory.Exists(okDir))
-                    {
-                        entries.AddRange(EnumerateImages(okDir).Select(path => new DatasetEntry(path, true)));
-                    }
-
-                    if (Directory.Exists(ngDir))
-                    {
-                        entries.AddRange(EnumerateImages(ngDir).Select(path => new DatasetEntry(path, false)));
-                    }
-                }
-                else
-                {
-                    entries.AddRange(EnumerateImages(datasetPath).Select(path => new DatasetEntry(path, true)));
-                }
-
-                return entries;
-            }
-
-            if (File.Exists(datasetPath))
-            {
-                var baseDir = Path.GetDirectoryName(datasetPath);
-                foreach (var raw in File.ReadAllLines(datasetPath))
-                {
-                    var line = raw.Trim();
-                    if (string.IsNullOrEmpty(line))
-                    {
-                        continue;
-                    }
-
-                    var parts = line.Split(new[] { ',', ';', '\t' }, StringSplitOptions.RemoveEmptyEntries);
-                    if (parts.Length == 0)
-                    {
-                        continue;
-                    }
-
-                    var path = parts[0].Trim();
-                    if (!Path.IsPathRooted(path) && !string.IsNullOrEmpty(baseDir))
-                    {
-                        path = Path.GetFullPath(Path.Combine(baseDir!, path));
-                    }
-
-                    bool isOk = true;
-                    if (parts.Length > 1)
-                    {
-                        var label = parts[1].Trim().ToLowerInvariant();
-                        if (label is "ng" or "nok" or "fail" or "0")
-                        {
-                            isOk = false;
-                        }
-                        else if (label is "ok" or "1")
-                        {
-                            isOk = true;
-                        }
-                    }
-
-                    if (File.Exists(path))
-                    {
-                        entries.Add(new DatasetEntry(path, isOk));
-                    }
-                }
-            }
-
-            return entries;
-        }
-
-        private static IEnumerable<string> EnumerateImages(string directory)
-        {
-            if (!Directory.Exists(directory))
-            {
-                yield break;
-            }
-
-            string[] patterns = { "*.png", "*.jpg", "*.jpeg", "*.bmp", "*.tif", "*.tiff" };
-            foreach (var pattern in patterns)
-            {
-                foreach (var file in Directory.EnumerateFiles(directory, pattern, SearchOption.AllDirectories))
-                {
-                    yield return file;
-                }
-            }
-        }
-
         private static double ComputeYoudenThreshold(IReadOnlyCollection<double> okScores, IReadOnlyCollection<double> ngScores, double defaultValue)
         {
             if (okScores.Count == 0)
@@ -1168,6 +1494,19 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
             }
 
             return bestThr;
+        }
+
+        private sealed record RoiDatasetAnalysis(
+            string DatasetPath,
+            List<DatasetEntry> Entries,
+            int OkCount,
+            int KoCount,
+            bool IsValid,
+            string StatusMessage,
+            List<(string Path, bool IsOk)> PreviewItems)
+        {
+            public static RoiDatasetAnalysis Empty(string status)
+                => new(string.Empty, new List<DatasetEntry>(), 0, 0, false, status, new List<(string, bool)>());
         }
 
         private sealed record DatasetEntry(string Path, bool IsOk);
