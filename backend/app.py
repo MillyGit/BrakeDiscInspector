@@ -81,6 +81,7 @@ def fit_ok(
     roi_id: str = Form(...),
     mm_per_px: float = Form(...),
     images: List[UploadFile] = File(...),
+    memory_fit: bool = Form(False),
 ):
     """
     Acumula OKs para construir la memoria PatchCore (coreset + kNN).
@@ -113,6 +114,8 @@ def fit_ok(
 
         # Coreset (puedes ajustar coreset_rate)
         coreset_rate = 0.02
+        if memory_fit:
+            coreset_rate = 1.0
         mem = PatchCoreMemory.build(E, coreset_rate=coreset_rate, seed=0)
 
         # Persistir memoria + token grid
@@ -127,26 +130,6 @@ def fit_ok(
                 "applied_rate": float(applied_rate),
             },
         )
-
-        # Persistir índice FAISS si está disponible
-        try:
-            import faiss  # type: ignore
-            if mem.index is not None:
-                buf = faiss.serialize_index(mem.index)
-                store.save_index_blob(role_id, roi_id, bytes(buf))
-        except Exception:
-            pass
-
-        return {
-            "n_embeddings": int(E.shape[0]),
-            "coreset_size": int(mem.emb.shape[0]),
-            "token_shape": [int(token_hw[0]), int(token_hw[1])],
-            "coreset_rate_requested": float(coreset_rate),
-            "coreset_rate_applied": float(applied_rate),
-        }
-    except Exception as e:
-        return JSONResponse(status_code=500, content={"error": str(e), "trace": traceback.format_exc()})
-
 
         # Persistir índice FAISS si está disponible
         try:
@@ -183,13 +166,27 @@ async def calibrate_ng(payload: Dict[str, Any]):
         area_mm2_thr = float(payload.get("area_mm2_thr", 1.0))
         p_score = int(payload.get("score_percentile", 99))
 
-        t = choose_threshold(ok_scores, ng_scores if (ng_scores is not None and ng_scores.size > 0) else None,
-                             percentile=p_score)
+        t = choose_threshold(
+            ok_scores,
+            ng_scores if (ng_scores is not None and ng_scores.size > 0) else None,
+            percentile=p_score,
+        )
+
+        ok_mean = float(np.mean(ok_scores)) if ok_scores.size else 0.0
+        ng_mean = float(np.mean(ng_scores)) if (ng_scores is not None and ng_scores.size > 0) else 0.0
+        p_ok = float(np.percentile(ok_scores, p_score)) if ok_scores.size else None
+        p_ng = (
+            float(np.percentile(ng_scores, 5))
+            if (ng_scores is not None and ng_scores.size > 0)
+            else None
+        )
 
         calib = {
             "threshold": float(t),  # <- siempre float
-            "p99_ok": float(np.percentile(ok_scores, p_score)) if ok_scores.size else None,
-            "p5_ng": float(np.percentile(ng_scores, 5)) if (ng_scores is not None and ng_scores.size > 0) else None,
+            "ok_mean": ok_mean,
+            "ng_mean": ng_mean,
+            "p99_ok": p_ok,
+            "p5_ng": p_ng,
             "mm_per_px": float(mm_per_px),
             "area_mm2_thr": float(area_mm2_thr),
             "score_percentile": int(p_score),

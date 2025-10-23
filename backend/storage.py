@@ -8,40 +8,29 @@ from .utils import ensure_dir, save_json, load_json
 class ModelStore:
     def __init__(self, root: Path):
         self.root = Path(root)
+        ensure_dir(self.root)
 
-    def _dir(self, role_id: str, roi_id: str) -> Path:
-        return self.root / role_id / roi_id
+    def _sanitize(self, value: str) -> str:
+        cleaned = "".join(c if c.isalnum() or c in ("-", "_") else "_" for c in value.strip())
+        return cleaned or "default"
 
-    def save_memory(
-        self,
-        role_id: str,
-        roi_id: str,
-        embeddings: np.ndarray,
-        token_hw: Tuple[int, int],
-        metadata: Optional[Dict[str, Any]] = None,
-    ):
-        """
-        Guarda la memoria (embeddings coreset L2-normalizados) y la forma del grid de tokens.
-        """
-        d = self._dir(role_id, roi_id)
-        ensure_dir(d)
-        payload = {
-            "emb": embeddings.astype(np.float32),
-            "token_h": int(token_hw[0]),
-            "token_w": int(token_hw[1]),
-        }
-        if metadata:
-            payload["metadata"] = json.dumps(metadata)
-        np.savez_compressed(d / "memory.npz", **payload)
+    def _base_name(self, role_id: str, roi_id: str) -> str:
+        return f"{self._sanitize(role_id)}_{self._sanitize(roi_id)}"
 
-    def load_memory(self, role_id: str, roi_id: str):
-        """
-        Carga (embeddings, (Ht, Wt)) o None si no existe.
-        """
-        p = self._dir(role_id, roi_id) / "memory.npz"
-        if not p.exists():
-            return None
-        with np.load(p, allow_pickle=False) as z:
+    def _legacy_dir(self, role_id: str, roi_id: str) -> Path:
+        return self.root / self._sanitize(role_id) / self._sanitize(roi_id)
+
+    def _memory_path(self, role_id: str, roi_id: str) -> Path:
+        return self.root / f"{self._base_name(role_id, roi_id)}.npz"
+
+    def _index_path(self, role_id: str, roi_id: str) -> Path:
+        return self.root / f"{self._base_name(role_id, roi_id)}_index.faiss"
+
+    def _calib_path(self, role_id: str, roi_id: str) -> Path:
+        return self.root / f"{self._base_name(role_id, roi_id)}_calib.json"
+
+    def _load_memory_from_path(self, path: Path):
+        with np.load(path, allow_pickle=False) as z:
             emb = z["emb"].astype(np.float32)
             H = int(z["token_h"])
             W = int(z["token_w"])
@@ -58,21 +47,62 @@ class ModelStore:
                     metadata = {}
         return emb, (H, W), metadata
 
+    def save_memory(
+        self,
+        role_id: str,
+        roi_id: str,
+        embeddings: np.ndarray,
+        token_hw: Tuple[int, int],
+        metadata: Optional[Dict[str, Any]] = None,
+    ):
+        """
+        Guarda la memoria (embeddings coreset L2-normalizados) y la forma del grid de tokens.
+        """
+        ensure_dir(self.root)
+        payload = {
+            "emb": embeddings.astype(np.float32),
+            "token_h": int(token_hw[0]),
+            "token_w": int(token_hw[1]),
+        }
+        if metadata:
+            payload["metadata"] = json.dumps(metadata)
+        np.savez_compressed(self._memory_path(role_id, roi_id), **payload)
+
+    def load_memory(self, role_id: str, roi_id: str):
+        """
+        Carga (embeddings, (Ht, Wt)) o None si no existe.
+        """
+        new_path = self._memory_path(role_id, roi_id)
+        if new_path.exists():
+            return self._load_memory_from_path(new_path)
+
+        legacy_path = self._legacy_dir(role_id, roi_id) / "memory.npz"
+        if legacy_path.exists():
+            return self._load_memory_from_path(legacy_path)
+
+        return None
+
     def save_index_blob(self, role_id: str, roi_id: str, blob: bytes):
-        d = self._dir(role_id, roi_id)
-        ensure_dir(d)
-        (d / "index.faiss").write_bytes(blob)
+        ensure_dir(self.root)
+        self._index_path(role_id, roi_id).write_bytes(blob)
 
     def load_index_blob(self, role_id: str, roi_id: str) -> Optional[bytes]:
-        p = self._dir(role_id, roi_id) / "index.faiss"
-        if p.exists():
-            return p.read_bytes()
+        new_path = self._index_path(role_id, roi_id)
+        if new_path.exists():
+            return new_path.read_bytes()
+
+        legacy_path = self._legacy_dir(role_id, roi_id) / "index.faiss"
+        if legacy_path.exists():
+            return legacy_path.read_bytes()
         return None
 
     def save_calib(self, role_id: str, roi_id: str, data: dict):
-        p = self._dir(role_id, roi_id) / "calib.json"
-        save_json(p, data)
+        save_json(self._calib_path(role_id, roi_id), data)
 
     def load_calib(self, role_id: str, roi_id: str, default=None):
-        p = self._dir(role_id, roi_id) / "calib.json"
-        return load_json(p, default=default)
+        new_path = self._calib_path(role_id, roi_id)
+        if new_path.exists():
+            return load_json(new_path, default=default)
+
+        legacy_path = self._legacy_dir(role_id, roi_id) / "calib.json"
+        return load_json(legacy_path, default=default)

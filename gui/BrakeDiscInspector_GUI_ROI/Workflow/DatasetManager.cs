@@ -9,16 +9,21 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
 {
     public sealed class DatasetManager
     {
+        private const string ImagesFolderName = "images";
+
         public DatasetManager(string rootDirectory)
         {
             RootDirectory = rootDirectory;
+            Directory.CreateDirectory(Path.Combine(RootDirectory, ImagesFolderName));
         }
 
         public string RootDirectory { get; }
 
+        private string ImagesRoot => Path.Combine(RootDirectory, ImagesFolderName);
+
         public string GetRoleRoiDirectory(string roleId, string roiId)
         {
-            return Path.Combine(RootDirectory, Sanitize(roleId), Sanitize(roiId));
+            return ImagesRoot;
         }
 
         public async Task<DatasetSample> SaveSampleAsync(
@@ -31,12 +36,11 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
             string sourceImagePath,
             double angleDeg)
         {
-            var baseDir = GetRoleRoiDirectory(roleId, roiId);
-            var labelDir = Path.Combine(baseDir, isNg ? "ng" : "ok");
+            var labelDir = Path.Combine(ImagesRoot, isNg ? "ng" : "ok");
             Directory.CreateDirectory(labelDir);
 
             var timestamp = DateTime.UtcNow;
-            string fileName = $"SAMPLE_{timestamp:yyyyMMdd_HHmmssfff}.png";
+            string fileName = $"SAMPLE_{Sanitize(roleId)}_{Sanitize(roiId)}_{timestamp:yyyyMMdd_HHmmssfff}.png";
             string imagePath = Path.Combine(labelDir, fileName);
             await File.WriteAllBytesAsync(imagePath, pngBytes).ConfigureAwait(false);
 
@@ -67,7 +71,7 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
             return Task.Run(() =>
             {
                 var result = new List<DatasetSample>();
-                var labelDir = Path.Combine(GetRoleRoiDirectory(roleId, roiId), isNg ? "ng" : "ok");
+                var labelDir = Path.Combine(ImagesRoot, isNg ? "ng" : "ok");
                 if (!Directory.Exists(labelDir))
                 {
                     return (IReadOnlyList<DatasetSample>)result;
@@ -77,7 +81,15 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
                 {
                     if (DatasetSample.TryRead(png, out var sample) && sample != null)
                     {
-                        result.Add(sample);
+                        var metaRole = sample.Metadata.role_id ?? string.Empty;
+                        var metaRoi = sample.Metadata.roi_id ?? string.Empty;
+                        bool matches = string.Equals(metaRole, roleId, StringComparison.OrdinalIgnoreCase)
+                                       && string.Equals(metaRoi, roiId, StringComparison.OrdinalIgnoreCase);
+                        bool legacy = string.IsNullOrWhiteSpace(metaRole) && string.IsNullOrWhiteSpace(metaRoi);
+                        if (matches || legacy)
+                        {
+                            result.Add(sample);
+                        }
                     }
                 }
 
@@ -87,9 +99,8 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
 
         public void EnsureRoleRoiDirectories(string roleId, string roiId)
         {
-            var baseDir = GetRoleRoiDirectory(roleId, roiId);
-            Directory.CreateDirectory(Path.Combine(baseDir, "ok"));
-            Directory.CreateDirectory(Path.Combine(baseDir, "ng"));
+            Directory.CreateDirectory(Path.Combine(ImagesRoot, "ok"));
+            Directory.CreateDirectory(Path.Combine(ImagesRoot, "ng"));
         }
 
         public void DeleteSample(DatasetSample sample)
@@ -112,7 +123,8 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
             {
                 value = value.Replace(c, '_');
             }
-            return value.Trim();
+            var trimmed = value.Trim();
+            return string.IsNullOrEmpty(trimmed) ? "default" : trimmed;
         }
     }
 }
