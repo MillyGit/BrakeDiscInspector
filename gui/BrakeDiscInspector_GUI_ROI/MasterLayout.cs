@@ -98,13 +98,14 @@ namespace BrakeDiscInspector_GUI_ROI
         private string _datasetStatus = string.Empty;
         private int _datasetOkCount;
         private int _datasetKoCount;
+        private ObservableCollection<DatasetPreviewItem> _okPreview = new();
+        private ObservableCollection<DatasetPreviewItem> _ngPreview = new();
 
         public InspectionRoiConfig(int index)
         {
             Index = index;
             _name = $"Inspection {index}";
             _modelKey = $"inspection-{index}";
-            DatasetPreview = new ObservableCollection<DatasetPreviewItem>();
         }
 
         public int Index
@@ -238,7 +239,28 @@ namespace BrakeDiscInspector_GUI_ROI
         }
 
         [JsonIgnore]
-        public ObservableCollection<DatasetPreviewItem> DatasetPreview { get; }
+        public ObservableCollection<DatasetPreviewItem> OkPreview
+        {
+            get => _okPreview;
+            set
+            {
+                if (ReferenceEquals(_okPreview, value)) return;
+                _okPreview = value;
+                OnPropertyChanged();
+            }
+        }
+
+        [JsonIgnore]
+        public ObservableCollection<DatasetPreviewItem> NgPreview
+        {
+            get => _ngPreview;
+            set
+            {
+                if (ReferenceEquals(_ngPreview, value)) return;
+                _ngPreview = value;
+                OnPropertyChanged();
+            }
+        }
 
         [JsonIgnore]
         public bool DatasetReady
