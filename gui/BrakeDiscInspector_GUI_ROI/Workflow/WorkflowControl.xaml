@@ -3,6 +3,7 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:m="clr-namespace:BrakeDiscInspector_GUI_ROI.Models"
              xmlns:w="clr-namespace:BrakeDiscInspector_GUI_ROI.Workflow"
              mc:Ignorable="d"
              d:DesignHeight="600"
@@ -72,12 +73,12 @@
                     <TabControl ItemsSource="{Binding InspectionRois}"
                                 SelectedItem="{Binding SelectedInspectionRoi}">
                         <TabControl.ItemTemplate>
-                            <DataTemplate>
+                            <DataTemplate DataType="{x:Type m:InspectionRoiConfig}">
                                 <TextBlock Text="{Binding Name}"/>
                             </DataTemplate>
                         </TabControl.ItemTemplate>
                         <TabControl.ContentTemplate>
-                            <DataTemplate>
+                            <DataTemplate DataType="{x:Type m:InspectionRoiConfig}">
                                 <Grid Margin="0,8,0,0">
                                     <Grid.RowDefinitions>
                                         <RowDefinition Height="Auto"/>
