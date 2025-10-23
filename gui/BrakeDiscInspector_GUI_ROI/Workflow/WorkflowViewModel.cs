@@ -644,9 +644,24 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
             }
 
             _log($"[fit] sending {images.Count} samples to fit_ok");
-            var result = await _client.FitOkAsync(RoleId, RoiId, MmPerPx, images).ConfigureAwait(false);
-            FitSummary = $"Embeddings={result.n_embeddings} Coreset={result.coreset_size} TokenShape=[{string.Join(',', result.token_shape ?? Array.Empty<int>())}]";
-            _log("[fit] completed " + FitSummary);
+            try
+            {
+                var result = await _client.FitOkAsync(RoleId, RoiId, MmPerPx, images).ConfigureAwait(false);
+                FitSummary = $"Embeddings={result.n_embeddings} Coreset={result.coreset_size} TokenShape=[{string.Join(',', result.token_shape ?? Array.Empty<int>())}]";
+                _log("[fit] completed " + FitSummary);
+            }
+            catch (HttpRequestException ex)
+            {
+                if (IsAlreadyTrainedError(ex))
+                {
+                    FitSummary = "Model already trained";
+                    _log($"[fit] backend reported already trained: {ex.Message}");
+                    return;
+                }
+
+                FitSummary = "Train failed";
+                await ShowMessageAsync($"Training failed: {ex.Message}", caption: "Train error");
+            }
         }
 
         private async Task CalibrateAsync()
@@ -1111,7 +1126,7 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
             var okImages = analysis.Entries.Where(e => e.IsOk).Select(e => e.Path).Where(File.Exists).ToList();
             if (okImages.Count == 0)
             {
-                await ShowMessageAsync("Dataset has no OK samples for training.");
+                await ShowMessageAsync($"No OK images found in dataset for ROI '{roi.Name}'.");
                 return false;
             }
 
@@ -1128,12 +1143,33 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
             }
             catch (HttpRequestException ex)
             {
+                if (IsAlreadyTrainedError(ex))
+                {
+                    FitSummary = "Model already trained";
+                    _log($"[train] backend reported already trained: {ex.Message}");
+                    return true;
+                }
+
                 FitSummary = "Train failed";
                 await ShowMessageAsync($"Training failed: {ex.Message}", caption: "Train error");
                 return false;
             }
 
             return true;
+        }
+
+        private static bool IsAlreadyTrainedError(HttpRequestException ex)
+        {
+            if (ex == null || string.IsNullOrWhiteSpace(ex.Message))
+            {
+                return false;
+            }
+
+            var message = ex.Message;
+            return message.Contains("already trained", StringComparison.OrdinalIgnoreCase)
+                   || message.Contains("already exists", StringComparison.OrdinalIgnoreCase)
+                   || message.Contains("ya entrenad", StringComparison.OrdinalIgnoreCase)
+                   || message.Contains("memoria existente", StringComparison.OrdinalIgnoreCase);
         }
 
         private async Task CalibrateSelectedRoiAsync(CancellationToken ct = default)

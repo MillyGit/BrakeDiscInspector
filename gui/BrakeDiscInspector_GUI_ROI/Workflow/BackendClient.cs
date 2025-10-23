@@ -22,11 +22,16 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
         private const string InferImageFieldName = "image";
 
         private readonly HttpClient _httpClient;
+        private readonly HttpClient _httpTrainClient;
 
         public BackendClient(HttpClient? httpClient = null)
         {
             _httpClient = httpClient ?? new HttpClient();
             _httpClient.Timeout = TimeSpan.FromSeconds(120);
+            _httpTrainClient = new HttpClient
+            {
+                Timeout = Timeout.InfiniteTimeSpan
+            };
             BaseUrl = ResolveDefaultBaseUrl();
         }
 
@@ -38,6 +43,7 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
                 if (string.IsNullOrWhiteSpace(value))
                 {
                     _httpClient.BaseAddress = null;
+                    _httpTrainClient.BaseAddress = null;
                     return;
                 }
 
@@ -47,7 +53,9 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
                     trimmed = "http://" + trimmed;
                 }
 
-                _httpClient.BaseAddress = new Uri(trimmed + "/");
+                var uri = new Uri(trimmed + "/");
+                _httpClient.BaseAddress = uri;
+                _httpTrainClient.BaseAddress = uri;
             }
         }
 
@@ -148,7 +156,7 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
             if (!hasImage)
                 throw new InvalidOperationException("No OK images were provided for training.");
 
-            using var response = await _httpClient.PostAsync("fit_ok", form, ct).ConfigureAwait(false);
+            using var response = await _httpTrainClient.PostAsync("fit_ok", form, ct).ConfigureAwait(false);
             var body = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
             if (!response.IsSuccessStatusCode)
                 throw new HttpRequestException($"/fit_ok {response.StatusCode}: {body}");
