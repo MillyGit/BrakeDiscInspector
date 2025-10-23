@@ -161,6 +161,8 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
                     }
                     if (roi.HasDatasetPath)
                     {
+                        roi.OkPreview = new ObservableCollection<DatasetPreviewItem>();
+                        roi.NgPreview = new ObservableCollection<DatasetPreviewItem>();
                         _ = RefreshRoiDatasetStateAsync(roi);
                     }
                     else
@@ -168,6 +170,8 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
                         roi.DatasetReady = false;
                         roi.DatasetOkCount = 0;
                         roi.DatasetKoCount = 0;
+                        roi.OkPreview = new ObservableCollection<DatasetPreviewItem>();
+                        roi.NgPreview = new ObservableCollection<DatasetPreviewItem>();
                     }
                 }
                 if (_inspectionRois.Count > 0)
@@ -230,7 +234,8 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
                 _roiDatasetCache.Remove(roiChanged);
                 if (!roiChanged.HasDatasetPath)
                 {
-                    roiChanged.DatasetPreview.Clear();
+                    roiChanged.OkPreview = new ObservableCollection<DatasetPreviewItem>();
+                    roiChanged.NgPreview = new ObservableCollection<DatasetPreviewItem>();
                     roiChanged.DatasetReady = false;
                     roiChanged.DatasetOkCount = 0;
                     roiChanged.DatasetKoCount = 0;
@@ -239,7 +244,8 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
                 else
                 {
                     roiChanged.DatasetStatus = "Validating dataset...";
-                    roiChanged.DatasetPreview.Clear();
+                    roiChanged.OkPreview = new ObservableCollection<DatasetPreviewItem>();
+                    roiChanged.NgPreview = new ObservableCollection<DatasetPreviewItem>();
                     _ = RefreshRoiDatasetStateAsync(roiChanged);
                 }
 
@@ -936,69 +942,111 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
             }
         }
 
-        private async Task RefreshDatasetPreviewForRoiAsync(InspectionRoiConfig roi)
+        private static IEnumerable<string> EnumerateDatasetFiles(string rootDir, string labelDir, string roiDisplayName, int take = 24)
+        {
+            if (string.IsNullOrWhiteSpace(rootDir))
+            {
+                yield break;
+            }
+
+            var dir = Path.Combine(rootDir, labelDir, roiDisplayName.Replace(" ", "_"));
+            if (!Directory.Exists(dir))
+            {
+                yield break;
+            }
+
+            IEnumerable<string> Enumerate()
+            {
+                foreach (var f in Directory.EnumerateFiles(dir, "*.png", SearchOption.TopDirectoryOnly))
+                {
+                    yield return f;
+                }
+            }
+
+            foreach (var file in Enumerate().OrderByDescending(File.GetCreationTimeUtc).Take(take))
+            {
+                yield return file;
+            }
+        }
+
+        private static BitmapSource? LoadBitmapSource(string fullPath)
+        {
+            if (string.IsNullOrWhiteSpace(fullPath) || !File.Exists(fullPath))
+            {
+                return null;
+            }
+
+            try
+            {
+                using var fs = new FileStream(fullPath, FileMode.Open, FileAccess.Read, FileShare.Read);
+                var decoder = BitmapDecoder.Create(fs, BitmapCreateOptions.PreservePixelFormat, BitmapCacheOption.OnLoad);
+                var frame = decoder.Frames.FirstOrDefault();
+                if (frame == null)
+                {
+                    return null;
+                }
+
+                frame.Freeze();
+                return frame;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        public async Task RefreshDatasetPreviewsForRoiAsync(InspectionRoiConfig roi, int take = 24)
         {
             if (roi == null)
             {
                 return;
             }
 
-            var samples = EnumerateRecentSamples(roi, 12).ToList();
+            if (string.IsNullOrWhiteSpace(roi.DatasetPath))
+            {
+                await Application.Current.Dispatcher.InvokeAsync(() =>
+                {
+                    roi.OkPreview = new ObservableCollection<DatasetPreviewItem>();
+                    roi.NgPreview = new ObservableCollection<DatasetPreviewItem>();
+                });
+                return;
+            }
+
+            if (!Directory.Exists(roi.DatasetPath))
+            {
+                await Application.Current.Dispatcher.InvokeAsync(() =>
+                {
+                    roi.OkPreview = new ObservableCollection<DatasetPreviewItem>();
+                    roi.NgPreview = new ObservableCollection<DatasetPreviewItem>();
+                });
+                return;
+            }
+
+            var okItems = new ObservableCollection<DatasetPreviewItem>();
+            foreach (var path in EnumerateDatasetFiles(roi.DatasetPath, "ok", roi.DisplayName, take))
+            {
+                var bmp = LoadBitmapSource(path);
+                if (bmp != null)
+                {
+                    okItems.Add(new DatasetPreviewItem { Path = path, Thumbnail = bmp });
+                }
+            }
+
+            var ngItems = new ObservableCollection<DatasetPreviewItem>();
+            foreach (var path in EnumerateDatasetFiles(roi.DatasetPath, "ng", roi.DisplayName, take))
+            {
+                var bmp = LoadBitmapSource(path);
+                if (bmp != null)
+                {
+                    ngItems.Add(new DatasetPreviewItem { Path = path, Thumbnail = bmp });
+                }
+            }
+
             await Application.Current.Dispatcher.InvokeAsync(() =>
             {
-                roi.DatasetPreview.Clear();
-                foreach (var sample in samples)
-                {
-                    var item = DatasetPreviewItem.Create(sample.Path, sample.IsOk);
-                    if (item != null)
-                    {
-                        roi.DatasetPreview.Add(item);
-                    }
-                }
+                roi.OkPreview = okItems;
+                roi.NgPreview = ngItems;
             });
-        }
-
-        private IEnumerable<(string Path, bool IsOk)> EnumerateRecentSamples(InspectionRoiConfig roi, int take)
-        {
-            if (roi == null || string.IsNullOrWhiteSpace(roi.DatasetPath))
-            {
-                yield break;
-            }
-
-            IEnumerable<(string path, bool isOk, DateTime stamp)> Collect(string label, bool isOk)
-            {
-                var dir = Path.Combine(roi.DatasetPath, label);
-                if (!Directory.Exists(dir))
-                {
-                    yield break;
-                }
-
-                foreach (var file in Directory.EnumerateFiles(dir, "*.png", SearchOption.AllDirectories))
-                {
-                    DateTime stamp;
-                    try
-                    {
-                        stamp = File.GetLastWriteTimeUtc(file);
-                    }
-                    catch
-                    {
-                        stamp = DateTime.UtcNow;
-                    }
-
-                    yield return (file, isOk, stamp);
-                }
-            }
-
-            var ordered = Collect("ok", true)
-                .Concat(Collect("ng", false))
-                .Concat(Collect("ko", false))
-                .OrderByDescending(entry => entry.stamp)
-                .Take(take);
-
-            foreach (var entry in ordered)
-            {
-                yield return (entry.path, entry.isOk);
-            }
         }
 
         private static void SavePng(string path, BitmapSource bmp)
@@ -1049,7 +1097,7 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
                 roi.DatasetStatus = analysis.StatusMessage;
             });
 
-            await RefreshDatasetPreviewForRoiAsync(roi).ConfigureAwait(false);
+            await RefreshDatasetPreviewsForRoiAsync(roi).ConfigureAwait(false);
 
             return analysis;
         }
