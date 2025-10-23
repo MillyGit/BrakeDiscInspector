@@ -632,13 +632,11 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
                 return;
             }
 
-            var labelDir = isOk ? "ok" : DetermineNegLabelDir(roi.DatasetPath!);
-            var roiDir = RoiFolderName(roi.DisplayName);
-            var dir = Path.Combine(roi.DatasetPath!, labelDir, roiDir);
-            Directory.CreateDirectory(dir);
-
-            var fileName = $"{DateTime.UtcNow:yyyyMMdd_HHmmss_fff}.png";
-            var fullPath = Path.Combine(dir, fileName);
+            string labelDir = isOk ? "ok" : DetermineNegLabelDir(roi.DatasetPath!);
+            string saveDir = Path.Combine(roi.DatasetPath!, labelDir);
+            Directory.CreateDirectory(saveDir);
+            string fileName = $"{DateTime.UtcNow:yyyyMMdd_HHmmss_fff}.png";
+            string fullPath = Path.Combine(saveDir, fileName);
             SavePng(fullPath, cropped);
 
             await RefreshRoiDatasetStateAsync(roi).ConfigureAwait(false);
@@ -961,14 +959,25 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
 
         private static IEnumerable<string> EnumerateDatasetFiles(string rootDir, string labelDir, string roiDisplayName, int take = 24)
         {
-            var dir = Path.Combine(rootDir, labelDir, RoiFolderName(roiDisplayName));
-            if (!Directory.Exists(dir))
+            var roiFolder = RoiFolderName(roiDisplayName);
+            var subDir = Path.Combine(rootDir, labelDir, roiFolder);
+            string targetDir;
+            if (Directory.Exists(subDir))
             {
-                Debug.WriteLine($"[thumbs] no dir: {dir}");
+                targetDir = subDir;
+            }
+            else
+            {
+                targetDir = Path.Combine(rootDir, labelDir);
+            }
+
+            if (!Directory.Exists(targetDir))
+            {
+                Debug.WriteLine($"[thumbs] no dir: {targetDir}");
                 yield break;
             }
 
-            foreach (var file in Directory.EnumerateFiles(dir, "*.png", SearchOption.TopDirectoryOnly)
+            foreach (var file in Directory.EnumerateFiles(targetDir, "*.png", SearchOption.TopDirectoryOnly)
                                          .OrderByDescending(File.GetCreationTimeUtc)
                                          .Take(take))
             {
@@ -997,7 +1006,12 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
 
         public async Task RefreshDatasetPreviewsForRoiAsync(InspectionRoiConfig roi, int take = 24)
         {
-            if (roi == null || string.IsNullOrWhiteSpace(roi.DatasetPath))
+            if (roi == null)
+            {
+                return;
+            }
+
+            if (string.IsNullOrEmpty(roi.DatasetPath))
             {
                 await Application.Current.Dispatcher.InvokeAsync(() =>
                 {

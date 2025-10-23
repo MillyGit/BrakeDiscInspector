@@ -83,6 +83,7 @@ namespace BrakeDiscInspector_GUI_ROI
         private bool _isFirstImageLoaded = false;
 
         private WorkflowViewModel? _workflowViewModel;
+        private string? _dataRoot;
         private double _heatmapOverlayOpacity = 0.6;
 
         // Expose layout to XAML bindings (ItemsControl -> Layout.InspectionRois)
@@ -1352,12 +1353,53 @@ namespace BrakeDiscInspector_GUI_ROI
             this.Loaded += MainWindow_Loaded;
         }
 
+        private string EnsureDataRoot()
+        {
+            var root = Path.Combine(AppContext.BaseDirectory, "data");
+            Directory.CreateDirectory(root);
+
+            var imagesRoot = Path.Combine(root, "images");
+            Directory.CreateDirectory(imagesRoot);
+            Directory.CreateDirectory(Path.Combine(imagesRoot, "ok"));
+            Directory.CreateDirectory(Path.Combine(imagesRoot, "ng"));
+
+            Directory.CreateDirectory(Path.Combine(root, "rois"));
+
+            return root;
+        }
+
+        private void EnsureInspectionDatasetStructure()
+        {
+            if (_layout?.InspectionRois == null)
+            {
+                return;
+            }
+
+            _dataRoot ??= EnsureDataRoot();
+
+            var roisRoot = Path.Combine(_dataRoot, "rois");
+            Directory.CreateDirectory(roisRoot);
+
+            foreach (var roi in _layout.InspectionRois)
+            {
+                var folderName = $"Inspection_{roi.Index}";
+                var roiDir = Path.Combine(roisRoot, folderName);
+                Directory.CreateDirectory(roiDir);
+                Directory.CreateDirectory(Path.Combine(roiDir, "ok"));
+                Directory.CreateDirectory(Path.Combine(roiDir, "ng"));
+
+                if (!string.Equals(roi.DatasetPath, roiDir, StringComparison.OrdinalIgnoreCase))
+                {
+                    roi.DatasetPath = roiDir;
+                }
+            }
+        }
+
         private void InitWorkflow()
         {
             try
             {
-                var datasetRoot = Path.Combine(AppContext.BaseDirectory, "datasets");
-                Directory.CreateDirectory(datasetRoot);
+                _dataRoot = EnsureDataRoot();
 
                 var backendClient = new Workflow.BackendClient();
                 if (!string.IsNullOrWhiteSpace(BackendAPI.BaseUrl))
@@ -1365,7 +1407,7 @@ namespace BrakeDiscInspector_GUI_ROI
                     backendClient.BaseUrl = BackendAPI.BaseUrl;
                 }
 
-                var datasetManager = new DatasetManager(datasetRoot);
+                var datasetManager = new DatasetManager(_dataRoot);
                 _workflowViewModel = new WorkflowViewModel(
                     backendClient,
                     datasetManager,
@@ -1381,6 +1423,7 @@ namespace BrakeDiscInspector_GUI_ROI
                     WorkflowHost.DataContext = _workflowViewModel;
                 }
 
+                EnsureInspectionDatasetStructure();
                 _workflowViewModel.SetInspectionRoisCollection(_layout?.InspectionRois);
 
                 Dispatcher.BeginInvoke(new Action(() =>
@@ -5843,6 +5886,7 @@ namespace BrakeDiscInspector_GUI_ROI
             _preset = PresetManager.Load(o.FileName);
             ApplyPresetToUI(_preset);
             _layout = MasterLayoutManager.LoadOrNew(_preset);
+            EnsureInspectionDatasetStructure();
             _workflowViewModel?.SetInspectionRoisCollection(_layout?.InspectionRois);
             EnsureInspectionBaselineInitialized();
             {
@@ -5877,6 +5921,7 @@ namespace BrakeDiscInspector_GUI_ROI
         private void BtnLoadLayout_Click(object sender, RoutedEventArgs e)
         {
             _layout = MasterLayoutManager.LoadOrNew(_preset);
+            EnsureInspectionDatasetStructure();
             _workflowViewModel?.SetInspectionRoisCollection(_layout?.InspectionRois);
             EnsureInspectionBaselineInitialized();
             {
