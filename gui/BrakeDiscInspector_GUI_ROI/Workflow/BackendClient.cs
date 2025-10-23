@@ -19,6 +19,8 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
     /// </summary>
     public sealed class BackendClient
     {
+        private const string InferImageFieldName = "image";
+
         private readonly HttpClient _httpClient;
 
         public BackendClient(HttpClient? httpClient = null)
@@ -272,7 +274,7 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
             }
             content.Headers.ContentType = new MediaTypeHeaderValue(mediaType);
             var safeFileName = string.IsNullOrWhiteSpace(fileName) ? "roi.png" : fileName;
-            form.Add(content, "file", safeFileName);
+            form.Add(content, InferImageFieldName, safeFileName);
 
             if (!string.IsNullOrWhiteSpace(shapeJson))
             {
