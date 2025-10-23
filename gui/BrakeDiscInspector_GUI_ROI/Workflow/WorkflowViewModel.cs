@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Collections.Specialized;
 using System.ComponentModel;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Net.Http;
@@ -14,6 +15,7 @@ using System.Windows;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using BrakeDiscInspector_GUI_ROI.Models;
 using Forms = System.Windows.Forms;
 
 namespace BrakeDiscInspector_GUI_ROI.Workflow
@@ -240,12 +242,14 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
                     roiChanged.DatasetOkCount = 0;
                     roiChanged.DatasetKoCount = 0;
                     roiChanged.DatasetStatus = "Select a dataset";
+                    _ = RefreshDatasetPreviewsForRoiAsync(roiChanged);
                 }
                 else
                 {
                     roiChanged.DatasetStatus = "Validating dataset...";
                     roiChanged.OkPreview = new ObservableCollection<DatasetPreviewItem>();
                     roiChanged.NgPreview = new ObservableCollection<DatasetPreviewItem>();
+                    _ = RefreshDatasetPreviewsForRoiAsync(roiChanged);
                     _ = RefreshRoiDatasetStateAsync(roiChanged);
                 }
 
@@ -628,9 +632,9 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
                 return;
             }
 
-            var labelDir = isOk ? "ok" : "ng";
-            var roiDir = roi.DisplayName.Replace(" ", "_");
-            var dir = Path.Combine(roi.DatasetPath, labelDir, roiDir);
+            var labelDir = isOk ? "ok" : DetermineNegLabelDir(roi.DatasetPath!);
+            var roiDir = RoiFolderName(roi.DisplayName);
+            var dir = Path.Combine(roi.DatasetPath!, labelDir, roiDir);
             Directory.CreateDirectory(dir);
 
             var fileName = $"{DateTime.UtcNow:yyyyMMdd_HHmmss_fff}.png";
@@ -638,6 +642,7 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
             SavePng(fullPath, cropped);
 
             await RefreshRoiDatasetStateAsync(roi).ConfigureAwait(false);
+            await RefreshDatasetPreviewsForRoiAsync(roi).ConfigureAwait(false);
 
             await ShowTransientToastAsync($"{roi.DisplayName}: added to {(isOk ? "OK" : "NG")} dataset");
         }
@@ -942,28 +947,30 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
             }
         }
 
+        private static string RoiFolderName(string displayName)
+            => displayName.Replace(" ", "_");
+
+        private static string DetermineNegLabelDir(string datasetRoot)
+        {
+            var ng = Path.Combine(datasetRoot, "ng");
+            var ko = Path.Combine(datasetRoot, "ko");
+            if (Directory.Exists(ng)) return "ng";
+            if (Directory.Exists(ko)) return "ko";
+            return "ng";
+        }
+
         private static IEnumerable<string> EnumerateDatasetFiles(string rootDir, string labelDir, string roiDisplayName, int take = 24)
         {
-            if (string.IsNullOrWhiteSpace(rootDir))
-            {
-                yield break;
-            }
-
-            var dir = Path.Combine(rootDir, labelDir, roiDisplayName.Replace(" ", "_"));
+            var dir = Path.Combine(rootDir, labelDir, RoiFolderName(roiDisplayName));
             if (!Directory.Exists(dir))
             {
+                Debug.WriteLine($"[thumbs] no dir: {dir}");
                 yield break;
             }
 
-            IEnumerable<string> Enumerate()
-            {
-                foreach (var f in Directory.EnumerateFiles(dir, "*.png", SearchOption.TopDirectoryOnly))
-                {
-                    yield return f;
-                }
-            }
-
-            foreach (var file in Enumerate().OrderByDescending(File.GetCreationTimeUtc).Take(take))
+            foreach (var file in Directory.EnumerateFiles(dir, "*.png", SearchOption.TopDirectoryOnly)
+                                         .OrderByDescending(File.GetCreationTimeUtc)
+                                         .Take(take))
             {
                 yield return file;
             }
@@ -971,48 +978,26 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
 
         private static BitmapSource? LoadBitmapSource(string fullPath)
         {
-            if (string.IsNullOrWhiteSpace(fullPath) || !File.Exists(fullPath))
+            if (!File.Exists(fullPath))
             {
                 return null;
             }
 
-            try
-            {
-                using var fs = new FileStream(fullPath, FileMode.Open, FileAccess.Read, FileShare.Read);
-                var decoder = BitmapDecoder.Create(fs, BitmapCreateOptions.PreservePixelFormat, BitmapCacheOption.OnLoad);
-                var frame = decoder.Frames.FirstOrDefault();
-                if (frame == null)
-                {
-                    return null;
-                }
-
-                frame.Freeze();
-                return frame;
-            }
-            catch
+            using var fs = new FileStream(fullPath, FileMode.Open, FileAccess.Read, FileShare.Read);
+            var decoder = BitmapDecoder.Create(fs, BitmapCreateOptions.PreservePixelFormat, BitmapCacheOption.OnLoad);
+            var frame = decoder.Frames.FirstOrDefault();
+            if (frame == null)
             {
                 return null;
             }
+
+            frame.Freeze();
+            return frame;
         }
 
         public async Task RefreshDatasetPreviewsForRoiAsync(InspectionRoiConfig roi, int take = 24)
         {
-            if (roi == null)
-            {
-                return;
-            }
-
-            if (string.IsNullOrWhiteSpace(roi.DatasetPath))
-            {
-                await Application.Current.Dispatcher.InvokeAsync(() =>
-                {
-                    roi.OkPreview = new ObservableCollection<DatasetPreviewItem>();
-                    roi.NgPreview = new ObservableCollection<DatasetPreviewItem>();
-                });
-                return;
-            }
-
-            if (!Directory.Exists(roi.DatasetPath))
+            if (roi == null || string.IsNullOrWhiteSpace(roi.DatasetPath))
             {
                 await Application.Current.Dispatcher.InvokeAsync(() =>
                 {
@@ -1023,7 +1008,7 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
             }
 
             var okItems = new ObservableCollection<DatasetPreviewItem>();
-            foreach (var path in EnumerateDatasetFiles(roi.DatasetPath, "ok", roi.DisplayName, take))
+            foreach (var path in EnumerateDatasetFiles(roi.DatasetPath!, "ok", roi.DisplayName, take))
             {
                 var bmp = LoadBitmapSource(path);
                 if (bmp != null)
@@ -1032,8 +1017,9 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
                 }
             }
 
+            var negLabel = DetermineNegLabelDir(roi.DatasetPath!);
             var ngItems = new ObservableCollection<DatasetPreviewItem>();
-            foreach (var path in EnumerateDatasetFiles(roi.DatasetPath, "ng", roi.DisplayName, take))
+            foreach (var path in EnumerateDatasetFiles(roi.DatasetPath!, negLabel, roi.DisplayName, take))
             {
                 var bmp = LoadBitmapSource(path);
                 if (bmp != null)
@@ -1046,6 +1032,7 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
             {
                 roi.OkPreview = okItems;
                 roi.NgPreview = ngItems;
+                Debug.WriteLine($"[thumbs] {roi.DisplayName} ok={okItems.Count} {negLabel}={ngItems.Count}");
             });
         }
 
@@ -1132,33 +1119,20 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
             try
             {
                 var okDir = Path.Combine(folderPath, "ok");
-                var koDir = Path.Combine(folderPath, "ko");
-                var ngDir = Path.Combine(folderPath, "ng");
-
                 if (!Directory.Exists(okDir))
                 {
                     return RoiDatasetAnalysis.Empty("Folder must contain /ok and /ko subfolders");
                 }
 
-                string? koBase = null;
-                bool usedNg = false;
-                if (Directory.Exists(koDir))
-                {
-                    koBase = koDir;
-                }
-                else if (Directory.Exists(ngDir))
-                {
-                    koBase = ngDir;
-                    usedNg = true;
-                }
-
-                if (koBase == null)
+                var negLabel = DetermineNegLabelDir(folderPath);
+                var negDir = Path.Combine(folderPath, negLabel);
+                if (!Directory.Exists(negDir))
                 {
                     return RoiDatasetAnalysis.Empty("Folder must contain /ok and /ko subfolders");
                 }
 
                 var okFiles = EnumerateImages(okDir);
-                var koFiles = EnumerateImages(koBase);
+                var koFiles = EnumerateImages(negDir);
 
                 var entries = okFiles.Select(path => new DatasetEntry(path, true))
                     .Concat(koFiles.Select(path => new DatasetEntry(path, false)))
@@ -1169,7 +1143,7 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
                 preview.AddRange(koFiles.Take(3).Select(p => (p, false)));
 
                 bool ready = okFiles.Count > 0 && koFiles.Count > 0;
-                string status = ready ? (usedNg ? "Dataset Ready ✅ (using /ng)" : "Dataset Ready ✅")
+                string status = ready ? (negLabel == "ng" ? "Dataset Ready ✅ (using /ng)" : "Dataset Ready ✅")
                     : (okFiles.Count == 0 ? "Dataset missing OK samples" : "Dataset missing KO samples");
 
                 return new RoiDatasetAnalysis(folderPath, entries, okFiles.Count, koFiles.Count, ready, status, preview);
