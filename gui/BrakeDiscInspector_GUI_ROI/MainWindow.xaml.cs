@@ -511,7 +511,7 @@ namespace BrakeDiscInspector_GUI_ROI
             var tb = new System.Windows.Controls.TextBlock
             {
                 Text = text,
-                Foreground = System.Windows.Media.Brushes.White,
+                Foreground = System.Windows.Media.Brushes.Lime,
                 FontFamily = new System.Windows.Media.FontFamily("Segoe UI"),
                 FontSize = 12,
                 FontWeight = System.Windows.FontWeights.SemiBold,
@@ -3264,6 +3264,19 @@ namespace BrakeDiscInspector_GUI_ROI
                     if (roi?.Role == RoiRole.Inspection)
                         AddIfValid(roi);
                 }
+            }
+
+            int inspectionIndex = 1;
+            foreach (var roi in results.Where(r => r.Role == RoiRole.Inspection))
+            {
+                string fallback = $"Inspection {inspectionIndex}";
+                string label = fallback;
+                if (_layout?.InspectionRois != null && _layout.InspectionRois.Count >= inspectionIndex)
+                {
+                    label = _layout.InspectionRois[inspectionIndex - 1].DisplayName;
+                }
+                roi.Label = label;
+                inspectionIndex++;
             }
 
             return results;

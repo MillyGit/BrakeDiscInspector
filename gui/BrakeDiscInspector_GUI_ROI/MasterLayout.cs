@@ -80,7 +80,7 @@ namespace BrakeDiscInspector_GUI_ROI
 
     public class InspectionRoiConfig : INotifyPropertyChanged
     {
-        private readonly int _index;
+        private int _index;
         private bool _enabled = true;
         private string _modelKey;
         private double _threshold;
@@ -101,21 +101,32 @@ namespace BrakeDiscInspector_GUI_ROI
 
         public InspectionRoiConfig(int index)
         {
-            _index = index;
-            DisplayName = $"ROI {index}";
+            Index = index;
             _name = $"Inspection {index}";
             _modelKey = $"inspection-{index}";
             DatasetPreview = new ObservableCollection<DatasetPreviewItem>();
         }
 
-        public string DisplayName { get; }
+        public int Index
+        {
+            get => _index;
+            private set
+            {
+                if (_index == value) return;
+                _index = value;
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(DisplayName));
+            }
+        }
+
+        public string DisplayName => $"Inspection {Index}";
 
         public string Name
         {
             get => _name;
             set
             {
-                var newValue = string.IsNullOrWhiteSpace(value) ? $"Inspection {_index}" : value;
+                var newValue = string.IsNullOrWhiteSpace(value) ? $"Inspection {Index}" : value;
                 if (string.Equals(_name, newValue, StringComparison.Ordinal)) return;
                 _name = newValue;
                 OnPropertyChanged();
@@ -138,7 +149,7 @@ namespace BrakeDiscInspector_GUI_ROI
             get => _modelKey;
             set
             {
-                var newValue = string.IsNullOrWhiteSpace(value) ? $"inspection-{_index}" : value;
+                var newValue = string.IsNullOrWhiteSpace(value) ? $"inspection-{Index}" : value;
                 if (string.Equals(_modelKey, newValue, StringComparison.Ordinal)) return;
                 _modelKey = newValue;
                 OnPropertyChanged();
@@ -275,6 +286,7 @@ namespace BrakeDiscInspector_GUI_ROI
                 _datasetOkCount = value;
                 OnPropertyChanged();
                 OnPropertyChanged(nameof(DatasetCountsText));
+                OnPropertyChanged(nameof(OkCount));
             }
         }
 
@@ -288,11 +300,26 @@ namespace BrakeDiscInspector_GUI_ROI
                 _datasetKoCount = value;
                 OnPropertyChanged();
                 OnPropertyChanged(nameof(DatasetCountsText));
+                OnPropertyChanged(nameof(NgCount));
             }
         }
 
         [JsonIgnore]
         public string DatasetCountsText => $"OK: {DatasetOkCount} · KO: {DatasetKoCount}";
+
+        [JsonIgnore]
+        public int OkCount
+        {
+            get => DatasetOkCount;
+            set => DatasetOkCount = value;
+        }
+
+        [JsonIgnore]
+        public int NgCount
+        {
+            get => DatasetKoCount;
+            set => DatasetKoCount = value;
+        }
 
         public double Threshold
         {

@@ -11,14 +11,12 @@
 
   <Grid x:Name="RootGrid">
     <Grid.ColumnDefinitions>
-      <!-- Left: tabs -->
-      <ColumnDefinition Width="320"/>
-      <!-- Right: viewer/canvas -->
-      <ColumnDefinition Width="*"/>
+      <ColumnDefinition Width="*" />
+      <ColumnDefinition x:Name="SidePanelColumn" Width="840" MinWidth="840" />
     </Grid.ColumnDefinitions>
 
     <!-- ===== Tabs (left) ===== -->
-    <TabControl Grid.Column="0" x:Name="LeftTabs" TabStripPlacement="Left">
+    <TabControl Grid.Column="1" x:Name="LeftTabs" TabStripPlacement="Left">
       <!-- PREPARAR -->
       <TabItem x:Name="TabMaster1" Header="Preparar">
         <ScrollViewer VerticalScrollBarVisibility="Auto">
@@ -85,27 +83,44 @@
             <TextBlock Text="Inspection ROIs (1–4)" FontWeight="SemiBold" Margin="0,0,0,8"/>
             <ItemsControl x:Name="RoiList" ItemsSource="{Binding Layout.InspectionRois}">
               <ItemsControl.ItemTemplate>
-                <DataTemplate>
-                  <StackPanel Margin="0,0,0,12">
-                    <CheckBox Content="{Binding DisplayName}" IsChecked="{Binding Enabled}"/>
-                    <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
-                      <TextBlock Text="Model:" Width="70" VerticalAlignment="Center"/>
-                      <ComboBox Width="200" SelectedItem="{Binding ModelKey}"
-                                ItemsSource="{Binding DataContext.AvailableModels,
-                                              RelativeSource={RelativeSource AncestorType=Window}}"/>
+                <DataTemplate DataType="{x:Type local:InspectionRoiConfig}">
+                  <Border Margin="0,8,0,8" Padding="8" BorderBrush="#404040" BorderThickness="1" CornerRadius="8">
+                    <StackPanel>
+                      <TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold" FontSize="14" Margin="0,0,0,6"/>
+
+                      <StackPanel Orientation="Horizontal" HorizontalAlignment="Left">
+                        <Button Content="Add to OK"
+                                Command="{Binding DataContext.AddRoiToDatasetOkCommand, ElementName=WorkflowHost}"
+                                CommandParameter="{Binding}" Width="120" Margin="0,0,8,0"/>
+                        <Button Content="Add to NG"
+                                Command="{Binding DataContext.AddRoiToDatasetNgCommand, ElementName=WorkflowHost}"
+                                CommandParameter="{Binding}" Width="120"/>
+                      </StackPanel>
+
+                      <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+                        <TextBlock Text="{Binding OkCount, StringFormat=OK: {0}}" Margin="0,0,16,0"/>
+                        <TextBlock Text="{Binding NgCount, StringFormat=NG: {0}}"/>
+                      </StackPanel>
+
+                      <CheckBox Content="Enabled" IsChecked="{Binding Enabled}" Margin="0,8,0,0"/>
+                      <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+                        <TextBlock Text="Model:" Width="70" VerticalAlignment="Center"/>
+                        <ComboBox Width="200" SelectedItem="{Binding ModelKey}"
+                                  ItemsSource="{Binding DataContext.AvailableModels,
+                                                RelativeSource={RelativeSource AncestorType=Window}}"/>
+                      </StackPanel>
+                      <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+                        <TextBlock Text="Threshold:" Width="70" VerticalAlignment="Center"/>
+                        <TextBox Width="80" Text="{Binding Threshold}"/>
+                      </StackPanel>
+                      <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+                        <TextBlock Text="Shape:" Width="70" VerticalAlignment="Center"/>
+                        <ComboBox Width="120" SelectedItem="{Binding Shape}"
+                                  ItemsSource="{Binding DataContext.AvailableShapes,
+                                                RelativeSource={RelativeSource AncestorType=Window}}"/>
+                      </StackPanel>
                     </StackPanel>
-                    <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
-                      <TextBlock Text="Threshold:" Width="70" VerticalAlignment="Center"/>
-                      <TextBox Width="80" Text="{Binding Threshold}"/>
-                      <!-- Optionally disable TextBox if a calibrated threshold exists for ModelKey -->
-                    </StackPanel>
-                    <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
-                      <TextBlock Text="Shape:" Width="70" VerticalAlignment="Center"/>
-                      <ComboBox Width="120" SelectedItem="{Binding Shape}"
-                                ItemsSource="{Binding DataContext.AvailableShapes,
-                                              RelativeSource={RelativeSource AncestorType=Window}}"/>
-                    </StackPanel>
-                  </StackPanel>
+                  </Border>
                 </DataTemplate>
               </ItemsControl.ItemTemplate>
             </ItemsControl>
@@ -213,7 +228,7 @@
     </TabControl>
 
     <!-- ===== Viewer/Canvas (right) ===== -->
-    <Grid Grid.Column="1" x:Name="ViewerHost">
+    <Grid Grid.Column="0" x:Name="ViewerHost">
       <Grid Margin="10">
         <AdornerDecorator>
           <Grid Background="#111">
