@@ -85,8 +85,8 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
             RefreshHealthCommand = CreateCommand(_ => RefreshHealthAsync(), _ => !IsBusy);
 
             BrowseDatasetCommand = CreateCommand(_ => BrowseDatasetAsync(), _ => !IsBusy && SelectedInspectionRoi != null);
-            TrainSelectedRoiCommand = CreateCommand(_ => TrainSelectedRoiAsync(), _ => !IsBusy && SelectedInspectionRoi != null);
-            CalibrateSelectedRoiCommand = CreateCommand(_ => CalibrateSelectedRoiAsync(), _ => !IsBusy && SelectedInspectionRoi != null);
+            TrainSelectedRoiCommand = CreateCommand(async _ => await TrainSelectedRoiAsync().ConfigureAwait(false), _ => !IsBusy && SelectedInspectionRoi != null);
+            CalibrateSelectedRoiCommand = CreateCommand(async _ => await CalibrateSelectedRoiAsync().ConfigureAwait(false), _ => !IsBusy && CanCalibrateSelectedRoi());
             EvaluateSelectedRoiCommand = CreateCommand(_ => EvaluateSelectedRoiAsync(), _ => !IsBusy && SelectedInspectionRoi != null && SelectedInspectionRoi.Enabled);
             EvaluateAllRoisCommand = CreateCommand(_ => EvaluateAllRoisAsync(), _ => !IsBusy && HasAnyEnabledInspectionRoi());
         }
@@ -223,6 +223,14 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
                     roiChanged.DatasetPreview.Clear();
                     _ = RefreshRoiDatasetStateAsync(roiChanged);
                 }
+
+                CalibrateSelectedRoiCommand.RaiseCanExecuteChanged();
+            }
+
+            if (e.PropertyName == nameof(InspectionRoiConfig.DatasetOkCount)
+                || e.PropertyName == nameof(InspectionRoiConfig.IsDatasetLoading))
+            {
+                CalibrateSelectedRoiCommand.RaiseCanExecuteChanged();
             }
 
             if (ReferenceEquals(sender, SelectedInspectionRoi))
@@ -466,6 +474,22 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
             {
                 await RunExclusiveAsync(() => execute(param));
             }, canExecute ?? (_ => !IsBusy));
+        }
+
+        private bool CanCalibrateSelectedRoi()
+        {
+            var roi = SelectedInspectionRoi;
+            if (roi == null)
+            {
+                return false;
+            }
+
+            if (!roi.HasDatasetPath || roi.IsDatasetLoading)
+            {
+                return false;
+            }
+
+            return roi.DatasetOkCount > 0;
         }
 
         private async Task RunExclusiveAsync(Func<Task> action)
@@ -1054,70 +1078,81 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
             return list;
         }
 
-        private async Task TrainSelectedRoiAsync()
+        private async Task<bool> TrainSelectedRoiAsync(CancellationToken ct = default)
         {
             EnsureRoleRoi();
             var roi = SelectedInspectionRoi;
             if (roi == null)
             {
-                return;
+                return false;
             }
 
             if (!roi.HasDatasetPath)
             {
                 await ShowMessageAsync("Select a dataset path before training.");
-                return;
+                return false;
             }
 
             var analysis = await EnsureDatasetAnalysisAsync(roi).ConfigureAwait(false);
-            if (!analysis.IsValid)
+            if (analysis.OkCount == 0)
             {
-                await ShowMessageAsync(analysis.StatusMessage, caption: "Dataset not ready");
-                return;
+                var message = string.IsNullOrWhiteSpace(analysis.StatusMessage)
+                    ? "Dataset has no OK samples for training."
+                    : analysis.StatusMessage;
+                await ShowMessageAsync(message, caption: "Dataset not ready");
+                return false;
+            }
+
+            if (!analysis.IsValid && !string.IsNullOrWhiteSpace(analysis.StatusMessage))
+            {
+                _log($"[train] dataset warning: {analysis.StatusMessage}");
             }
 
             var okImages = analysis.Entries.Where(e => e.IsOk).Select(e => e.Path).Where(File.Exists).ToList();
             if (okImages.Count == 0)
             {
                 await ShowMessageAsync("Dataset has no OK samples for training.");
-                return;
+                return false;
             }
 
             if (!await EnsureFitEndpointAsync().ConfigureAwait(false))
             {
                 await ShowMessageAsync("Backend /fit_ok endpoint is not available.");
-                return;
+                return false;
             }
 
             try
             {
-                var result = await _client.FitOkAsync(RoleId, roi.ModelKey, MmPerPx, okImages, roi.TrainMemoryFit).ConfigureAwait(false);
+                var result = await _client.FitOkAsync(RoleId, roi.ModelKey, MmPerPx, okImages, roi.TrainMemoryFit, ct).ConfigureAwait(false);
                 FitSummary = $"Embeddings={result.n_embeddings} Coreset={result.coreset_size} TokenShape=[{string.Join(',', result.token_shape ?? Array.Empty<int>())}]";
             }
             catch (HttpRequestException ex)
             {
                 FitSummary = "Train failed";
                 await ShowMessageAsync($"Training failed: {ex.Message}", caption: "Train error");
+                return false;
             }
+
+            return true;
         }
 
-        private async Task CalibrateSelectedRoiAsync()
+        private async Task CalibrateSelectedRoiAsync(CancellationToken ct = default)
         {
             EnsureRoleRoi();
             var roi = SelectedInspectionRoi;
             if (roi == null)
             {
+                await ShowMessageAsync("Select an Inspection ROI first.", "Calibrate");
                 return;
             }
 
-            if (!roi.HasDatasetPath)
+            if (!await EnsureTrainedBeforeCalibrateAsync(roi, ct).ConfigureAwait(false))
             {
-                await ShowMessageAsync("Select a dataset path before calibrating.");
                 return;
             }
 
             var analysis = await EnsureDatasetAnalysisAsync(roi).ConfigureAwait(false);
-            if (!analysis.IsValid)
+            if (!analysis.IsValid && analysis.OkCount == 0)
             {
                 await ShowMessageAsync(analysis.StatusMessage, caption: "Dataset not ready");
                 return;
@@ -1126,7 +1161,7 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
             var okEntries = analysis.Entries.Where(e => e.IsOk).ToList();
             if (okEntries.Count == 0)
             {
-                await ShowMessageAsync("Dataset has no OK samples for calibration.");
+                await ShowMessageAsync("Dataset has no OK samples for calibration.", "Calibrate");
                 return;
             }
 
@@ -1135,15 +1170,25 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
             var okScores = new List<double>();
             foreach (var entry in okEntries)
             {
-                var infer = await _client.InferAsync(RoleId, roi.ModelKey, MmPerPx, entry.Path).ConfigureAwait(false);
-                okScores.Add(infer.score);
+                var score = await InferScoreForCalibrationAsync(roi, entry.Path, ct).ConfigureAwait(false);
+                if (!score.HasValue)
+                {
+                    return;
+                }
+
+                okScores.Add(score.Value);
             }
 
             var ngScores = new List<double>();
             foreach (var entry in koEntries)
             {
-                var infer = await _client.InferAsync(RoleId, roi.ModelKey, MmPerPx, entry.Path).ConfigureAwait(false);
-                ngScores.Add(infer.score);
+                var score = await InferScoreForCalibrationAsync(roi, entry.Path, ct).ConfigureAwait(false);
+                if (!score.HasValue)
+                {
+                    return;
+                }
+
+                ngScores.Add(score.Value);
             }
 
             double? threshold = null;
@@ -1151,7 +1196,7 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
             {
                 try
                 {
-                    var calib = await _client.CalibrateAsync(RoleId, roi.ModelKey, MmPerPx, okScores, ngScores.Count > 0 ? ngScores : null).ConfigureAwait(false);
+                    var calib = await _client.CalibrateAsync(RoleId, roi.ModelKey, MmPerPx, okScores, ngScores.Count > 0 ? ngScores : null, ct: ct).ConfigureAwait(false);
                     threshold = calib.threshold;
                     CalibrationSummary = $"Threshold={calib.threshold:0.###} OKµ={calib.ok_mean:0.###} NGµ={calib.ng_mean:0.###} Percentile={calib.score_percentile:0.###}";
                 }
@@ -1170,6 +1215,59 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
             roi.CalibratedThreshold = threshold;
             OnPropertyChanged(nameof(SelectedInspectionRoi));
             UpdateGlobalBadge();
+        }
+
+        private async Task<bool> EnsureTrainedBeforeCalibrateAsync(InspectionRoiConfig? roi, CancellationToken ct)
+        {
+            if (roi == null)
+            {
+                await ShowMessageAsync("No ROI selected.", "Calibrate");
+                return false;
+            }
+
+            if (string.IsNullOrWhiteSpace(roi.DatasetPath))
+            {
+                await ShowMessageAsync($"Dataset path is empty for ROI '{roi.Name}'. Select a dataset first.", "Calibrate");
+                return false;
+            }
+
+            try
+            {
+                return await TrainSelectedRoiAsync(ct).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                await ShowMessageAsync($"Training failed before calibration.\n{ex.Message}", "Calibrate");
+                return false;
+            }
+        }
+
+        private async Task<double?> InferScoreForCalibrationAsync(InspectionRoiConfig roi, string samplePath, CancellationToken ct)
+        {
+            bool retried = false;
+            while (true)
+            {
+                try
+                {
+                    var infer = await _client.InferAsync(RoleId, roi.ModelKey, MmPerPx, samplePath, null, ct).ConfigureAwait(false);
+                    return infer.score;
+                }
+                catch (HttpRequestException ex) when (!retried && ex.Message.Contains("Memoria no encontrada", StringComparison.OrdinalIgnoreCase))
+                {
+                    retried = true;
+                    var retrained = await TrainSelectedRoiAsync(ct).ConfigureAwait(false);
+                    if (!retrained)
+                    {
+                        await ShowMessageAsync("Training failed while retrying calibration inference.", "Calibrate");
+                        return null;
+                    }
+                }
+                catch (Exception ex) when (ex is HttpRequestException or InvalidOperationException or IOException)
+                {
+                    await ShowMessageAsync($"Inference failed for '{Path.GetFileName(samplePath)}'.\n{ex.Message}", "Calibrate");
+                    return null;
+                }
+            }
         }
 
         private async Task EvaluateSelectedRoiAsync()
