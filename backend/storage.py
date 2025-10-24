@@ -28,6 +28,10 @@ class ModelStore:
     def _base_name(self, role_id: str, roi_id: str) -> str:
         return f"{self._encode_component(role_id)}__{self._encode_component(roi_id)}"
 
+    def _legacy_flat_base_name(self, role_id: str, roi_id: str) -> str:
+        """Return the sanitized basename used by pre-encoding releases."""
+        return f"{self._sanitize(role_id)}_{self._sanitize(roi_id)}"
+
     def _legacy_dir(self, role_id: str, roi_id: str) -> Path:
         return self.root / self._sanitize(role_id) / self._sanitize(roi_id)
 
@@ -87,6 +91,10 @@ class ModelStore:
         if new_path.exists():
             return self._load_memory_from_path(new_path)
 
+        flat_legacy_path = self.root / f"{self._legacy_flat_base_name(role_id, roi_id)}.npz"
+        if flat_legacy_path.exists():
+            return self._load_memory_from_path(flat_legacy_path)
+
         legacy_path = self._legacy_dir(role_id, roi_id) / "memory.npz"
         if legacy_path.exists():
             return self._load_memory_from_path(legacy_path)
@@ -102,6 +110,10 @@ class ModelStore:
         if new_path.exists():
             return new_path.read_bytes()
 
+        flat_legacy_path = self.root / f"{self._legacy_flat_base_name(role_id, roi_id)}_index.faiss"
+        if flat_legacy_path.exists():
+            return flat_legacy_path.read_bytes()
+
         legacy_path = self._legacy_dir(role_id, roi_id) / "index.faiss"
         if legacy_path.exists():
             return legacy_path.read_bytes()
@@ -114,6 +126,10 @@ class ModelStore:
         new_path = self._calib_path(role_id, roi_id)
         if new_path.exists():
             return load_json(new_path, default=default)
+
+        flat_legacy_path = self.root / f"{self._legacy_flat_base_name(role_id, roi_id)}_calib.json"
+        if flat_legacy_path.exists():
+            return load_json(flat_legacy_path, default=default)
 
         legacy_path = self._legacy_dir(role_id, roi_id) / "calib.json"
         return load_json(legacy_path, default=default)
