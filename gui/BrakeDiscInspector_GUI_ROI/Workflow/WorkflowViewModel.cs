@@ -43,6 +43,7 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
         private bool? _hasCalibrateEndpoint;
 
         private bool _isBusy;
+        private bool _isImageLoaded;
         private string _roleId = "Master1";
         private string _roiId = "Inspection";
         private double _mmPerPx = 0.20;
@@ -116,12 +117,43 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
                     await RunExclusiveAsync(() => AddRoiToDatasetAsync(roi, isOk: false)).ConfigureAwait(false);
                 }
             }, _ => !IsBusy);
+
+            AddRoiToOkCommand = new AsyncCommand(async param =>
+            {
+                if (param is RoiModel roi)
+                {
+                    await RunExclusiveAsync(() => AddRoiToDatasetAsync(roi, positive: true)).ConfigureAwait(false);
+                }
+            }, _ => !IsBusy);
+
+            AddRoiToNgCommand = new AsyncCommand(async param =>
+            {
+                if (param is RoiModel roi)
+                {
+                    await RunExclusiveAsync(() => AddRoiToDatasetAsync(roi, positive: false)).ConfigureAwait(false);
+                }
+            }, _ => !IsBusy);
         }
 
         public ObservableCollection<DatasetSample> OkSamples { get; }
         public ObservableCollection<DatasetSample> NgSamples { get; }
 
         public ObservableCollection<InspectionRoiConfig> InspectionRois { get; private set; } = new();
+
+        public bool IsImageLoaded
+        {
+            get => _isImageLoaded;
+            set
+            {
+                if (_isImageLoaded == value)
+                {
+                    return;
+                }
+
+                _isImageLoaded = value;
+                OnPropertyChanged();
+            }
+        }
 
         public RoiModel? Inspection1
         {
@@ -376,6 +408,8 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
         public AsyncCommand EvaluateAllRoisCommand { get; }
         public AsyncCommand AddRoiToDatasetOkCommand { get; }
         public AsyncCommand AddRoiToDatasetNgCommand { get; }
+        public ICommand AddRoiToOkCommand { get; }
+        public ICommand AddRoiToNgCommand { get; }
 
         public bool IsBusy
         {
@@ -621,6 +655,14 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
             EvaluateAllRoisCommand.RaiseCanExecuteChanged();
             AddRoiToDatasetOkCommand.RaiseCanExecuteChanged();
             AddRoiToDatasetNgCommand.RaiseCanExecuteChanged();
+            if (AddRoiToOkCommand is AsyncCommand asyncAddOk)
+            {
+                asyncAddOk.RaiseCanExecuteChanged();
+            }
+            if (AddRoiToNgCommand is AsyncCommand asyncAddNg)
+            {
+                asyncAddNg.RaiseCanExecuteChanged();
+            }
         }
 
         private void UpdateSelectedRoiState()
@@ -632,6 +674,14 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
             EvaluateAllRoisCommand.RaiseCanExecuteChanged();
             AddRoiToDatasetOkCommand.RaiseCanExecuteChanged();
             AddRoiToDatasetNgCommand.RaiseCanExecuteChanged();
+            if (AddRoiToOkCommand is AsyncCommand asyncAddOk)
+            {
+                asyncAddOk.RaiseCanExecuteChanged();
+            }
+            if (AddRoiToNgCommand is AsyncCommand asyncAddNg)
+            {
+                asyncAddNg.RaiseCanExecuteChanged();
+            }
         }
 
         private async Task AddSampleAsync(bool isNg)
@@ -705,6 +755,36 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
             await RefreshDatasetPreviewsForRoiAsync(roi).ConfigureAwait(false);
 
             await ShowTransientToastAsync($"{roi.DisplayName}: added to {(isOk ? "OK" : "NG")} dataset");
+        }
+
+        private async Task AddRoiToDatasetAsync(RoiModel roi, bool positive)
+        {
+            if (roi == null)
+            {
+                await ShowMessageAsync("ROI inválido.", "Dataset");
+                return;
+            }
+
+            var export = await _exportRoiAsync().ConfigureAwait(false);
+            if (export == null)
+            {
+                await ShowMessageAsync("No image loaded.", "Dataset");
+                return;
+            }
+
+            string role = roi.Role.ToString();
+            string roiId = string.IsNullOrWhiteSpace(roi.Id) ? roi.Role.ToString() : roi.Id;
+
+            await _datasetManager.SaveSampleAsync(role, roiId, isNg: !positive, export.PngBytes, export.ShapeJson, MmPerPx,
+                _getSourceImagePath() ?? string.Empty, export.RoiImage.AngleDeg).ConfigureAwait(false);
+
+            await RefreshRoiDatasetStateAsync(roi).ConfigureAwait(false);
+            await ShowTransientToastAsync($"{(roi.Label ?? roi.Role.ToString())}: added to {(positive ? "OK" : "NG")} dataset");
+        }
+
+        private Task RefreshRoiDatasetStateAsync(RoiModel roi)
+        {
+            return Task.CompletedTask;
         }
 
         private async Task RemoveSelectedAsync()

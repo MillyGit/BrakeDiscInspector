@@ -9,7 +9,7 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
 {
     public sealed class DatasetManager
     {
-        private const string ImagesFolderName = "images";
+        private const string ImagesFolderName = "datasets";
 
         public DatasetManager(string rootDirectory)
         {
@@ -23,7 +23,9 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
 
         public string GetRoleRoiDirectory(string roleId, string roiId)
         {
-            return ImagesRoot;
+            var roiDir = Path.Combine(ImagesRoot, Sanitize(roiId));
+            Directory.CreateDirectory(roiDir);
+            return roiDir;
         }
 
         public async Task<DatasetSample> SaveSampleAsync(
@@ -36,7 +38,8 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
             string sourceImagePath,
             double angleDeg)
         {
-            var labelDir = Path.Combine(ImagesRoot, isNg ? "ng" : "ok");
+            var roiDir = Path.Combine(ImagesRoot, Sanitize(roiId));
+            var labelDir = Path.Combine(roiDir, isNg ? "ng" : "ok");
             Directory.CreateDirectory(labelDir);
 
             var timestamp = DateTime.UtcNow;
@@ -71,7 +74,8 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
             return Task.Run(() =>
             {
                 var result = new List<DatasetSample>();
-                var labelDir = Path.Combine(ImagesRoot, isNg ? "ng" : "ok");
+            var roiDir = Path.Combine(ImagesRoot, Sanitize(roiId));
+            var labelDir = Path.Combine(roiDir, isNg ? "ng" : "ok");
                 if (!Directory.Exists(labelDir))
                 {
                     return (IReadOnlyList<DatasetSample>)result;
@@ -99,8 +103,9 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
 
         public void EnsureRoleRoiDirectories(string roleId, string roiId)
         {
-            Directory.CreateDirectory(Path.Combine(ImagesRoot, "ok"));
-            Directory.CreateDirectory(Path.Combine(ImagesRoot, "ng"));
+            var roiDir = Path.Combine(ImagesRoot, Sanitize(roiId));
+            Directory.CreateDirectory(Path.Combine(roiDir, "ok"));
+            Directory.CreateDirectory(Path.Combine(roiDir, "ng"));
         }
 
         public void DeleteSample(DatasetSample sample)

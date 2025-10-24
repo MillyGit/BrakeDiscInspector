@@ -76,7 +76,7 @@ namespace BrakeDiscInspector_GUI_ROI
             {
                 if (_isFrozen == value) return;
                 _isFrozen = value;
-                OnPropertyChanged();
+                OnPropertyChanged(nameof(IsFrozen));
             }
         }
 

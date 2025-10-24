@@ -16,39 +16,69 @@
   </Window.Resources>
 
   <Grid x:Name="RootGrid">
+    <Grid.RowDefinitions>
+      <RowDefinition Height="Auto" />
+      <RowDefinition Height="*" />
+    </Grid.RowDefinitions>
     <Grid.ColumnDefinitions>
       <ColumnDefinition Width="*" />
       <ColumnDefinition x:Name="SidePanelColumn" Width="840" MinWidth="840" />
     </Grid.ColumnDefinitions>
 
+    <StackPanel x:Name="PrimaryCommandsPanel"
+                Orientation="Horizontal"
+                Margin="8"
+                VerticalAlignment="Top"
+                Grid.Column="0"
+                Grid.ColumnSpan="2">
+      <!-- Cargar imagen FIRST -->
+      <Button x:Name="BtnLoadImage"
+              Click="BtnLoadImage_Click"
+              Content="Cargar imagen"
+              Margin="0,0,8,0"/>
+      <!-- Keep Analyze Master next -->
+      <Button x:Name="BtnAnalyzeMaster"
+              Click="BtnAnalyzeMaster_Click"
+              Content="Analyze Master"
+              Margin="0,0,8,0"/>
+      <Button x:Name="BtnLoadPreset"
+              Content="Cargar preset"
+              Click="BtnLoadPreset_Click"
+              IsEnabled="{Binding IsImageLoaded}"
+              Margin="0,0,8,0"/>
+      <!-- Keep scale-lock and local matcher -->
+      <CheckBox x:Name="ChkScaleLock" Content="Scale Lock" Margin="0,0,8,0"/>
+      <CheckBox x:Name="ChkUseLocalMatcher" Content="Usar matcher local" Margin="0,0,8,0"/>
+      <!-- Heatmap UI is created dynamically in code-behind (keep as-is) -->
+    </StackPanel>
+
     <!-- ===== Tabs (left) ===== -->
-    <TabControl Grid.Column="1" x:Name="MainTabs" TabStripPlacement="Left">
+    <TabControl Grid.Row="1" Grid.Column="1" x:Name="MainTabs" TabStripPlacement="Left">
       <!-- PREPARAR -->
       <TabItem x:Name="TabMaster1" Header="Preparar">
         <ScrollViewer VerticalScrollBarVisibility="Auto">
-          <StackPanel x:Name="Master1EditorGroup" Margin="10">
+          <StackPanel Margin="10">
             <Button x:Name="BtnLoadLayout" Content="Load Layout" Margin="0,0,0,8" Click="BtnLoadLayout_Click"/>
-            <Button x:Name="BtnLoadModels" Content="Load Models" Margin="0,0,0,8"/>
-            <Button x:Name="BtnLoadImage" Content="Cargar imagen" Click="BtnLoadImage_Click"/>
 
-            <Separator Margin="0,12,0,12"/>
+            <GroupBox x:Name="Master1EditorGroup" Header="Master 1">
+              <StackPanel Margin="0,8,0,0">
+                <TextBlock Text="Tipo:"/>
+                <ComboBox x:Name="ComboMasterRoiRole" Margin="0,4,0,8"/>
+                <TextBlock Text="Forma:"/>
+                <ComboBox x:Name="ComboMasterRoiShape" Margin="0,4,0,8">
+                  <ComboBoxItem Content="Rectángulo"/>
+                  <ComboBoxItem Content="Círculo"/>
+                </ComboBox>
+                <WrapPanel>
+                  <Button x:Name="BtnSaveMaster" Content="Save Master 1" Click="BtnSaveMaster_Click" Margin="0,0,8,0"/>
+                  <Button x:Name="BtnValidateM1" Content="Validar Master 1" Click="BtnValidateM1_Click"/>
+                </WrapPanel>
 
-            <TextBlock Text="Master 1" FontWeight="SemiBold" Margin="0,0,0,8"/>
-            <TextBlock Text="Tipo:"/>
-            <ComboBox x:Name="ComboMasterRoiRole" Margin="0,4,0,8"/>
-            <TextBlock Text="Forma:"/>
-            <ComboBox x:Name="ComboMasterRoiShape" Margin="0,4,0,8">
-              <ComboBoxItem Content="Rectángulo"/>
-              <ComboBoxItem Content="Círculo"/>
-            </ComboBox>
-            <WrapPanel>
-              <Button x:Name="BtnSaveMaster" Content="Save Master 1" Click="BtnSaveMaster_Click" Margin="0,0,8,0"/>
-              <Button x:Name="BtnValidateM1" Content="Validar Master 1" Click="BtnValidateM1_Click"/>
-            </WrapPanel>
-
-            <Border Margin="0,12,0,0" Background="#11000000" Padding="8">
-              <TextBlock x:Name="TxtMasterHints" TextWrapping="Wrap"/>
-            </Border>
+                <Border Margin="0,12,0,0" Background="#11000000" Padding="8">
+                  <TextBlock x:Name="TxtMasterHints" TextWrapping="Wrap"/>
+                </Border>
+              </StackPanel>
+            </GroupBox>
           </StackPanel>
         </ScrollViewer>
       </TabItem>
@@ -56,173 +86,134 @@
       <!-- ALINEACIÓN -->
       <TabItem x:Name="TabMaster2" Header="Alineación">
         <ScrollViewer VerticalScrollBarVisibility="Auto">
-          <StackPanel x:Name="Master2EditorGroup" Margin="10">
-            <CheckBox x:Name="ChkScaleLock" Content="Scale-Lock (default)" IsChecked="True"/>
-            <CheckBox x:Name="ChkUseLocalMatcher" Margin="0,8,0,0" Content="Usar matcher local" IsChecked="True"/>
-
-            <Separator Margin="0,12,0,12"/>
-
-            <Button x:Name="BtnAnalyzeMaster" Content="Analyze Master" Margin="0,0,0,8" Click="BtnAnalyzeMaster_Click"/>
-
-            <Separator Margin="0,12,0,12"/>
-
-            <TextBlock Text="Master 2" FontWeight="SemiBold" Margin="0,0,0,8"/>
-            <TextBlock Text="Tipo:"/>
-            <ComboBox x:Name="ComboM2Role" Margin="0,4,0,8"/>
-            <TextBlock Text="Forma:"/>
-            <ComboBox x:Name="ComboM2Shape" Margin="0,4,0,8">
-              <ComboBoxItem Content="Rectángulo"/>
-              <ComboBoxItem Content="Círculo"/>
-            </ComboBox>
-            <WrapPanel>
-              <Button Content="Save Master 2" Click="BtnSaveMaster_Click" Margin="0,0,8,0"/>
-              <Button x:Name="BtnValidateM2" Content="Validar Master 2" Click="BtnValidateM2_Click"/>
-            </WrapPanel>
-          </StackPanel>
-        </ScrollViewer>
-      </TabItem>
-
-      <!-- ROIs -->
-      <TabItem x:Name="InspectionTab" Header="ROIs">
-        <ScrollViewer VerticalScrollBarVisibility="Auto">
           <StackPanel Margin="10">
-            <TextBlock Text="Inspection ROIs (1–4)" FontWeight="SemiBold" Margin="0,0,0,8"/>
-            <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
-              <Button x:Name="BtnToggleInspection1"
-                      Margin="0,0,8,0"
-                      Click="BtnToggleInspection1_Click">
-                <Button.Content>
-                  <TextBlock Text="{Binding Inspection1.IsFrozen, Converter={StaticResource BoolToEditSaveText}, TargetNullValue=Editar ROI}" />
-                </Button.Content>
-              </Button>
-              <Button x:Name="BtnToggleInspection2"
-                      Margin="0,0,8,0"
-                      Click="BtnToggleInspection2_Click">
-                <Button.Content>
-                  <TextBlock Text="{Binding Inspection2.IsFrozen, Converter={StaticResource BoolToEditSaveText}, TargetNullValue=Editar ROI}" />
-                </Button.Content>
-              </Button>
-              <Button x:Name="BtnToggleInspection3"
-                      Margin="0,0,8,0"
-                      Click="BtnToggleInspection3_Click">
-                <Button.Content>
-                  <TextBlock Text="{Binding Inspection3.IsFrozen, Converter={StaticResource BoolToEditSaveText}, TargetNullValue=Editar ROI}" />
-                </Button.Content>
-              </Button>
-              <Button x:Name="BtnToggleInspection4"
-                      Click="BtnToggleInspection4_Click">
-                <Button.Content>
-                  <TextBlock Text="{Binding Inspection4.IsFrozen, Converter={StaticResource BoolToEditSaveText}, TargetNullValue=Editar ROI}" />
-                </Button.Content>
-              </Button>
-            </StackPanel>
-            <ItemsControl x:Name="RoiList" ItemsSource="{Binding Layout.InspectionRois}">
-              <ItemsControl.ItemTemplate>
-                <DataTemplate DataType="{x:Type m:InspectionRoiConfig}">
-                  <Border Margin="0,8,0,8" Padding="8" BorderBrush="#404040" BorderThickness="1" CornerRadius="8">
-                    <StackPanel>
-                      <TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold" FontSize="14" Margin="0,0,0,6"/>
-
-                      <StackPanel Orientation="Horizontal" HorizontalAlignment="Left">
-                        <Button Content="Add to OK"
-                                Command="{Binding DataContext.AddRoiToDatasetOkCommand, ElementName=WorkflowHost}"
-                                CommandParameter="{Binding}" Width="120" Margin="0,0,8,0"/>
-                        <Button Content="Add to NG"
-                                Command="{Binding DataContext.AddRoiToDatasetNgCommand, ElementName=WorkflowHost}"
-                                CommandParameter="{Binding}" Width="120"/>
-                      </StackPanel>
-
-                      <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
-                        <TextBlock Text="{Binding OkCount, StringFormat=OK: {0}}" Margin="0,0,16,0"/>
-                        <TextBlock Text="{Binding NgCount, StringFormat=NG: {0}}"/>
-                      </StackPanel>
-
-                      <CheckBox Content="Enabled" IsChecked="{Binding Enabled}" Margin="0,8,0,0"/>
-                      <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
-                        <TextBlock Text="Model:" Width="70" VerticalAlignment="Center"/>
-                        <ComboBox Width="200" SelectedItem="{Binding ModelKey}"
-                                  ItemsSource="{Binding DataContext.AvailableModels,
-                                                RelativeSource={RelativeSource AncestorType=Window}}"/>
-                      </StackPanel>
-                      <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
-                        <TextBlock Text="Threshold:" Width="70" VerticalAlignment="Center"/>
-                        <TextBox Width="80" Text="{Binding Threshold}"/>
-                      </StackPanel>
-                      <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
-                        <TextBlock Text="Shape:" Width="70" VerticalAlignment="Center"/>
-                        <ComboBox Width="120" SelectedItem="{Binding Shape}"
-                                  ItemsSource="{Binding DataContext.AvailableShapes,
-                                                RelativeSource={RelativeSource AncestorType=Window}}"/>
-                      </StackPanel>
-                    </StackPanel>
-                  </Border>
-                </DataTemplate>
-              </ItemsControl.ItemTemplate>
-            </ItemsControl>
-
-            <Separator Margin="0,12,0,12"/>
-
-            <TextBlock Text="Forma:"/>
-            <ComboBox x:Name="ComboInspShape" Margin="0,4,0,8">
-              <ComboBoxItem Content="Rectángulo"/>
-              <ComboBoxItem Content="Círculo"/>
-              <ComboBoxItem Content="Annulus"/>
-            </ComboBox>
-            <WrapPanel>
-              <Button Content="Save ROI Inspection" Click="BtnSaveMaster_Click" Margin="0,0,8,0"/>
-              <Button x:Name="BtnValidateInsp" Content="Validar Inspección" Click="BtnValidateInsp_Click"/>
-            </WrapPanel>
-            <TextBlock Text="Tras 'Analizar Master', el ROI se recoloca al punto medio de M1 y M2." Margin="0,8,0,0"/>
-
-            <GroupBox Header="Visibilidad ROI" Margin="0,12,0,0">
-              <StackPanel>
-                <CheckBox x:Name="ChkShowMaster1Pattern"
-                          Content="Master 1"
-                          IsEnabled="False"
-                          IsChecked="False"
-                          Checked="RoiVisibilityCheckChanged"
-                          Unchecked="RoiVisibilityCheckChanged"/>
-                <CheckBox x:Name="ChkShowMaster1Inspection"
-                          Content="Inspection Master 1"
-                          IsEnabled="False"
-                          IsChecked="False"
-                          Margin="0,4,0,0"
-                          Checked="RoiVisibilityCheckChanged"
-                          Unchecked="RoiVisibilityCheckChanged"/>
-                <CheckBox x:Name="ChkShowMaster2Pattern"
-                          Content="Master 2"
-                          IsEnabled="False"
-                          IsChecked="False"
-                          Margin="0,4,0,0"
-                          Checked="RoiVisibilityCheckChanged"
-                          Unchecked="RoiVisibilityCheckChanged"/>
-                <CheckBox x:Name="ChkShowMaster2Inspection"
-                          Content="Inspection Master 2"
-                          IsEnabled="False"
-                          IsChecked="False"
-                          Margin="0,4,0,0"
-                          Checked="RoiVisibilityCheckChanged"
-                          Unchecked="RoiVisibilityCheckChanged"/>
-                <CheckBox x:Name="ChkShowInspectionRoi"
-                          Content="Inspection ROI"
-                          IsEnabled="False"
-                          IsChecked="False"
-                          Margin="0,4,0,0"
-                          Checked="RoiVisibilityCheckChanged"
-                          Unchecked="RoiVisibilityCheckChanged"/>
+            <GroupBox x:Name="Master2EditorGroup" Header="Master 2">
+              <StackPanel Margin="0,8,0,0">
+                <TextBlock Text="Tipo:"/>
+                <ComboBox x:Name="ComboM2Role" Margin="0,4,0,8"/>
+                <TextBlock Text="Forma:"/>
+                <ComboBox x:Name="ComboM2Shape" Margin="0,4,0,8">
+                  <ComboBoxItem Content="Rectángulo"/>
+                  <ComboBoxItem Content="Círculo"/>
+                </ComboBox>
+                <WrapPanel>
+                  <Button Content="Save Master 2" Click="BtnSaveMaster_Click" Margin="0,0,8,0"/>
+                  <Button x:Name="BtnValidateM2" Content="Validar Master 2" Click="BtnValidateM2_Click"/>
+                </WrapPanel>
               </StackPanel>
             </GroupBox>
           </StackPanel>
         </ScrollViewer>
       </TabItem>
 
-      <!-- INSPECCIÓN -->
-      <TabItem x:Name="TabPresets" Header="Inspección">
+      <TabItem x:Name="InspectionTab" Header="Inspección">
         <ScrollViewer VerticalScrollBarVisibility="Auto">
           <StackPanel Margin="10">
-            <Button x:Name="BtnRunSelected" Content="Run Selected" Margin="0,0,0,8"/>
-            <Button x:Name="BtnRunAll" Content="Run All" Margin="0,0,0,8"/>
-            <Button x:Name="BtnExport" Content="Export Results"/>
+            <TextBlock Text="Inspection ROIs" FontWeight="SemiBold" Margin="0,0,0,8"/>
+
+            <StackPanel Orientation="Horizontal" Margin="8,4,8,0">
+              <TextBlock Text="Inspection 1" Width="120" VerticalAlignment="Center"/>
+              <ComboBox x:Name="CmbShapeInspection1" Width="130" SelectedValuePath="Tag" SelectedValue="{Binding Inspection1.Shape}">
+                <ComboBoxItem Content="square" Tag="{x:Static local:RoiShape.Rectangle}"/>
+                <ComboBoxItem Content="circle" Tag="{x:Static local:RoiShape.Circle}"/>
+                <ComboBoxItem Content="annulus" Tag="{x:Static local:RoiShape.Annulus}"/>
+              </ComboBox>
+              <Button x:Name="BtnToggleInspection1"
+                      Margin="8,0,0,0"
+                      Click="BtnToggleInspection1_Click">
+                <Button.Content>
+                  <TextBlock Text="{Binding Inspection1.IsFrozen, Converter={StaticResource BoolToEditSaveText}}"/>
+                </Button.Content>
+              </Button>
+              <Button x:Name="BtnAddOkInspection1"
+                      Margin="8,0,0,0"
+                      Content="Add to OK"
+                      Command="{Binding DataContext.AddRoiToOkCommand, ElementName=WorkflowHost}"
+                      CommandParameter="{Binding Inspection1}"/>
+              <Button x:Name="BtnAddNgInspection1"
+                      Margin="8,0,0,0"
+                      Content="Add to NG"
+                      Command="{Binding DataContext.AddRoiToNgCommand, ElementName=WorkflowHost}"
+                      CommandParameter="{Binding Inspection1}"/>
+            </StackPanel>
+
+            <StackPanel Orientation="Horizontal" Margin="8,4,8,0">
+              <TextBlock Text="Inspection 2" Width="120" VerticalAlignment="Center"/>
+              <ComboBox x:Name="CmbShapeInspection2" Width="130" SelectedValuePath="Tag" SelectedValue="{Binding Inspection2.Shape}">
+                <ComboBoxItem Content="square" Tag="{x:Static local:RoiShape.Rectangle}"/>
+                <ComboBoxItem Content="circle" Tag="{x:Static local:RoiShape.Circle}"/>
+                <ComboBoxItem Content="annulus" Tag="{x:Static local:RoiShape.Annulus}"/>
+              </ComboBox>
+              <Button x:Name="BtnToggleInspection2"
+                      Margin="8,0,0,0"
+                      Click="BtnToggleInspection2_Click">
+                <Button.Content>
+                  <TextBlock Text="{Binding Inspection2.IsFrozen, Converter={StaticResource BoolToEditSaveText}}"/>
+                </Button.Content>
+              </Button>
+              <Button x:Name="BtnAddOkInspection2"
+                      Margin="8,0,0,0"
+                      Content="Add to OK"
+                      Command="{Binding DataContext.AddRoiToOkCommand, ElementName=WorkflowHost}"
+                      CommandParameter="{Binding Inspection2}"/>
+              <Button x:Name="BtnAddNgInspection2"
+                      Margin="8,0,0,0"
+                      Content="Add to NG"
+                      Command="{Binding DataContext.AddRoiToNgCommand, ElementName=WorkflowHost}"
+                      CommandParameter="{Binding Inspection2}"/>
+            </StackPanel>
+
+            <StackPanel Orientation="Horizontal" Margin="8,4,8,0">
+              <TextBlock Text="Inspection 3" Width="120" VerticalAlignment="Center"/>
+              <ComboBox x:Name="CmbShapeInspection3" Width="130" SelectedValuePath="Tag" SelectedValue="{Binding Inspection3.Shape}">
+                <ComboBoxItem Content="square" Tag="{x:Static local:RoiShape.Rectangle}"/>
+                <ComboBoxItem Content="circle" Tag="{x:Static local:RoiShape.Circle}"/>
+                <ComboBoxItem Content="annulus" Tag="{x:Static local:RoiShape.Annulus}"/>
+              </ComboBox>
+              <Button x:Name="BtnToggleInspection3"
+                      Margin="8,0,0,0"
+                      Click="BtnToggleInspection3_Click">
+                <Button.Content>
+                  <TextBlock Text="{Binding Inspection3.IsFrozen, Converter={StaticResource BoolToEditSaveText}}"/>
+                </Button.Content>
+              </Button>
+              <Button x:Name="BtnAddOkInspection3"
+                      Margin="8,0,0,0"
+                      Content="Add to OK"
+                      Command="{Binding DataContext.AddRoiToOkCommand, ElementName=WorkflowHost}"
+                      CommandParameter="{Binding Inspection3}"/>
+              <Button x:Name="BtnAddNgInspection3"
+                      Margin="8,0,0,0"
+                      Content="Add to NG"
+                      Command="{Binding DataContext.AddRoiToNgCommand, ElementName=WorkflowHost}"
+                      CommandParameter="{Binding Inspection3}"/>
+            </StackPanel>
+
+            <StackPanel Orientation="Horizontal" Margin="8,4,8,0">
+              <TextBlock Text="Inspection 4" Width="120" VerticalAlignment="Center"/>
+              <ComboBox x:Name="CmbShapeInspection4" Width="130" SelectedValuePath="Tag" SelectedValue="{Binding Inspection4.Shape}">
+                <ComboBoxItem Content="square" Tag="{x:Static local:RoiShape.Rectangle}"/>
+                <ComboBoxItem Content="circle" Tag="{x:Static local:RoiShape.Circle}"/>
+                <ComboBoxItem Content="annulus" Tag="{x:Static local:RoiShape.Annulus}"/>
+              </ComboBox>
+              <Button x:Name="BtnToggleInspection4"
+                      Margin="8,0,0,0"
+                      Click="BtnToggleInspection4_Click">
+                <Button.Content>
+                  <TextBlock Text="{Binding Inspection4.IsFrozen, Converter={StaticResource BoolToEditSaveText}}"/>
+                </Button.Content>
+              </Button>
+              <Button x:Name="BtnAddOkInspection4"
+                      Margin="8,0,0,0"
+                      Content="Add to OK"
+                      Command="{Binding DataContext.AddRoiToOkCommand, ElementName=WorkflowHost}"
+                      CommandParameter="{Binding Inspection4}"/>
+              <Button x:Name="BtnAddNgInspection4"
+                      Margin="8,0,0,0"
+                      Content="Add to NG"
+                      Command="{Binding DataContext.AddRoiToNgCommand, ElementName=WorkflowHost}"
+                      CommandParameter="{Binding Inspection4}"/>
+            </StackPanel>
 
             <Separator Margin="0,12,0,12"/>
 
@@ -245,7 +236,6 @@
             </StackPanel>
             <WrapPanel>
               <Button x:Name="BtnSavePreset" Content="Guardar Preset" Click="BtnSavePreset_Click" Margin="0,0,8,0"/>
-              <Button x:Name="BtnLoadPreset" Content="Cargar Preset..." Click="BtnLoadPreset_Click" Margin="0,0,8,0"/>
               <Button x:Name="BtnSaveLayout" Content="Guardar Layout" Click="BtnSaveLayout_Click" Margin="0,0,8,0"/>
             </WrapPanel>
 
@@ -260,10 +250,11 @@
           </StackPanel>
         </ScrollViewer>
       </TabItem>
-    </TabControl>
 
-    <!-- ===== Viewer/Canvas (right) ===== -->
-    <Grid Grid.Column="0" x:Name="ViewerHost">
+      </TabControl>
+
+      <!-- ===== Viewer/Canvas (right) ===== -->
+      <Grid Grid.Column="0" Grid.RowSpan="2" x:Name="ViewerHost">
       <Grid Margin="10">
         <AdornerDecorator>
           <Grid Background="#111">
