@@ -1,9 +1,13 @@
 from __future__ import annotations
-import numpy as np
-from pathlib import Path
-from typing import Tuple, Optional, Dict, Any
+
+import base64
 import json
-from .utils import ensure_dir, save_json, load_json
+from pathlib import Path
+from typing import Any, Dict, Optional, Tuple
+
+import numpy as np
+
+from .utils import ensure_dir, load_json, save_json
 
 class ModelStore:
     def __init__(self, root: Path):
@@ -14,8 +18,15 @@ class ModelStore:
         cleaned = "".join(c if c.isalnum() or c in ("-", "_") else "_" for c in value.strip())
         return cleaned or "default"
 
+    def _encode_component(self, value: str) -> str:
+        """Return a filesystem-safe, injective encoding for role/ROI identifiers."""
+        if not value:
+            return "default"
+        encoded = base64.urlsafe_b64encode(value.encode("utf-8")).decode("ascii").rstrip("=")
+        return encoded or "default"
+
     def _base_name(self, role_id: str, roi_id: str) -> str:
-        return f"{self._sanitize(role_id)}_{self._sanitize(roi_id)}"
+        return f"{self._encode_component(role_id)}__{self._encode_component(roi_id)}"
 
     def _legacy_dir(self, role_id: str, roi_id: str) -> Path:
         return self.root / self._sanitize(role_id) / self._sanitize(roi_id)
