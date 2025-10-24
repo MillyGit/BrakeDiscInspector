@@ -116,6 +116,8 @@ namespace BrakeDiscInspector_GUI_ROI
         public System.Collections.Generic.IReadOnlyList<string> AvailableModels { get; }
             = new string[] { "default" };
 
+        public bool IsImageLoaded => _workflowViewModel?.IsImageLoaded ?? false;
+
         public RoiModel? Inspection1
         {
             get => _inspectionSlot1;
@@ -1455,6 +1457,11 @@ namespace BrakeDiscInspector_GUI_ROI
                 }
 
                 var datasetManager = new DatasetManager(_dataRoot);
+                if (_workflowViewModel != null)
+                {
+                    _workflowViewModel.PropertyChanged -= WorkflowViewModelOnPropertyChanged;
+                }
+
                 _workflowViewModel = new WorkflowViewModel(
                     backendClient,
                     datasetManager,
@@ -1464,6 +1471,9 @@ namespace BrakeDiscInspector_GUI_ROI
                     ShowHeatmapOverlayAsync,
                     ClearHeatmapOverlay,
                     UpdateGlobalBadge);
+
+                _workflowViewModel.PropertyChanged += WorkflowViewModelOnPropertyChanged;
+                _workflowViewModel.IsImageLoaded = _hasLoadedImage;
 
                 if (WorkflowHost != null)
                 {
@@ -1945,6 +1955,10 @@ namespace BrakeDiscInspector_GUI_ROI
             }
 
             _hasLoadedImage = true;
+            if (_workflowViewModel != null)
+            {
+                _workflowViewModel.IsImageLoaded = true;
+            }
             EnablePresetsTab(true);
         }
 
@@ -3584,14 +3598,65 @@ namespace BrakeDiscInspector_GUI_ROI
 
         private void SetRoiAdornersVisible(string? roiId, bool visible)
         {
-            // TODO: Integrate with actual adorner visibility logic for each ROI visual.
-            // Placeholder to avoid breaking callers until adorner lookup is available.
+            if (string.IsNullOrWhiteSpace(roiId))
+            {
+                return;
+            }
+
+            var shape = FindRoiShapeById(roiId);
+            if (shape == null)
+            {
+                return;
+            }
+
+            var layer = AdornerLayer.GetAdornerLayer(shape);
+            if (layer == null)
+            {
+                return;
+            }
+
+            if (visible)
+            {
+                AttachRoiAdorner(shape);
+            }
+            else
+            {
+                RemoveRoiAdorners(shape);
+            }
         }
 
         private void SetRoiInteractive(string? roiId, bool interactive)
         {
-            // TODO: Toggle hit-testing or interaction handles for the ROI specified by roiId.
-            // Placeholder to be replaced with actual implementation when ROI visuals are mapped.
+            if (string.IsNullOrWhiteSpace(roiId))
+            {
+                return;
+            }
+
+            var shape = FindRoiShapeById(roiId);
+            if (shape == null)
+            {
+                return;
+            }
+
+            shape.IsHitTestVisible = interactive;
+        }
+
+        private Shape? FindRoiShapeById(string roiId)
+        {
+            if (string.IsNullOrWhiteSpace(roiId))
+            {
+                return null;
+            }
+
+            return _roiShapesById.TryGetValue(roiId, out var shape) ? shape : null;
+        }
+
+        private void WorkflowViewModelOnPropertyChanged(object? sender, PropertyChangedEventArgs e)
+        {
+            if (string.Equals(e.PropertyName, nameof(Workflow.WorkflowViewModel.IsImageLoaded), StringComparison.Ordinal))
+            {
+                OnPropertyChanged(nameof(IsImageLoaded));
+            }
         }
 
         private void OnPresetLoaded()
@@ -6039,37 +6104,118 @@ namespace BrakeDiscInspector_GUI_ROI
 
         private void BtnLoadPreset_Click(object sender, RoutedEventArgs e)
         {
-            var o = new OpenFileDialog { Filter = "Preset JSON|*.json" };
-            if (o.ShowDialog() != true) return;
-            _preset = PresetManager.Load(o.FileName);
-            ApplyPresetToUI(_preset);
-            _layout = MasterLayoutManager.LoadOrNew(_preset);
+            var dlg = new OpenFileDialog
+            {
+                Title = "Seleccionar preset",
+                Filter = "Preset JSON (*.json)|*.json",
+                InitialDirectory = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "presets")
+            };
+
+            if (dlg.ShowDialog() == true)
+            {
+                LoadPresetFromFile(dlg.FileName);
+            }
+        }
+
+        private void LoadPresetFromFile(string filePath)
+        {
+            try
+            {
+                var preset = PresetSerializer.LoadMastersPreset(filePath);
+                ApplyMastersPreset(preset);
+                OnPresetLoaded();
+                Snack("Preset cargado.");
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"No se pudo cargar el preset: {ex.Message}", "Preset", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
+
+        private void ApplyMastersPreset(MastersPreset preset)
+        {
+            if (preset == null)
+            {
+                return;
+            }
+
+            _preset.MmPerPx = preset.mm_per_px;
+            ChkScaleLock.IsChecked = preset.scale_lock;
+            ChkUseLocalMatcher.IsChecked = preset.use_local_matcher;
+
+            _layout ??= new MasterLayout();
+
+            _layout.Master1Pattern = ConvertDtoToModel(preset.Master1, RoiRole.Master1Pattern);
+            _layout.Master1Search = ConvertDtoToModel(preset.Master1Inspection, RoiRole.Master1Search);
+            _layout.Master2Pattern = ConvertDtoToModel(preset.Master2, RoiRole.Master2Pattern);
+            _layout.Master2Search = ConvertDtoToModel(preset.Master2Inspection, RoiRole.Master2Search);
+
             EnsureInspectionDatasetStructure();
             _workflowViewModel?.SetInspectionRoisCollection(_layout?.InspectionRois);
-            RefreshInspectionRoiSlots();
-            EnsureInspectionBaselineInitialized();
+            RedrawAllRois();
+        }
+
+        private static RoiModel? ConvertDtoToModel(RoiDto? dto, RoiRole role)
+        {
+            if (dto == null)
             {
-                var seedKey = ComputeImageSeedKey();
-                if (!string.Equals(seedKey, _lastImageSeedKey, System.StringComparison.Ordinal))
-                {
-                    _inspectionBaselineFixed = null;
-                    _inspectionBaselineSeededForImage = false;
-                    InspLog($"[Seed] New image detected, oldKey='{_lastImageSeedKey}' newKey='{seedKey}' -> reset baseline.");
-                    try
-                    {
-                        SeedInspectionBaselineOnce(_layout?.InspectionBaseline ?? _layout?.Inspection, seedKey);
-                    }
-                    catch { /* ignore */ }
-                }
-                else
-                {
-                    InspLog($"[Seed] Same image key='{seedKey}', no re-seed.");
-                }
+                return null;
             }
-            ResetAnalysisMarks();
-            UpdateWizardState();
-            OnPresetLoaded();
-            Snack("Preset cargado.");
+
+            var model = new RoiModel
+            {
+                Role = role,
+                Shape = MapShape(dto.Shape),
+                AngleDeg = dto.AngleDeg
+            };
+
+            switch (model.Shape)
+            {
+                case RoiShape.Rectangle:
+                    model.X = dto.CenterX;
+                    model.Y = dto.CenterY;
+                    model.Width = dto.Width;
+                    model.Height = dto.Height;
+                    break;
+                case RoiShape.Circle:
+                    model.CX = dto.CenterX;
+                    model.CY = dto.CenterY;
+                    model.R = dto.Width > 0 ? dto.Width / 2.0 : dto.Height / 2.0;
+                    model.Width = dto.Width;
+                    model.Height = dto.Height;
+                    break;
+                case RoiShape.Annulus:
+                    model.CX = dto.CenterX;
+                    model.CY = dto.CenterY;
+                    model.R = dto.Width > 0 ? dto.Width / 2.0 : dto.Height / 2.0;
+                    if (dto.InnerRadius.HasValue)
+                    {
+                        model.RInner = dto.InnerRadius.Value;
+                    }
+                    else if (dto.InnerDiameter > 0)
+                    {
+                        model.RInner = dto.InnerDiameter / 2.0;
+                    }
+                    else
+                    {
+                        model.RInner = dto.Height > 0 ? dto.Height / 2.0 : 0.0;
+                    }
+                    model.Width = dto.Width;
+                    model.Height = dto.Height;
+                    break;
+            }
+
+            return model;
+        }
+
+        private static RoiShape MapShape(string? shape)
+        {
+            return (shape ?? string.Empty).ToLowerInvariant() switch
+            {
+                "circle" => RoiShape.Circle,
+                "annulus" => RoiShape.Annulus,
+                _ => RoiShape.Rectangle
+            };
         }
 
         private void BtnSaveLayout_Click(object sender, RoutedEventArgs e)
