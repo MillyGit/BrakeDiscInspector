@@ -4,11 +4,16 @@
         xmlns:local="clr-namespace:BrakeDiscInspector_GUI_ROI"
         xmlns:m="clr-namespace:BrakeDiscInspector_GUI_ROI.Models"
         xmlns:workflow="clr-namespace:BrakeDiscInspector_GUI_ROI.Workflow"
+        xmlns:conv="clr-namespace:BrakeDiscInspector_GUI_ROI.Converters"
         Title="BrakeDiscInspector"
         WindowState="Maximized"
         WindowStartupLocation="CenterScreen"
         Background="#0E0E10"
         UseLayoutRounding="True">
+
+  <Window.Resources>
+    <conv:BoolToEditSaveTextConverter x:Key="BoolToEditSaveText" />
+  </Window.Resources>
 
   <Grid x:Name="RootGrid">
     <Grid.ColumnDefinitions>
@@ -17,11 +22,11 @@
     </Grid.ColumnDefinitions>
 
     <!-- ===== Tabs (left) ===== -->
-    <TabControl Grid.Column="1" x:Name="LeftTabs" TabStripPlacement="Left">
+    <TabControl Grid.Column="1" x:Name="MainTabs" TabStripPlacement="Left">
       <!-- PREPARAR -->
       <TabItem x:Name="TabMaster1" Header="Preparar">
         <ScrollViewer VerticalScrollBarVisibility="Auto">
-          <StackPanel Margin="10">
+          <StackPanel x:Name="Master1EditorGroup" Margin="10">
             <Button x:Name="BtnLoadLayout" Content="Load Layout" Margin="0,0,0,8" Click="BtnLoadLayout_Click"/>
             <Button x:Name="BtnLoadModels" Content="Load Models" Margin="0,0,0,8"/>
             <Button x:Name="BtnLoadImage" Content="Cargar imagen" Click="BtnLoadImage_Click"/>
@@ -51,7 +56,7 @@
       <!-- ALINEACIÓN -->
       <TabItem x:Name="TabMaster2" Header="Alineación">
         <ScrollViewer VerticalScrollBarVisibility="Auto">
-          <StackPanel Margin="10">
+          <StackPanel x:Name="Master2EditorGroup" Margin="10">
             <CheckBox x:Name="ChkScaleLock" Content="Scale-Lock (default)" IsChecked="True"/>
             <CheckBox x:Name="ChkUseLocalMatcher" Margin="0,8,0,0" Content="Usar matcher local" IsChecked="True"/>
 
@@ -78,10 +83,39 @@
       </TabItem>
 
       <!-- ROIs -->
-      <TabItem x:Name="TabInspection" Header="ROIs">
+      <TabItem x:Name="InspectionTab" Header="ROIs">
         <ScrollViewer VerticalScrollBarVisibility="Auto">
           <StackPanel Margin="10">
             <TextBlock Text="Inspection ROIs (1–4)" FontWeight="SemiBold" Margin="0,0,0,8"/>
+            <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+              <Button x:Name="BtnToggleInspection1"
+                      Margin="0,0,8,0"
+                      Click="BtnToggleInspection1_Click">
+                <Button.Content>
+                  <TextBlock Text="{Binding Inspection1.IsFrozen, Converter={StaticResource BoolToEditSaveText}, TargetNullValue=Editar ROI}" />
+                </Button.Content>
+              </Button>
+              <Button x:Name="BtnToggleInspection2"
+                      Margin="0,0,8,0"
+                      Click="BtnToggleInspection2_Click">
+                <Button.Content>
+                  <TextBlock Text="{Binding Inspection2.IsFrozen, Converter={StaticResource BoolToEditSaveText}, TargetNullValue=Editar ROI}" />
+                </Button.Content>
+              </Button>
+              <Button x:Name="BtnToggleInspection3"
+                      Margin="0,0,8,0"
+                      Click="BtnToggleInspection3_Click">
+                <Button.Content>
+                  <TextBlock Text="{Binding Inspection3.IsFrozen, Converter={StaticResource BoolToEditSaveText}, TargetNullValue=Editar ROI}" />
+                </Button.Content>
+              </Button>
+              <Button x:Name="BtnToggleInspection4"
+                      Click="BtnToggleInspection4_Click">
+                <Button.Content>
+                  <TextBlock Text="{Binding Inspection4.IsFrozen, Converter={StaticResource BoolToEditSaveText}, TargetNullValue=Editar ROI}" />
+                </Button.Content>
+              </Button>
+            </StackPanel>
             <ItemsControl x:Name="RoiList" ItemsSource="{Binding Layout.InspectionRois}">
               <ItemsControl.ItemTemplate>
                 <DataTemplate DataType="{x:Type m:InspectionRoiConfig}">

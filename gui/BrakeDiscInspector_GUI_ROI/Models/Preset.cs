@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.ComponentModel;
+using System.Runtime.CompilerServices;
 using System.Text.Json.Serialization;
 
 namespace BrakeDiscInspector_GUI_ROI
@@ -15,7 +17,7 @@ namespace BrakeDiscInspector_GUI_ROI
         Inspection
     }
 
-    public class RoiModel
+    public class RoiModel : INotifyPropertyChanged
     {
         public string Id { get; set; } = Guid.NewGuid().ToString("N");
         public string? Label { get; set; }
@@ -64,6 +66,20 @@ namespace BrakeDiscInspector_GUI_ROI
         public double R { get; set; }      // radio para círculo o radio externo para annulus
         public double RInner { get; set; } // sólo annulus
 
+        private bool _isFrozen = true; // default: frozen at app start, only in-memory
+
+        [JsonIgnore]
+        public bool IsFrozen
+        {
+            get => _isFrozen;
+            set
+            {
+                if (_isFrozen == value) return;
+                _isFrozen = value;
+                OnPropertyChanged();
+            }
+        }
+
         public (double cx, double cy) GetCenter()
         {
             return Shape switch
@@ -93,6 +109,11 @@ namespace BrakeDiscInspector_GUI_ROI
                 AngleDeg = AngleDeg
             };
         }
+
+        public event PropertyChangedEventHandler? PropertyChanged;
+
+        protected void OnPropertyChanged([CallerMemberName] string? propertyName = null)
+            => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
     }
 
     public class PresetFile

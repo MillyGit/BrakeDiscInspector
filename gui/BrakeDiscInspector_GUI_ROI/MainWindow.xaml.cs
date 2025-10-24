@@ -5,6 +5,7 @@ using OpenCvSharp.WpfExtensions;
 using BrakeDiscInspector_GUI_ROI.Workflow;
 using System;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
@@ -12,10 +13,11 @@ using System.Linq;
 using System.Net.Http;
 using System.Reflection;
 using System.Reflection.Emit;
+using System.Runtime.CompilerServices;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
-using System.Security.Cryptography;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Documents;
@@ -55,7 +57,7 @@ using CvRect = OpenCvSharp.Rect;
 
 namespace BrakeDiscInspector_GUI_ROI
 {
-    public partial class MainWindow : System.Windows.Window
+    public partial class MainWindow : System.Windows.Window, INotifyPropertyChanged
     {
         static MainWindow()
         {
@@ -63,6 +65,22 @@ namespace BrakeDiscInspector_GUI_ROI
             {
                 RoiHudAccentBrush.Freeze();
             }
+        }
+
+        public event PropertyChangedEventHandler? PropertyChanged;
+
+        protected void OnPropertyChanged([CallerMemberName] string? propertyName = null)
+            => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
+
+        private void SetInspectionSlot(ref RoiModel? slot, RoiModel? value, string propertyName)
+        {
+            if (ReferenceEquals(slot, value))
+            {
+                return;
+            }
+
+            slot = value;
+            OnPropertyChanged(propertyName);
         }
 
         private enum MasterState { DrawM1_Pattern, DrawM1_Search, DrawM2_Pattern, DrawM2_Search, DrawInspection, Ready }
@@ -86,12 +104,41 @@ namespace BrakeDiscInspector_GUI_ROI
         private string? _dataRoot;
         private double _heatmapOverlayOpacity = 0.6;
 
+        private RoiModel? _inspectionSlot1;
+        private RoiModel? _inspectionSlot2;
+        private RoiModel? _inspectionSlot3;
+        private RoiModel? _inspectionSlot4;
+
         // Expose layout to XAML bindings (ItemsControl -> Layout.InspectionRois)
         public MasterLayout Layout => _layout;
 
         // Available model keys (stub: will be replaced by ModelRegistry keys)
         public System.Collections.Generic.IReadOnlyList<string> AvailableModels { get; }
             = new string[] { "default" };
+
+        public RoiModel? Inspection1
+        {
+            get => _inspectionSlot1;
+            private set => SetInspectionSlot(ref _inspectionSlot1, value, nameof(Inspection1));
+        }
+
+        public RoiModel? Inspection2
+        {
+            get => _inspectionSlot2;
+            private set => SetInspectionSlot(ref _inspectionSlot2, value, nameof(Inspection2));
+        }
+
+        public RoiModel? Inspection3
+        {
+            get => _inspectionSlot3;
+            private set => SetInspectionSlot(ref _inspectionSlot3, value, nameof(Inspection3));
+        }
+
+        public RoiModel? Inspection4
+        {
+            get => _inspectionSlot4;
+            private set => SetInspectionSlot(ref _inspectionSlot4, value, nameof(Inspection4));
+        }
 
         // Available shapes (enum values)
         public System.Collections.Generic.IReadOnlyList<RoiShape> AvailableShapes { get; }
@@ -411,7 +458,7 @@ namespace BrakeDiscInspector_GUI_ROI
             double angleDelta = DeltaAngleFromFrames(m1Base, m2Base, m1Cross, m2Cross);
 
             var roisToMove = new List<(RoiModel target, RoiModel baseline)>();
-            if (_layout.Inspection != null)
+            if (_layout.Inspection != null && !_layout.Inspection.IsFrozen)
                 roisToMove.Add((_layout.Inspection, _layout.Inspection.Clone()));
 
             foreach (var (target, baseline) in roisToMove)
@@ -1601,18 +1648,18 @@ namespace BrakeDiscInspector_GUI_ROI
             // Habilitación de tabs por etapas
             TabMaster1.IsEnabled = true;
             TabMaster2.IsEnabled = m1Ready;           // puedes definir M2 cuando M1 está completo
-            TabInspection.IsEnabled = mastersReady;     // puedes definir la inspección tras completar M1 y M2
+            InspectionTab.IsEnabled = mastersReady;     // puedes definir la inspección tras completar M1 y M2
             EnablePresetsTab(mastersReady || _hasLoadedImage);     // permite presets tras cargar imagen o completar masters
 
             // Selección de tab acorde a estado
             if (_state == MasterState.DrawM1_Pattern || _state == MasterState.DrawM1_Search)
-                LeftTabs.SelectedItem = TabMaster1;
+                MainTabs.SelectedItem = TabMaster1;
             else if (_state == MasterState.DrawM2_Pattern || _state == MasterState.DrawM2_Search)
-                LeftTabs.SelectedItem = TabMaster2;
+                MainTabs.SelectedItem = TabMaster2;
             else if (_state == MasterState.DrawInspection)
-                LeftTabs.SelectedItem = TabInspection;
+                MainTabs.SelectedItem = InspectionTab;
             else
-                LeftTabs.SelectedItem = TabPresets;
+                MainTabs.SelectedItem = TabPresets;
 
             if (_analysisViewActive && _state != MasterState.Ready)
             {
@@ -3240,9 +3287,9 @@ namespace BrakeDiscInspector_GUI_ROI
             }
 
             _analysisViewActive = true;
-            if (LeftTabs != null && TabPresets != null)
+            if (MainTabs != null && TabPresets != null)
             {
-                LeftTabs.SelectedItem = TabPresets;
+                MainTabs.SelectedItem = TabPresets;
             }
         }
 
@@ -3367,6 +3414,7 @@ namespace BrakeDiscInspector_GUI_ROI
 
             // Inspection ROIs (saved only)
             var savedInspectionRois = CollectSavedInspectionRois();
+            RefreshInspectionRoiSlots(savedInspectionRois);
             foreach (var roi in savedInspectionRois)
             {
                 RoiHudStack.Children.Add(CreateRoiHudItem(roi));
@@ -3485,6 +3533,102 @@ namespace BrakeDiscInspector_GUI_ROI
                 bool newState = checkbox.IsChecked != true;
                 checkbox.IsChecked = newState;
                 RedrawAllRois();
+            }
+        }
+
+        private void RefreshInspectionRoiSlots(IReadOnlyList<RoiModel>? rois = null)
+        {
+            IReadOnlyList<RoiModel> source = rois ?? CollectSavedInspectionRois();
+
+            Inspection1 = source.Count > 0 ? source[0] : null;
+            Inspection2 = source.Count > 1 ? source[1] : null;
+            Inspection3 = source.Count > 2 ? source[2] : null;
+            Inspection4 = source.Count > 3 ? source[3] : null;
+
+            _workflowViewModel?.SetInspectionRoiModels(Inspection1, Inspection2, Inspection3, Inspection4);
+        }
+
+        private void ToggleInspectionFrozen(RoiModel? roi)
+        {
+            if (roi == null)
+            {
+                return;
+            }
+
+            roi.IsFrozen = !roi.IsFrozen;
+
+            SetRoiAdornersVisible(roi.Id, visible: !roi.IsFrozen);
+            SetRoiInteractive(roi.Id, interactive: !roi.IsFrozen);
+
+            if (int.TryParse(roi.Id, NumberStyles.Integer, CultureInfo.InvariantCulture, out var numericId))
+            {
+                _workflowViewModel?.SetInspectionAutoRepositionEnabled(numericId, enable: !roi.IsFrozen);
+            }
+            else
+            {
+                _workflowViewModel?.SetInspectionAutoRepositionEnabled(roi.Id, enable: !roi.IsFrozen);
+            }
+        }
+
+        private void BtnToggleInspection1_Click(object sender, RoutedEventArgs e)
+            => ToggleInspectionFrozen(Inspection1);
+
+        private void BtnToggleInspection2_Click(object sender, RoutedEventArgs e)
+            => ToggleInspectionFrozen(Inspection2);
+
+        private void BtnToggleInspection3_Click(object sender, RoutedEventArgs e)
+            => ToggleInspectionFrozen(Inspection3);
+
+        private void BtnToggleInspection4_Click(object sender, RoutedEventArgs e)
+            => ToggleInspectionFrozen(Inspection4);
+
+        private void SetRoiAdornersVisible(string? roiId, bool visible)
+        {
+            // TODO: Integrate with actual adorner visibility logic for each ROI visual.
+            // Placeholder to avoid breaking callers until adorner lookup is available.
+        }
+
+        private void SetRoiInteractive(string? roiId, bool interactive)
+        {
+            // TODO: Toggle hit-testing or interaction handles for the ROI specified by roiId.
+            // Placeholder to be replaced with actual implementation when ROI visuals are mapped.
+        }
+
+        private void OnPresetLoaded()
+        {
+            TryCollapseMasterEditors();
+            GoToInspectionTab();
+        }
+
+        private void OnLayoutLoaded()
+        {
+            TryCollapseMasterEditors();
+            GoToInspectionTab();
+        }
+
+        private void TryCollapseMasterEditors()
+        {
+            if (Master1EditorGroup != null)
+            {
+                Master1EditorGroup.Visibility = Visibility.Collapsed;
+            }
+
+            if (Master2EditorGroup != null)
+            {
+                Master2EditorGroup.Visibility = Visibility.Collapsed;
+            }
+        }
+
+        private void GoToInspectionTab()
+        {
+            if (InspectionTab != null)
+            {
+                InspectionTab.IsEnabled = true;
+            }
+
+            if (MainTabs != null && InspectionTab != null)
+            {
+                MainTabs.SelectedItem = InspectionTab;
             }
         }
 
@@ -4713,7 +4857,8 @@ namespace BrakeDiscInspector_GUI_ROI
             // === END: reposition Masters & Inspections ===
 
             // 5) Reubicar inspección si existe
-            if (_layout.Inspection == null)
+            var inspectionRoi = _layout.Inspection;
+            if (inspectionRoi == null)
             {
                 Snack("Masters OK. Falta ROI de Inspección: dibújalo y guarda. Las cruces ya están dibujadas.");
                 AppendLog("[FLOW] Inspection null");
@@ -4722,9 +4867,16 @@ namespace BrakeDiscInspector_GUI_ROI
                 return;
             }
 
-            MoveInspectionTo(_layout.Inspection, c1.Value, c2.Value);
-            ClipInspectionROI(_layout.Inspection, _imgW, _imgH);
-            AppendLog("[FLOW] Inspection movida y recortada");
+            if (inspectionRoi.IsFrozen)
+            {
+                AppendLog("[FLOW] Inspection ROI frozen; skipping auto reposition.");
+            }
+            else
+            {
+                MoveInspectionTo(inspectionRoi, c1.Value, c2.Value);
+                ClipInspectionROI(inspectionRoi, _imgW, _imgH);
+                AppendLog("[FLOW] Inspection movida y recortada");
+            }
 
             try
             {
@@ -4942,6 +5094,12 @@ namespace BrakeDiscInspector_GUI_ROI
 
         private void MoveInspectionTo(RoiModel insp, SWPoint master1, SWPoint master2)
         {
+            if (insp?.IsFrozen == true)
+            {
+                AppendLog("[Analyze] Inspection ROI frozen; skipping MoveInspectionTo.");
+                return;
+            }
+
             // === Analyze: BEFORE state & current image key ===
             var __seedKeyNow = ComputeImageSeedKey();
             InspLog($"[Analyze] Key='{__seedKeyNow}' BEFORE insp: {FInsp(insp)}  M1=({master1.X:F3},{master1.Y:F3}) M2=({master2.X:F3},{master2.Y:F3})");
@@ -5888,6 +6046,7 @@ namespace BrakeDiscInspector_GUI_ROI
             _layout = MasterLayoutManager.LoadOrNew(_preset);
             EnsureInspectionDatasetStructure();
             _workflowViewModel?.SetInspectionRoisCollection(_layout?.InspectionRois);
+            RefreshInspectionRoiSlots();
             EnsureInspectionBaselineInitialized();
             {
                 var seedKey = ComputeImageSeedKey();
@@ -5909,6 +6068,7 @@ namespace BrakeDiscInspector_GUI_ROI
             }
             ResetAnalysisMarks();
             UpdateWizardState();
+            OnPresetLoaded();
             Snack("Preset cargado.");
         }
 
@@ -5923,6 +6083,7 @@ namespace BrakeDiscInspector_GUI_ROI
             _layout = MasterLayoutManager.LoadOrNew(_preset);
             EnsureInspectionDatasetStructure();
             _workflowViewModel?.SetInspectionRoisCollection(_layout?.InspectionRois);
+            RefreshInspectionRoiSlots();
             EnsureInspectionBaselineInitialized();
             {
                 var seedKey = ComputeImageSeedKey();
@@ -5945,6 +6106,7 @@ namespace BrakeDiscInspector_GUI_ROI
             ResetAnalysisMarks();
             Snack("Layout cargado.");
             UpdateWizardState();
+            OnLayoutLoaded();
         }
 
         // ====== Logs / Polling ======
