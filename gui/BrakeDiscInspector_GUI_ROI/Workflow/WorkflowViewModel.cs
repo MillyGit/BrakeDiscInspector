@@ -4,6 +4,7 @@ using System.Collections.ObjectModel;
 using System.Collections.Specialized;
 using System.ComponentModel;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Net.Http;
@@ -15,6 +16,7 @@ using System.Windows;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using BrakeDiscInspector_GUI_ROI;
 using BrakeDiscInspector_GUI_ROI.Models;
 using Forms = System.Windows.Forms;
 
@@ -32,6 +34,10 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
         private readonly Action<bool?> _updateGlobalBadge;
 
         private ObservableCollection<InspectionRoiConfig>? _inspectionRois;
+        private RoiModel? _inspection1;
+        private RoiModel? _inspection2;
+        private RoiModel? _inspection3;
+        private RoiModel? _inspection4;
         private InspectionRoiConfig? _selectedInspectionRoi;
         private bool? _hasFitEndpoint;
         private bool? _hasCalibrateEndpoint;
@@ -117,6 +123,30 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
 
         public ObservableCollection<InspectionRoiConfig> InspectionRois { get; private set; } = new();
 
+        public RoiModel? Inspection1
+        {
+            get => _inspection1;
+            private set => SetInspectionRoi(ref _inspection1, value, nameof(Inspection1));
+        }
+
+        public RoiModel? Inspection2
+        {
+            get => _inspection2;
+            private set => SetInspectionRoi(ref _inspection2, value, nameof(Inspection2));
+        }
+
+        public RoiModel? Inspection3
+        {
+            get => _inspection3;
+            private set => SetInspectionRoi(ref _inspection3, value, nameof(Inspection3));
+        }
+
+        public RoiModel? Inspection4
+        {
+            get => _inspection4;
+            private set => SetInspectionRoi(ref _inspection4, value, nameof(Inspection4));
+        }
+
         public InspectionRoiConfig? SelectedInspectionRoi
         {
             get => _selectedInspectionRoi;
@@ -191,6 +221,22 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
             UpdateGlobalBadge();
         }
 
+        public void SetInspectionRoiModels(RoiModel? inspection1, RoiModel? inspection2, RoiModel? inspection3, RoiModel? inspection4)
+        {
+            Inspection1 = inspection1;
+            Inspection2 = inspection2;
+            Inspection3 = inspection3;
+            Inspection4 = inspection4;
+        }
+
+        public void SetInspectionAutoRepositionEnabled(string? roiId, bool enable)
+        {
+            // Hook for future auto-reposition toggles. No-op by default.
+        }
+
+        public void SetInspectionAutoRepositionEnabled(int roiId, bool enable)
+            => SetInspectionAutoRepositionEnabled(roiId.ToString(System.Globalization.CultureInfo.InvariantCulture), enable);
+
         private void InspectionRoisCollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
         {
             if (e.OldItems != null)
@@ -216,6 +262,22 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
 
             EvaluateAllRoisCommand.RaiseCanExecuteChanged();
             UpdateGlobalBadge();
+        }
+
+        private void SetInspectionRoi(ref RoiModel? field, RoiModel? value, string propertyName)
+        {
+            if (ReferenceEquals(field, value))
+            {
+                return;
+            }
+
+            field = value;
+            if (field != null)
+            {
+                field.IsFrozen = true;
+            }
+
+            OnPropertyChanged(propertyName);
         }
 
         private void InspectionRoiPropertyChanged(object? sender, PropertyChangedEventArgs e)
