@@ -3756,15 +3756,16 @@ namespace BrakeDiscInspector_GUI_ROI
         }
         private void MainWindow_Loaded(object sender, RoutedEventArgs e)
         {
-            if (TopLeftTray != null)
+            var tray = FindName("TopLeftTray") as ToolBarTray ?? FindVisualChildByName<ToolBarTray>(this, "TopLeftTray");
+            if (tray != null)
             {
-                Panel.SetZIndex(TopLeftTray, 1000);
-                TopLeftTray.Visibility = Visibility.Visible;
+                Panel.SetZIndex(tray, 1000);
+                tray.Visibility = Visibility.Visible;
 
-                if (VisualTreeHelper.GetParent(TopLeftTray) is Canvas)
+                if (VisualTreeHelper.GetParent(tray) is Canvas)
                 {
-                    Canvas.SetLeft(TopLeftTray, 8);
-                    Canvas.SetTop(TopLeftTray, 8);
+                    Canvas.SetLeft(tray, 8);
+                    Canvas.SetTop(tray, 8);
                 }
             }
 
@@ -7392,6 +7393,26 @@ namespace BrakeDiscInspector_GUI_ROI
 
             if (TryGetMasterInspection(1, out m1Insp)) LogDeltaToCross("M1 Insp", m1Insp.CX, m1Insp.CY, m1_new.X, m1_new.Y);
             if (TryGetMasterInspection(2, out m2Insp)) LogDeltaToCross("M2 Insp", m2Insp.CX, m2Insp.CY, m2_new.X, m2_new.Y);
+        }
+
+        private static T? FindVisualChildByName<T>(DependencyObject parent, string name) where T : FrameworkElement
+        {
+            for (int i = 0; i < VisualTreeHelper.GetChildrenCount(parent); i++)
+            {
+                var child = VisualTreeHelper.GetChild(parent, i);
+                if (child is T frameworkElement && frameworkElement.Name == name)
+                {
+                    return frameworkElement;
+                }
+
+                var result = FindVisualChildByName<T>(child, name);
+                if (result != null)
+                {
+                    return result;
+                }
+            }
+
+            return null;
         }
 
 
