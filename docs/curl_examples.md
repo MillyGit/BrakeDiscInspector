@@ -45,7 +45,7 @@ curl -X POST http://127.0.0.1:8000/infer \
 
 # Con annulus:
 curl -X POST http://127.0.0.1:8000/infer \
-  -F role_id=R1 -F roi_id=ROI_A -F mm_perPx=0.20 \
+  -F role_id=R1 -F roi_id=ROI_A -F mm_per_px=0.20 \
   -F image=@test.jpg \
   -F 'shape={"kind":"annulus","cx":512,"cy":512,"r":480,"r_inner":440}'
 ```

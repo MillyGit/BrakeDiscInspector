@@ -6,7 +6,7 @@ WORKDIR /app
 # Copy backend requirements and install (avoid reinstalling torch)
 COPY backend/requirements.txt /app/backend/requirements.txt
 # Remove CPU-only extra index if present (we already have CUDA torch)
-RUN sed -i '/pytorch.org\\/whl\\/cpu/d' /app/backend/requirements.txt || true
+RUN sed -i '/pytorch.org\/whl\/cpu/d' /app/backend/requirements.txt || true
 
 RUN pip install --no-cache-dir -r /app/backend/requirements.txt
 

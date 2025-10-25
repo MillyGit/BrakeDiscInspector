@@ -6,6 +6,7 @@ import sys
 import traceback
 from typing import Optional, Dict, Any, List
 from pathlib import Path
+import os
 
 import numpy as np
 import cv2
@@ -51,9 +52,7 @@ MODELS_DIR = Path(os.environ.get("BRAKEDISC_MODELS_DIR", "models"))
 # Optional config (YAML + env) for default parameters.
 try:
     from backend.config import load_settings  # type: ignore
-
     SETTINGS = load_settings()
-    MODELS_DIR = Path(SETTINGS.get("models_dir", MODELS_DIR))
 except Exception:
     SETTINGS = {
         "inference": {
@@ -62,7 +61,6 @@ except Exception:
             "area_mm2_thr": 1.0,
         }
     }
-
 ensure_dir(MODELS_DIR)
 store = ModelStore(MODELS_DIR)
 
@@ -180,18 +178,8 @@ async def calibrate_ng(payload: Dict[str, Any]):
         mm_per_px = float(payload.get("mm_per_px", 0.2))
         ok_scores = np.asarray(payload.get("ok_scores", []), dtype=float)
         ng_scores = np.asarray(payload.get("ng_scores", []), dtype=float) if "ng_scores" in payload else None
-        area_mm2_thr = float(
-            payload.get(
-                "area_mm2_thr",
-                SETTINGS.get("inference", {}).get("area_mm2_thr", 1.0),
-            )
-        )
-        p_score = int(
-            payload.get(
-                "score_percentile",
-                SETTINGS.get("inference", {}).get("score_percentile", 99),
-            )
-        )
+        area_mm2_thr = float(payload.get("area_mm2_thr", SETTINGS.get("inference", {}).get("area_mm2_thr", 1.0)))
+        p_score = int(payload.get("score_percentile", SETTINGS.get("inference", {}).get("score_percentile", 99)))
 
         t = choose_threshold(
             ok_scores,
@@ -274,10 +262,8 @@ def infer(
         # 5) Calibración (puede faltar)
         calib = store.load_calib(role_id, roi_id, default=None)
         thr = calib.get("threshold") if calib else None
-        default_area = SETTINGS.get("inference", {}).get("area_mm2_thr", 1.0)
-        default_percentile = SETTINGS.get("inference", {}).get("score_percentile", 99)
-        area_mm2_thr = calib.get("area_mm2_thr", default_area) if calib else default_area
-        p_score = calib.get("score_percentile", default_percentile) if calib else default_percentile
+        area_mm2_thr = calib.get("area_mm2_thr", SETTINGS.get("inference", {}).get("area_mm2_thr", 1.0)) if calib else SETTINGS.get("inference", {}).get("area_mm2_thr", 1.0)
+        p_score = calib.get("score_percentile", SETTINGS.get("inference", {}).get("score_percentile", 99)) if calib else SETTINGS.get("inference", {}).get("score_percentile", 99)
 
         # 6) Shape (máscara) opcional
         shape_obj = json.loads(shape) if shape else None
@@ -381,7 +367,6 @@ if __name__ == "__main__":
     # Enable cuDNN autotuner for variable input sizes (improves latency on GPU)
     try:
         import torch  # type: ignore
-
         torch.backends.cudnn.benchmark = True  # noqa: F401
     except Exception:
         pass
