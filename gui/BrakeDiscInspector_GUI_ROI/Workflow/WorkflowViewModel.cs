@@ -287,13 +287,11 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
             }
         }
 
-        // If SelectedInspectionRoi is null -> return "square".
-        // If not null -> Shape is a (nullable) enum; convert to string safely.
+        // Si SelectedInspectionRoi es null => "square"; si no, usa el enum (no anulable) y conviértelo a string.
         public string SelectedInspectionShape =>
-            SelectedInspectionRoi?.Shape?.ToString() ?? "square";
-        // If you need lowercase for downstream components, use:
-        // public string SelectedInspectionShape =>
-        //     (SelectedInspectionRoi?.Shape?.ToString() ?? "square").ToLowerInvariant();
+            SelectedInspectionRoi != null
+                ? SelectedInspectionRoi.Shape.ToString().ToLowerInvariant()
+                : "square";
 
         public void SetInspectionRoisCollection(ObservableCollection<InspectionRoiConfig>? rois)
         {
