@@ -287,7 +287,12 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
             }
         }
 
-        public string SelectedInspectionShape => SelectedInspectionRoi?.Shape ?? "square";
+        public string SelectedInspectionShape =>
+            SelectedInspectionRoi?.Shape?.ToString() ?? "square";
+
+        // If downstream code expects lowercase values, uncomment the version below and remove the one above:
+        // public string SelectedInspectionShape =>
+        //     (SelectedInspectionRoi?.Shape?.ToString() ?? "square").ToLowerInvariant();
 
         public void SetInspectionRoisCollection(ObservableCollection<InspectionRoiConfig>? rois)
         {
