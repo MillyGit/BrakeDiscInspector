@@ -301,7 +301,7 @@
         </AdornerDecorator>
 
         <!-- ROI Toolbar (overlay) -->
-        <ToolBarTray x:Name="DrawToolbar"
+        <ToolBarTray x:Name="TopLeftTray"
                      Panel.ZIndex="1000"
                      HorizontalAlignment="Left"
                      VerticalAlignment="Top"
@@ -309,10 +309,12 @@
                      IsLocked="True"
                      Background="#222"
                      Visibility="Visible">
-          <ToolBar>
+          <ToolBar x:Name="TbDrawShapes" Band="0" BandIndex="0">
             <ToggleButton Content="Rect"   ToolTip="Rectángulo"/>
             <ToggleButton Content="Circle" ToolTip="Círculo"/>
             <ToggleButton Content="Annulus" ToolTip="Anillo"/>
+          </ToolBar>
+          <ToolBar x:Name="TbRoiActions" Band="0" BandIndex="1">
             <Button Content="Borrar" ToolTip="Borrar selección"/>
           </ToolBar>
         </ToolBarTray>

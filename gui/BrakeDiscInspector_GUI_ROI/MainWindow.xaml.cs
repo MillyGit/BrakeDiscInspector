@@ -3756,15 +3756,15 @@ namespace BrakeDiscInspector_GUI_ROI
         }
         private void MainWindow_Loaded(object sender, RoutedEventArgs e)
         {
-            if (DrawToolbar != null)
+            if (TopLeftTray != null)
             {
-                Panel.SetZIndex(DrawToolbar, 1000);
-                DrawToolbar.Visibility = Visibility.Visible;
+                Panel.SetZIndex(TopLeftTray, 1000);
+                TopLeftTray.Visibility = Visibility.Visible;
 
-                if (VisualTreeHelper.GetParent(DrawToolbar) is Canvas)
+                if (VisualTreeHelper.GetParent(TopLeftTray) is Canvas)
                 {
-                    Canvas.SetLeft(DrawToolbar, 8);
-                    Canvas.SetTop(DrawToolbar, 8);
+                    Canvas.SetLeft(TopLeftTray, 8);
+                    Canvas.SetTop(TopLeftTray, 8);
                 }
             }
 
