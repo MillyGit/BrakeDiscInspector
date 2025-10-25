@@ -1,0 +1,6 @@
+{
+  "pythonVersion": "3.12",
+  "reportMissingImports": "warning",
+  "venvPath": ".",
+  "venv": ".venv"
+}
