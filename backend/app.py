@@ -1,6 +1,7 @@
 from __future__ import annotations
 import json
 import logging
+import os
 import sys
 import traceback
 from typing import Optional, Dict, Any, List
@@ -351,8 +352,6 @@ def infer(
 if __name__ == "__main__":
     if not logging.getLogger().handlers:
         logging.basicConfig(level=logging.INFO)
-
-    import os
 
     host = os.environ.get("BRAKEDISC_BACKEND_HOST") or os.environ.get("HOST") or "127.0.0.1"
 
