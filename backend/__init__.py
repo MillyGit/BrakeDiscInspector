@@ -1,3 +1,1 @@
-"""BrakeDiscInspector backend package."""
-
-__all__ = []
+# empty package marker
