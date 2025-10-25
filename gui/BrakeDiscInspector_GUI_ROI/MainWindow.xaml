@@ -299,6 +299,23 @@
             </Grid>
           </Grid>
         </AdornerDecorator>
+
+        <!-- ROI Toolbar (overlay) -->
+        <ToolBarTray x:Name="DrawToolbar"
+                     Panel.ZIndex="1000"
+                     HorizontalAlignment="Left"
+                     VerticalAlignment="Top"
+                     Margin="8"
+                     IsLocked="True"
+                     Background="#222"
+                     Visibility="Visible">
+          <ToolBar>
+            <ToggleButton Content="Rect"   ToolTip="Rectángulo"/>
+            <ToggleButton Content="Circle" ToolTip="Círculo"/>
+            <ToggleButton Content="Annulus" ToolTip="Anillo"/>
+            <Button Content="Borrar" ToolTip="Borrar selección"/>
+          </ToolBar>
+        </ToolBarTray>
       </Grid>
       <Grid x:Name="DiskStatusHUD"
             HorizontalAlignment="Right"
