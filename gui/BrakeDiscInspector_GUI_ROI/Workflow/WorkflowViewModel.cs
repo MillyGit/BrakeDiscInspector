@@ -57,6 +57,12 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
         private double _heatmapOpacity = 0.6;
         private string _healthSummary = "";
 
+        private bool _showMaster1Pattern = true;
+        private bool _showMaster1Inspection = true;
+        private bool _showMaster2Pattern = true;
+        private bool _showMaster2Inspection = true;
+        private bool _showInspectionRoi = true;
+
         private RoiExportResult? _lastExport;
         private byte[]? _lastHeatmapBytes;
         private InferResult? _lastInferResult;
@@ -133,12 +139,99 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
                     await RunExclusiveAsync(() => AddRoiToDatasetAsync(roi, positive: false)).ConfigureAwait(false);
                 }
             }, _ => !IsBusy);
+
+            PropertyChanged += (s, e) =>
+            {
+                if (e.PropertyName == nameof(ShowMaster1Pattern)
+                    || e.PropertyName == nameof(ShowMaster1Inspection)
+                    || e.PropertyName == nameof(ShowMaster2Pattern)
+                    || e.PropertyName == nameof(ShowMaster2Inspection)
+                    || e.PropertyName == nameof(ShowInspectionRoi))
+                {
+                    Application.Current?.Dispatcher.Invoke(RedrawOverlays);
+                }
+            };
         }
 
         public ObservableCollection<DatasetSample> OkSamples { get; }
         public ObservableCollection<DatasetSample> NgSamples { get; }
 
         public ObservableCollection<InspectionRoiConfig> InspectionRois { get; private set; } = new();
+
+        public bool ShowMaster1Pattern
+        {
+            get => _showMaster1Pattern;
+            set
+            {
+                if (_showMaster1Pattern == value)
+                {
+                    return;
+                }
+
+                _showMaster1Pattern = value;
+                OnPropertyChanged(nameof(ShowMaster1Pattern));
+            }
+        }
+
+        public bool ShowMaster1Inspection
+        {
+            get => _showMaster1Inspection;
+            set
+            {
+                if (_showMaster1Inspection == value)
+                {
+                    return;
+                }
+
+                _showMaster1Inspection = value;
+                OnPropertyChanged(nameof(ShowMaster1Inspection));
+            }
+        }
+
+        public bool ShowMaster2Pattern
+        {
+            get => _showMaster2Pattern;
+            set
+            {
+                if (_showMaster2Pattern == value)
+                {
+                    return;
+                }
+
+                _showMaster2Pattern = value;
+                OnPropertyChanged(nameof(ShowMaster2Pattern));
+            }
+        }
+
+        public bool ShowMaster2Inspection
+        {
+            get => _showMaster2Inspection;
+            set
+            {
+                if (_showMaster2Inspection == value)
+                {
+                    return;
+                }
+
+                _showMaster2Inspection = value;
+                OnPropertyChanged(nameof(ShowMaster2Inspection));
+            }
+        }
+
+        public bool ShowInspectionRoi
+        {
+            get => _showInspectionRoi;
+            set
+            {
+                if (_showInspectionRoi == value)
+                {
+                    return;
+                }
+
+                _showInspectionRoi = value;
+                OnPropertyChanged(nameof(ShowInspectionRoi));
+            }
+        }
 
         public bool IsImageLoaded
         {
@@ -188,10 +281,13 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
                 {
                     _selectedInspectionRoi = value;
                     OnPropertyChanged();
+                    OnPropertyChanged(nameof(SelectedInspectionShape));
                     UpdateSelectedRoiState();
                 }
             }
         }
+
+        public string SelectedInspectionShape => SelectedInspectionRoi?.Shape ?? "square";
 
         public void SetInspectionRoisCollection(ObservableCollection<InspectionRoiConfig>? rois)
         {
@@ -359,6 +455,10 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
             if (ReferenceEquals(sender, SelectedInspectionRoi))
             {
                 OnPropertyChanged(nameof(SelectedInspectionRoi));
+                if (e.PropertyName == nameof(InspectionRoiConfig.Shape))
+                {
+                    OnPropertyChanged(nameof(SelectedInspectionShape));
+                }
             }
         }
 
@@ -2002,11 +2102,17 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
             return _inspectionRois != null && _inspectionRois.Any(r => r.Enabled);
         }
 
+        public event EventHandler? OverlayVisibilityChanged;
         public event PropertyChangedEventHandler? PropertyChanged;
 
         private void OnPropertyChanged([CallerMemberName] string? name = null)
         {
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
+        }
+
+        private void RedrawOverlays()
+        {
+            OverlayVisibilityChanged?.Invoke(this, EventArgs.Empty);
         }
     }
 }

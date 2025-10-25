@@ -101,6 +101,7 @@ namespace BrakeDiscInspector_GUI_ROI
         private bool _isFirstImageLoaded = false;
 
         private WorkflowViewModel? _workflowViewModel;
+        private WorkflowViewModel? ViewModel => _workflowViewModel;
         private string? _dataRoot;
         private double _heatmapOverlayOpacity = 0.6;
 
@@ -660,7 +661,6 @@ namespace BrakeDiscInspector_GUI_ROI
 
         private readonly Dictionary<string, Shape> _roiShapesById = new();
         private readonly Dictionary<Shape, FrameworkElement> _roiLabels = new();
-        private readonly Dictionary<RoiRole, CheckBox> _roiVisibilityCheckboxes = new();
         private readonly Dictionary<RoiRole, bool> _roiCheckboxHasRoi = new();
         private bool _roiVisibilityRefreshPending;
 
@@ -1460,6 +1460,7 @@ namespace BrakeDiscInspector_GUI_ROI
                 if (_workflowViewModel != null)
                 {
                     _workflowViewModel.PropertyChanged -= WorkflowViewModelOnPropertyChanged;
+                    _workflowViewModel.OverlayVisibilityChanged -= WorkflowViewModelOnOverlayVisibilityChanged;
                 }
 
                 _workflowViewModel = new WorkflowViewModel(
@@ -1473,6 +1474,7 @@ namespace BrakeDiscInspector_GUI_ROI
                     UpdateGlobalBadge);
 
                 _workflowViewModel.PropertyChanged += WorkflowViewModelOnPropertyChanged;
+                _workflowViewModel.OverlayVisibilityChanged += WorkflowViewModelOnOverlayVisibilityChanged;
                 _workflowViewModel.IsImageLoaded = _hasLoadedImage;
 
                 if (WorkflowHost != null)
@@ -1509,7 +1511,6 @@ namespace BrakeDiscInspector_GUI_ROI
 
 
             ComboM2Shape.SelectedIndex = 0;
-            ComboInspShape.SelectedIndex = 0;
 
 
             ComboM2Role.ItemsSource = new[] { "ROI Master 2", "ROI Inspección Master 2" };
@@ -1521,69 +1522,106 @@ namespace BrakeDiscInspector_GUI_ROI
             ApplyPresetToUI(_preset);
         }
 
+        private string GetInspectionShapeFromModel()
+            => ViewModel?.SelectedInspectionShape ?? "square";
+
+        private bool GetShowMaster1Pattern() => ViewModel?.ShowMaster1Pattern ?? true;
+        private bool GetShowMaster1Inspection() => ViewModel?.ShowMaster1Inspection ?? true;
+        private bool GetShowMaster2Pattern() => ViewModel?.ShowMaster2Pattern ?? true;
+        private bool GetShowMaster2Inspection() => ViewModel?.ShowMaster2Inspection ?? true;
+        private bool GetShowInspectionRoi() => ViewModel?.ShowInspectionRoi ?? true;
+
+        private bool GetRoiVisibility(RoiRole role) => role switch
+        {
+            RoiRole.Master1Pattern => GetShowMaster1Pattern(),
+            RoiRole.Master1Search => GetShowMaster1Inspection(),
+            RoiRole.Master2Pattern => GetShowMaster2Pattern(),
+            RoiRole.Master2Search => GetShowMaster2Inspection(),
+            RoiRole.Inspection => GetShowInspectionRoi(),
+            _ => true
+        };
+
+        private void SetRoiVisibility(RoiRole role, bool visible)
+        {
+            if (ViewModel == null)
+            {
+                return;
+            }
+
+            switch (role)
+            {
+                case RoiRole.Master1Pattern:
+                    if (ViewModel.ShowMaster1Pattern != visible)
+                    {
+                        ViewModel.ShowMaster1Pattern = visible;
+                    }
+                    break;
+                case RoiRole.Master1Search:
+                    if (ViewModel.ShowMaster1Inspection != visible)
+                    {
+                        ViewModel.ShowMaster1Inspection = visible;
+                    }
+                    break;
+                case RoiRole.Master2Pattern:
+                    if (ViewModel.ShowMaster2Pattern != visible)
+                    {
+                        ViewModel.ShowMaster2Pattern = visible;
+                    }
+                    break;
+                case RoiRole.Master2Search:
+                    if (ViewModel.ShowMaster2Inspection != visible)
+                    {
+                        ViewModel.ShowMaster2Inspection = visible;
+                    }
+                    break;
+                case RoiRole.Inspection:
+                    if (ViewModel.ShowInspectionRoi != visible)
+                    {
+                        ViewModel.ShowInspectionRoi = visible;
+                    }
+                    break;
+            }
+        }
+
         private void EnablePresetsTab(bool enable)
         {
-            if (FindName("TabPresets") is System.Windows.Controls.TabItem t)
-                t.IsEnabled = enable;
+            if (TabInspection != null)
+            {
+                TabInspection.IsEnabled = enable;
+            }
         }
 
         private void InitRoiVisibilityControls()
         {
-            _roiVisibilityCheckboxes.Clear();
             _roiCheckboxHasRoi.Clear();
-
-            MapRoiCheckbox(RoiRole.Master1Pattern, ChkShowMaster1Pattern);
-            MapRoiCheckbox(RoiRole.Master1Search, ChkShowMaster1Inspection);
-            MapRoiCheckbox(RoiRole.Master2Pattern, ChkShowMaster2Pattern);
-            MapRoiCheckbox(RoiRole.Master2Search, ChkShowMaster2Inspection);
-            MapRoiCheckbox(RoiRole.Inspection, ChkShowInspectionRoi);
 
             UpdateRoiVisibilityControls();
         }
 
-        private void MapRoiCheckbox(RoiRole role, CheckBox? checkbox)
-        {
-            if (checkbox == null)
-                return;
-
-            _roiVisibilityCheckboxes[role] = checkbox;
-            _roiCheckboxHasRoi[role] = false;
-            checkbox.IsEnabled = false;
-            checkbox.IsChecked = false;
-        }
-
         private void UpdateRoiVisibilityControls()
         {
-            if (_roiVisibilityCheckboxes.Count == 0)
-                return;
-
-            UpdateRoiVisibilityCheckbox(RoiRole.Master1Pattern, _layout.Master1Pattern);
-            UpdateRoiVisibilityCheckbox(RoiRole.Master1Search, _layout.Master1Search);
-            UpdateRoiVisibilityCheckbox(RoiRole.Master2Pattern, _layout.Master2Pattern);
-            UpdateRoiVisibilityCheckbox(RoiRole.Master2Search, _layout.Master2Search);
-            UpdateRoiVisibilityCheckbox(RoiRole.Inspection, _layout.Inspection);
+            UpdateRoiVisibilityState(RoiRole.Master1Pattern, _layout.Master1Pattern);
+            UpdateRoiVisibilityState(RoiRole.Master1Search, _layout.Master1Search);
+            UpdateRoiVisibilityState(RoiRole.Master2Pattern, _layout.Master2Pattern);
+            UpdateRoiVisibilityState(RoiRole.Master2Search, _layout.Master2Search);
+            UpdateRoiVisibilityState(RoiRole.Inspection, _layout.Inspection);
 
             RequestRoiVisibilityRefresh();
             UpdateRoiHud();
         }
 
-        private void UpdateRoiVisibilityCheckbox(RoiRole role, RoiModel? model)
+        private void UpdateRoiVisibilityState(RoiRole role, RoiModel? model)
         {
-            if (!_roiVisibilityCheckboxes.TryGetValue(role, out var checkbox) || checkbox == null)
-                return;
-
             bool hasRoi = model != null;
             bool prevHasRoi = _roiCheckboxHasRoi.TryGetValue(role, out var prev) && prev;
 
-            checkbox.IsEnabled = hasRoi;
-
             if (!hasRoi)
             {
-                checkbox.IsChecked = false;
+                SetRoiVisibility(role, false);
             }
-            else if (!prevHasRoi && checkbox.IsChecked != true)
+            else if (!prevHasRoi && !GetRoiVisibility(role))
             {
-                checkbox.IsChecked = true;
+                SetRoiVisibility(role, true);
             }
 
             _roiCheckboxHasRoi[role] = hasRoi;
@@ -1604,11 +1642,11 @@ namespace BrakeDiscInspector_GUI_ROI
             Dispatcher.BeginInvoke(new Action(() =>
             {
                 _roiVisibilityRefreshPending = false;
-                ApplyRoiVisibilityFromCheckboxes();
+                ApplyRoiVisibilityFromViewModel();
             }), DispatcherPriority.Render);
         }
 
-        private void ApplyRoiVisibilityFromCheckboxes()
+        private void ApplyRoiVisibilityFromViewModel()
         {
             if (CanvasROI == null)
                 return;
@@ -1630,12 +1668,7 @@ namespace BrakeDiscInspector_GUI_ROI
 
         private bool IsRoiRoleVisible(RoiRole role)
         {
-            if (_roiVisibilityCheckboxes.TryGetValue(role, out var checkbox) && checkbox != null)
-            {
-                return checkbox.IsChecked != false;
-            }
-
-            return true;
+            return GetRoiVisibility(role);
         }
 
         private void UpdateWizardState()
@@ -1658,8 +1691,7 @@ namespace BrakeDiscInspector_GUI_ROI
             // Habilitación de tabs por etapas
             TabMaster1.IsEnabled = true;
             TabMaster2.IsEnabled = m1Ready;           // puedes definir M2 cuando M1 está completo
-            InspectionTab.IsEnabled = mastersReady;     // puedes definir la inspección tras completar M1 y M2
-            EnablePresetsTab(mastersReady || _hasLoadedImage);     // permite presets tras cargar imagen o completar masters
+            EnablePresetsTab(mastersReady || _hasLoadedImage);     // permite la pestaña de inspección tras cargar imagen o completar masters
 
             // Selección de tab acorde a estado
             if (_state == MasterState.DrawM1_Pattern || _state == MasterState.DrawM1_Search)
@@ -1667,9 +1699,9 @@ namespace BrakeDiscInspector_GUI_ROI
             else if (_state == MasterState.DrawM2_Pattern || _state == MasterState.DrawM2_Search)
                 MainTabs.SelectedItem = TabMaster2;
             else if (_state == MasterState.DrawInspection)
-                MainTabs.SelectedItem = InspectionTab;
+                MainTabs.SelectedItem = TabInspection;
             else
-                MainTabs.SelectedItem = TabPresets;
+                MainTabs.SelectedItem = TabInspection;
 
             if (_analysisViewActive && _state != MasterState.Ready)
             {
@@ -3301,9 +3333,9 @@ namespace BrakeDiscInspector_GUI_ROI
             }
 
             _analysisViewActive = true;
-            if (MainTabs != null && TabPresets != null)
+            if (MainTabs != null && TabInspection != null)
             {
-                MainTabs.SelectedItem = TabPresets;
+                MainTabs.SelectedItem = TabInspection;
             }
         }
 
@@ -3542,12 +3574,14 @@ namespace BrakeDiscInspector_GUI_ROI
 
         private void ToggleRoiVisibility(RoiRole role)
         {
-            if (_roiVisibilityCheckboxes.TryGetValue(role, out var checkbox) && checkbox != null)
+            if (!_roiCheckboxHasRoi.TryGetValue(role, out var hasRoi) || !hasRoi)
             {
-                bool newState = checkbox.IsChecked != true;
-                checkbox.IsChecked = newState;
-                RedrawAllRois();
+                return;
             }
+
+            bool newState = !GetRoiVisibility(role);
+            SetRoiVisibility(role, newState);
+            RedrawAllRois();
         }
 
         private void RefreshInspectionRoiSlots(IReadOnlyList<RoiModel>? rois = null)
@@ -3659,6 +3693,15 @@ namespace BrakeDiscInspector_GUI_ROI
             }
         }
 
+        private void WorkflowViewModelOnOverlayVisibilityChanged(object? sender, EventArgs e)
+        {
+            Dispatcher.Invoke(() =>
+            {
+                RequestRoiVisibilityRefresh();
+                UpdateRoiHud();
+            });
+        }
+
         private void OnPresetLoaded()
         {
             TryCollapseMasterEditors();
@@ -3686,14 +3729,14 @@ namespace BrakeDiscInspector_GUI_ROI
 
         private void GoToInspectionTab()
         {
-            if (InspectionTab != null)
+            if (TabInspection != null)
             {
-                InspectionTab.IsEnabled = true;
+                TabInspection.IsEnabled = true;
             }
 
-            if (MainTabs != null && InspectionTab != null)
+            if (MainTabs != null && TabInspection != null)
             {
-                MainTabs.SelectedItem = InspectionTab;
+                MainTabs.SelectedItem = TabInspection;
             }
         }
 
@@ -3756,7 +3799,7 @@ namespace BrakeDiscInspector_GUI_ROI
             }
             else
             {
-                var t = ToLower(ComboInspShape.SelectedItem);
+                var t = ToLower(GetInspectionShapeFromModel());
                 if (t.Contains("círculo") || t.Contains("circulo")) return RoiShape.Circle;
                 if (t.Contains("annulus")) return RoiShape.Annulus;
                 return RoiShape.Rectangle;
