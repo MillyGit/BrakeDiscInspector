@@ -1,6 +1,7 @@
 from __future__ import annotations
 import json
 import logging
+import os
 import sys
 import traceback
 from typing import Optional, Dict, Any, List
@@ -45,7 +46,23 @@ log = logging.getLogger(__name__)
 app = FastAPI(title="Anomaly Backend (PatchCore + DINOv2)")
 
 # Carpeta para artefactos persistentes por (role_id, roi_id)
-MODELS_DIR = Path("models")
+MODELS_DIR = Path(os.environ.get("BRAKEDISC_MODELS_DIR", "models"))
+
+# Optional config (YAML + env) for default parameters.
+try:
+    from backend.config import load_settings  # type: ignore
+
+    SETTINGS = load_settings()
+    MODELS_DIR = Path(SETTINGS.get("models_dir", MODELS_DIR))
+except Exception:
+    SETTINGS = {
+        "inference": {
+            "coreset_rate": 0.10,
+            "score_percentile": 99,
+            "area_mm2_thr": 1.0,
+        }
+    }
+
 ensure_dir(MODELS_DIR)
 store = ModelStore(MODELS_DIR)
 
@@ -113,7 +130,7 @@ def fit_ok(
         E = np.concatenate(all_emb, axis=0)  # (N, D)
 
         # Coreset (puedes ajustar coreset_rate)
-        coreset_rate = 0.02
+        coreset_rate = float(SETTINGS.get("inference", {}).get("coreset_rate", 0.02))
         if memory_fit:
             coreset_rate = 1.0
         mem = PatchCoreMemory.build(E, coreset_rate=coreset_rate, seed=0)
@@ -163,8 +180,18 @@ async def calibrate_ng(payload: Dict[str, Any]):
         mm_per_px = float(payload.get("mm_per_px", 0.2))
         ok_scores = np.asarray(payload.get("ok_scores", []), dtype=float)
         ng_scores = np.asarray(payload.get("ng_scores", []), dtype=float) if "ng_scores" in payload else None
-        area_mm2_thr = float(payload.get("area_mm2_thr", 1.0))
-        p_score = int(payload.get("score_percentile", 99))
+        area_mm2_thr = float(
+            payload.get(
+                "area_mm2_thr",
+                SETTINGS.get("inference", {}).get("area_mm2_thr", 1.0),
+            )
+        )
+        p_score = int(
+            payload.get(
+                "score_percentile",
+                SETTINGS.get("inference", {}).get("score_percentile", 99),
+            )
+        )
 
         t = choose_threshold(
             ok_scores,
@@ -247,8 +274,10 @@ def infer(
         # 5) Calibración (puede faltar)
         calib = store.load_calib(role_id, roi_id, default=None)
         thr = calib.get("threshold") if calib else None
-        area_mm2_thr = calib.get("area_mm2_thr", 1.0) if calib else 1.0
-        p_score = calib.get("score_percentile", 99) if calib else 99
+        default_area = SETTINGS.get("inference", {}).get("area_mm2_thr", 1.0)
+        default_percentile = SETTINGS.get("inference", {}).get("score_percentile", 99)
+        area_mm2_thr = calib.get("area_mm2_thr", default_area) if calib else default_area
+        p_score = calib.get("score_percentile", default_percentile) if calib else default_percentile
 
         # 6) Shape (máscara) opcional
         shape_obj = json.loads(shape) if shape else None
@@ -338,8 +367,6 @@ if __name__ == "__main__":
     if not logging.getLogger().handlers:
         logging.basicConfig(level=logging.INFO)
 
-    import os
-
     host = os.environ.get("BRAKEDISC_BACKEND_HOST") or os.environ.get("HOST") or "127.0.0.1"
 
     raw_port = os.environ.get("BRAKEDISC_BACKEND_PORT") or os.environ.get("PORT") or "8000"
@@ -351,6 +378,13 @@ if __name__ == "__main__":
 
     log.info("Starting backend service on %s:%s", host, port)
 
-    import uvicorn
+    # Enable cuDNN autotuner for variable input sizes (improves latency on GPU)
+    try:
+        import torch  # type: ignore
 
+        torch.backends.cudnn.benchmark = True  # noqa: F401
+    except Exception:
+        pass
+
+    import uvicorn
     uvicorn.run("backend.app:app", host=host, port=port, reload=False)
