@@ -1,0 +1,10 @@
+server:
+  host: 127.0.0.1
+  port: 8000
+
+models_dir: models
+
+inference:
+  coreset_rate: 0.10
+  score_percentile: 99
+  area_mm2_thr: 1.0

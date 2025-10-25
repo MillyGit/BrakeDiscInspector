@@ -1,0 +1,68 @@
+{
+  "info": {
+    "name": "BrakeDiscInspector API",
+    "_postman_id": "bdi-collection-001",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Health",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {"raw": "{{base_url}}/health", "host": ["{{base_url}}"], "path": ["health"]}
+      }
+    },
+    {
+      "name": "Fit OK",
+      "request": {
+        "method": "POST",
+        "header": [],
+        "body": {
+          "mode": "formdata",
+          "formdata": [
+            {"key": "role_id", "value": "R1", "type": "text"},
+            {"key": "roi_id", "value": "ROI_A", "type": "text"},
+            {"key": "mm_per_px", "value": "0.2", "type": "text"},
+            {"key": "images", "type": "file", "src": []},
+            {"key": "memory_fit", "value": "false", "type": "text"}
+          ]
+        },
+        "url": {"raw": "{{base_url}}/fit_ok", "host": ["{{base_url}}"], "path": ["fit_ok"]}
+      }
+    },
+    {
+      "name": "Calibrate NG",
+      "request": {
+        "method": "POST",
+        "header": [{"key": "Content-Type", "value": "application/json"}],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"role_id\": \"R1\",\n  \"roi_id\": \"ROI_A\",\n  \"mm_per_px\": 0.2,\n  \"ok_scores\": [0.01, 0.02, 0.015],\n  \"ng_scores\": [0.35, 0.4],\n  \"area_mm2_thr\": 1.0,\n  \"score_percentile\": 99\n}"
+        },
+        "url": {"raw": "{{base_url}}/calibrate_ng", "host": ["{{base_url}}"], "path": ["calibrate_ng"]}
+      }
+    },
+    {
+      "name": "Infer",
+      "request": {
+        "method": "POST",
+        "header": [],
+        "body": {
+          "mode": "formdata",
+          "formdata": [
+            {"key": "role_id", "value": "R1", "type": "text"},
+            {"key": "roi_id", "value": "ROI_A", "type": "text"},
+            {"key": "mm_per_px", "value": "0.2", "type": "text"},
+            {"key": "image", "type": "file", "src": []},
+            {"key": "shape", "type": "text", "value": ""}
+          ]
+        },
+        "url": {"raw": "{{base_url}}/infer", "host": ["{{base_url}}"], "path": ["infer"]}
+      }
+    }
+  ],
+  "variable": [
+    {"key": "base_url", "value": "http://127.0.0.1:8000"}
+  ]
+}
