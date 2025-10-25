@@ -106,7 +106,7 @@
         </ScrollViewer>
       </TabItem>
 
-      <TabItem x:Name="InspectionTab" Header="Inspección">
+      <TabItem x:Name="TabInspection" Header="Inspección">
         <ScrollViewer VerticalScrollBarVisibility="Auto">
           <StackPanel Margin="10">
             <TextBlock Text="Inspection ROIs" FontWeight="SemiBold" Margin="0,0,0,8"/>
@@ -251,7 +251,24 @@
         </ScrollViewer>
       </TabItem>
 
-      </TabControl>
+    </TabControl>
+
+    <StackPanel Grid.Row="1"
+                Grid.Column="1"
+                Visibility="Collapsed"
+                DataContext="{Binding DataContext, ElementName=WorkflowHost}">
+      <ComboBox x:Name="ComboInspShape"
+                SelectedValue="{Binding SelectedInspectionRoi.Shape}">
+        <ComboBoxItem Content="square"/>
+        <ComboBoxItem Content="circle"/>
+        <ComboBoxItem Content="annulus"/>
+      </ComboBox>
+      <CheckBox x:Name="ChkShowMaster1Pattern" IsChecked="{Binding ShowMaster1Pattern}"/>
+      <CheckBox x:Name="ChkShowMaster1Inspection" IsChecked="{Binding ShowMaster1Inspection}"/>
+      <CheckBox x:Name="ChkShowMaster2Pattern" IsChecked="{Binding ShowMaster2Pattern}"/>
+      <CheckBox x:Name="ChkShowMaster2Inspection" IsChecked="{Binding ShowMaster2Inspection}"/>
+      <CheckBox x:Name="ChkShowInspectionRoi" IsChecked="{Binding ShowInspectionRoi}"/>
+    </StackPanel>
 
       <!-- ===== Viewer/Canvas (right) ===== -->
       <Grid Grid.Column="0" Grid.RowSpan="2" x:Name="ViewerHost">
