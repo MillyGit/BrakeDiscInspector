@@ -3756,6 +3756,18 @@ namespace BrakeDiscInspector_GUI_ROI
         }
         private void MainWindow_Loaded(object sender, RoutedEventArgs e)
         {
+            if (DrawToolbar != null)
+            {
+                Panel.SetZIndex(DrawToolbar, 1000);
+                DrawToolbar.Visibility = Visibility.Visible;
+
+                if (VisualTreeHelper.GetParent(DrawToolbar) is Canvas)
+                {
+                    Canvas.SetLeft(DrawToolbar, 8);
+                    Canvas.SetTop(DrawToolbar, 8);
+                }
+            }
+
             ScheduleSyncOverlay(force: true);
             UpdateHeatmapOverlayLayoutAndClip();
             RedrawAnalysisCrosses();
