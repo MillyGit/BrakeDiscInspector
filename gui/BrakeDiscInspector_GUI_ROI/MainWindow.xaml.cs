@@ -2212,7 +2212,7 @@ namespace BrakeDiscInspector_GUI_ROI
                     CanvasROI.Children.Add(shape);
                     _roiShapesById[roi.Id] = shape;
 
-                    if (ShouldEnableRoiEditing(roi.Role))
+                    if (ShouldEnableRoiEditing(roi.Role) && !roi.IsFrozen)
                     {
                         AttachRoiAdorner(shape);
                     }
@@ -2229,7 +2229,7 @@ namespace BrakeDiscInspector_GUI_ROI
                         shape.StrokeDashArray = style.dash;
                     else
                         shape.StrokeDashArray = null;
-                    shape.IsHitTestVisible = true;
+                    shape.IsHitTestVisible = !roi.IsFrozen && ShouldEnableRoiEditing(roi.Role);
                     Panel.SetZIndex(shape, style.zIndex);
                 }
                 catch
@@ -2239,7 +2239,7 @@ namespace BrakeDiscInspector_GUI_ROI
                     shape.Fill = Brushes.Transparent;
                     shape.StrokeThickness = 1.0;
                     shape.StrokeDashArray = null;
-                    shape.IsHitTestVisible = true;
+                    shape.IsHitTestVisible = !roi.IsFrozen && ShouldEnableRoiEditing(roi.Role);
                     Panel.SetZIndex(shape, 5);
                 }
 
@@ -2493,7 +2493,7 @@ namespace BrakeDiscInspector_GUI_ROI
             if (style.dash != null)
                 shape.StrokeDashArray = style.dash;
             shape.SnapsToDevicePixels = true;
-            shape.IsHitTestVisible = ShouldEnableRoiEditing(roi.Role);
+            shape.IsHitTestVisible = !roi.IsFrozen && ShouldEnableRoiEditing(roi.Role);
             Panel.SetZIndex(shape, style.zIndex);
 
             // Persist canvas ROI info on Tag; geometry will be updated during RedrawOverlay().
@@ -3438,6 +3438,12 @@ namespace BrakeDiscInspector_GUI_ROI
                     label = _layout.InspectionRois[inspectionIndex - 1].DisplayName;
                 }
                 roi.Label = label;
+                if (_layout?.InspectionRois != null && _layout.InspectionRois.Count >= inspectionIndex)
+                {
+                    var config = _layout.InspectionRois[inspectionIndex - 1];
+                    roi.Id = !string.IsNullOrWhiteSpace(config.DatasetPath) ?
+                             Path.GetFileName(config.DatasetPath) : $"Inspection_{inspectionIndex}";
+                }
                 inspectionIndex++;
             }
 
@@ -3677,7 +3683,10 @@ namespace BrakeDiscInspector_GUI_ROI
 
             if (visible)
             {
-                AttachRoiAdorner(shape);
+                if (shape.Tag is RoiModel roi && ShouldEnableRoiEditing(roi.Role) && !roi.IsFrozen)
+                {
+                    AttachRoiAdorner(shape);
+                }
             }
             else
             {
