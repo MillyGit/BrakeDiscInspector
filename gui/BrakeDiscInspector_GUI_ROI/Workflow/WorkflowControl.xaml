@@ -100,7 +100,7 @@
                                     <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,8,0,0">
                                         <TextBlock Text="ModelKey" Width="70" VerticalAlignment="Center"/>
                                         <TextBox Text="{Binding ModelKey}" Width="220" Margin="0,0,12,0"/>
-                                        <CheckBox Content="Memory-Fit" IsChecked="{Binding TrainMemoryFit}" VerticalAlignment="Center"/>
+                                        <CheckBox Content="Memory fit" IsChecked="{Binding TrainMemoryFit}" VerticalAlignment="Center"/>
                                     </StackPanel>
 
                                     <Grid Grid.Row="2" Margin="0,8,0,0">
