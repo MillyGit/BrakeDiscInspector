@@ -4,9 +4,8 @@ import logging
 import os
 import sys
 import traceback
-from typing import Optional, Dict, Any, List
 from pathlib import Path
-import os
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 import cv2
@@ -47,7 +46,17 @@ log = logging.getLogger(__name__)
 app = FastAPI(title="Anomaly Backend (PatchCore + DINOv2)")
 
 # Carpeta para artefactos persistentes por (role_id, roi_id)
-MODELS_DIR = Path(os.environ.get("BRAKEDISC_MODELS_DIR", "models"))
+def _env_var(name: str, *, legacy: str | None = None, default: str | None = None) -> str | None:
+    """Return environment variable prioritising the new BDI_* keys."""
+    value = os.environ.get(name)
+    if not value and legacy:
+        value = os.environ.get(legacy)
+    if value is None or value == "":
+        return default
+    return value
+
+
+MODELS_DIR = Path(_env_var("BDI_MODELS_DIR", legacy="BRAKEDISC_MODELS_DIR", default="models"))
 
 # Optional config (YAML + env) for default parameters.
 try:
@@ -353,9 +362,15 @@ if __name__ == "__main__":
     if not logging.getLogger().handlers:
         logging.basicConfig(level=logging.INFO)
 
-    host = os.environ.get("BRAKEDISC_BACKEND_HOST") or os.environ.get("HOST") or "127.0.0.1"
+    host = _env_var("BDI_BACKEND_HOST", legacy="BRAKEDISC_BACKEND_HOST")
+    if not host:
+        host = os.environ.get("HOST")
+    host = host or "127.0.0.1"
 
-    raw_port = os.environ.get("BRAKEDISC_BACKEND_PORT") or os.environ.get("PORT") or "8000"
+    raw_port = _env_var("BDI_BACKEND_PORT", legacy="BRAKEDISC_BACKEND_PORT")
+    if not raw_port:
+        raw_port = os.environ.get("PORT")
+    raw_port = raw_port or "8000"
     try:
         port = int(raw_port)
     except (TypeError, ValueError):

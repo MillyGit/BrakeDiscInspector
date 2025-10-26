@@ -65,8 +65,8 @@
                         <TextBlock Text="{Binding CalibrationSummary}" TextWrapping="Wrap" Margin="0,4,0,0"/>
                         <TextBlock Text="{Binding InferenceSummary}" TextWrapping="Wrap" Margin="0,4,0,8"/>
                         <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
-                            <Button Content="Evaluate All"
-                                    Command="{Binding EvaluateAllRoisCommand}"
+                            <Button Content="Infer Enabled"
+                                    Command="{Binding InferEnabledRoisCommand}"
                                     Padding="12,4"/>
                         </StackPanel>
                     </StackPanel>
