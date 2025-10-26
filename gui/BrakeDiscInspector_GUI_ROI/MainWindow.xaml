@@ -341,7 +341,21 @@
                 CornerRadius="6"
                 Panel.ZIndex="900"
                 DataContext="{Binding DataContext, ElementName=WorkflowHost}">
-          <StackPanel Orientation="Horizontal" Foreground="White">
+          <StackPanel Orientation="Horizontal">
+            <StackPanel.Resources>
+              <Style TargetType="Button">
+                <Setter Property="Foreground" Value="White"/>
+              </Style>
+              <Style TargetType="ToggleButton">
+                <Setter Property="Foreground" Value="White"/>
+              </Style>
+              <Style TargetType="CheckBox">
+                <Setter Property="Foreground" Value="White"/>
+              </Style>
+              <Style TargetType="TextBlock">
+                <Setter Property="Foreground" Value="White"/>
+              </Style>
+            </StackPanel.Resources>
             <CheckBox x:Name="ChkShowMaster1Pattern"
                       Content="Master 1"
                       IsChecked="{Binding ShowMaster1Pattern}"

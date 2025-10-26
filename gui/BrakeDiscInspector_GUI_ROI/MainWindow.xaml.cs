@@ -3851,19 +3851,23 @@ namespace BrakeDiscInspector_GUI_ROI
             _updatingDrawToolUi = true;
             try
             {
-                if (RectToolButton != null)
+                var rectBtn = FindName("RectToolButton") as ToggleButton;
+                var circBtn = FindName("CircleToolButton") as ToggleButton;
+                var annBtn = FindName("AnnulusToolButton") as ToggleButton;
+
+                if (rectBtn != null)
                 {
-                    RectToolButton.IsChecked = shape == RoiShape.Rectangle;
+                    rectBtn.IsChecked = shape == RoiShape.Rectangle;
                 }
 
-                if (CircleToolButton != null)
+                if (circBtn != null)
                 {
-                    CircleToolButton.IsChecked = shape == RoiShape.Circle;
+                    circBtn.IsChecked = shape == RoiShape.Circle;
                 }
 
-                if (AnnulusToolButton != null)
+                if (annBtn != null)
                 {
-                    AnnulusToolButton.IsChecked = shape == RoiShape.Annulus;
+                    annBtn.IsChecked = shape == RoiShape.Annulus;
                 }
             }
             finally
