@@ -886,9 +886,65 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
             await ShowTransientToastAsync($"{(roi.Label ?? roi.Role.ToString())}: added to {(positive ? "OK" : "NG")} dataset");
         }
 
-        private Task RefreshRoiDatasetStateAsync(RoiModel roi)
+        private async Task RefreshRoiDatasetStateAsync(RoiModel roi)
         {
-            return Task.CompletedTask;
+            if (roi == null)
+            {
+                return;
+            }
+
+            try
+            {
+                var config = FindInspectionConfigForRoi(roi);
+                if (config != null)
+                {
+                    await RefreshRoiDatasetStateAsync(config).ConfigureAwait(false);
+                }
+            }
+            catch (Exception ex)
+            {
+                _log($"[dataset] refresh state error for ROI '{roi.Label ?? roi.Id}': {ex.Message}");
+            }
+        }
+
+        private InspectionRoiConfig? FindInspectionConfigForRoi(RoiModel roi)
+        {
+            if (roi == null || _inspectionRois == null || _inspectionRois.Count == 0)
+            {
+                return null;
+            }
+
+            if (!string.IsNullOrWhiteSpace(roi.Label))
+            {
+                var byLabel = _inspectionRois.FirstOrDefault(r =>
+                    string.Equals(r.Name, roi.Label, StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(r.DisplayName, roi.Label, StringComparison.OrdinalIgnoreCase));
+                if (byLabel != null)
+                {
+                    return byLabel;
+                }
+            }
+
+            if (!string.IsNullOrWhiteSpace(roi.Id))
+            {
+                var byKey = _inspectionRois.FirstOrDefault(r => string.Equals(r.ModelKey, roi.Id, StringComparison.OrdinalIgnoreCase));
+                if (byKey != null)
+                {
+                    return byKey;
+                }
+            }
+
+            if (!string.IsNullOrWhiteSpace(roi.Id)
+                && int.TryParse(roi.Id, NumberStyles.Integer, CultureInfo.InvariantCulture, out var numericId))
+            {
+                var byIndex = _inspectionRois.FirstOrDefault(r => r.Index == numericId);
+                if (byIndex != null)
+                {
+                    return byIndex;
+                }
+            }
+
+            return SelectedInspectionRoi ?? _inspectionRois.FirstOrDefault();
         }
 
         private async Task RemoveSelectedAsync()
@@ -1595,7 +1651,8 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
             try
             {
                 var result = await _client.FitOkAsync(RoleId, roi.ModelKey, MmPerPx, okImages, roi.TrainMemoryFit, ct).ConfigureAwait(false);
-                FitSummary = $"Embeddings={result.n_embeddings} Coreset={result.coreset_size} TokenShape=[{string.Join(',', result.token_shape ?? Array.Empty<int>())}]";
+                var memoryHint = roi.TrainMemoryFit ? " (memory-fit)" : string.Empty;
+                FitSummary = $"Embeddings={result.n_embeddings} Coreset={result.coreset_size} TokenShape=[{string.Join(',', result.token_shape ?? Array.Empty<int>())}]" + memoryHint;
             }
             catch (HttpRequestException ex)
             {
