@@ -95,7 +95,7 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
             AddOkFromCurrentRoiCommand = CreateCommand(_ => AddSampleAsync(isNg: false));
             AddNgFromCurrentRoiCommand = CreateCommand(_ => AddSampleAsync(isNg: true));
             RemoveSelectedCommand = CreateCommand(_ => RemoveSelectedAsync(), _ => !IsBusy && (SelectedOkSample != null || SelectedNgSample != null));
-            OpenDatasetFolderCommand = CreateCommand(_ => OpenDatasetFolderAsync(), _ => !IsBusy);
+            OpenDatasetFolderCommand = CreateCommand(_ => OpenDatasetFolderAsync(), _ => !IsBusy && SelectedInspectionRoi?.HasDatasetPath == true);
             TrainFitCommand = CreateCommand(_ => TrainAsync(), _ => !IsBusy && OkSamples.Count > 0);
             CalibrateCommand = CreateCommand(_ => CalibrateAsync(), _ => !IsBusy && OkSamples.Count > 0);
             InferFromCurrentRoiCommand = CreateCommand(_ => InferCurrentAsync(), _ => !IsBusy);
@@ -283,6 +283,7 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
                     OnPropertyChanged();
                     OnPropertyChanged(nameof(SelectedInspectionShape));
                     UpdateSelectedRoiState();
+                    OpenDatasetFolderCommand.RaiseCanExecuteChanged();
                 }
             }
         }
@@ -448,6 +449,7 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
                 }
 
                 CalibrateSelectedRoiCommand.RaiseCanExecuteChanged();
+                OpenDatasetFolderCommand.RaiseCanExecuteChanged();
             }
 
             if (e.PropertyName == nameof(InspectionRoiConfig.DatasetOkCount)
@@ -869,6 +871,13 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
                 return;
             }
 
+            var config = FindInspectionConfigForRoi(roi);
+            if (config != null)
+            {
+                await AddRoiToDatasetAsync(config, positive).ConfigureAwait(false);
+                return;
+            }
+
             var export = await _exportRoiAsync().ConfigureAwait(false);
             if (export == null)
             {
@@ -975,18 +984,45 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
 
         private async Task OpenDatasetFolderAsync()
         {
-            EnsureRoleRoi();
-            var dir = _datasetManager.GetRoleRoiDirectory(RoleId, RoiId);
-            _datasetManager.EnsureRoleRoiDirectories(RoleId, RoiId);
+            var roi = SelectedInspectionRoi;
+            if (roi == null)
+            {
+                await ShowMessageAsync("Select an Inspection ROI first.", "Dataset");
+                return;
+            }
+
+            if (string.IsNullOrWhiteSpace(roi.DatasetPath))
+            {
+                await ShowMessageAsync($"Dataset path not set for '{roi.DisplayName}'.", "Dataset");
+                return;
+            }
+
+            var datasetPath = roi.DatasetPath!;
+
+            try
+            {
+                Directory.CreateDirectory(datasetPath);
+            }
+            catch (Exception ex)
+            {
+                _log($"[dataset] failed to ensure directory '{datasetPath}': {ex.Message}");
+            }
+
             await Task.Run(() =>
             {
-                var psi = new System.Diagnostics.ProcessStartInfo
+                try
                 {
-                    FileName = "explorer.exe",
-                    Arguments = $"\"{dir}\"",
-                    UseShellExecute = false
-                };
-                System.Diagnostics.Process.Start(psi);
+                    var psi = new ProcessStartInfo
+                    {
+                        FileName = datasetPath,
+                        UseShellExecute = true
+                    };
+                    Process.Start(psi);
+                }
+                catch (Exception ex)
+                {
+                    _log($"[dataset] failed to open folder '{datasetPath}': {ex.Message}");
+                }
             }).ConfigureAwait(false);
         }
 
