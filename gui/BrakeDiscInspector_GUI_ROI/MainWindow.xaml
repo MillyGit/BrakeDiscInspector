@@ -195,6 +195,28 @@
 
             <Separator Margin="0,12,0,12"/>
 
+            <GroupBox Header="Analyze options" Margin="0,0,0,12">
+              <StackPanel Margin="8,4,0,0">
+                <CheckBox Content="Lock scale"
+                          IsChecked="{Binding ScaleLock, Mode=TwoWay}"/>
+                <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                  <TextBlock Text="Position tolerance (px)"
+                             Width="180"
+                             VerticalAlignment="Center"/>
+                  <TextBox Width="80"
+                           Margin="0,0,8,0"
+                           Text="{Binding AnalyzePosTolerancePx, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged, StringFormat={}{0:F2}}"/>
+                </StackPanel>
+                <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
+                  <TextBlock Text="Angle tolerance (deg)"
+                             Width="180"
+                             VerticalAlignment="Center"/>
+                  <TextBox Width="80"
+                           Text="{Binding AnalyzeAngToleranceDeg, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged, StringFormat={}{0:F2}}"/>
+                </StackPanel>
+              </StackPanel>
+            </GroupBox>
+
             <TextBlock Text="Feature (sin geom):"/>
             <ComboBox x:Name="ComboFeature" Margin="0,4,0,8">
               <ComboBoxItem Content="auto"/>
@@ -244,7 +266,7 @@
                      HorizontalAlignment="Left"
                      VerticalAlignment="Top"
                      SnapsToDevicePixels="True"
-                     Opacity="0.75"
+                     Opacity="{Binding HeatmapOverlayOpacity, RelativeSource={RelativeSource AncestorType=Window}}"
                      Visibility="Collapsed"
                      Panel.ZIndex="1"/>
               <Canvas x:Name="CanvasROI"
@@ -294,7 +316,8 @@
             <CheckBox x:Name="ChkScaleLock"
                       Content="Scale Lock"
                       Margin="4,0,4,0"
-                      ToolTip="Bloquear escala durante análisis"/>
+                      ToolTip="Bloquear escala durante análisis"
+                      IsChecked="{Binding ScaleLock, Mode=TwoWay}"/>
             <CheckBox x:Name="ChkUseLocalMatcher"
                       Content="Usar matcher local"
                       Margin="4,0,0,0"
@@ -452,7 +475,20 @@
                     Width="160"
                     Minimum="0.10"
                     Maximum="2.00"
-                    Value="1.00"/>
+                    Value="1.00"
+                    Margin="0,0,12,0"/>
+            <TextBlock Text="Opacity"
+                       Foreground="#39FF14"
+                       FontFamily="Segoe UI"
+                       FontWeight="SemiBold"
+                       Margin="0,0,8,0"/>
+            <Slider x:Name="HeatmapOpacitySlider"
+                    Width="140"
+                    Minimum="0"
+                    Maximum="1"
+                    TickFrequency="0.05"
+                    IsSnapToTickEnabled="True"
+                    Value="{Binding HeatmapOverlayOpacity, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
           </StackPanel>
         </Border>
       </Grid>

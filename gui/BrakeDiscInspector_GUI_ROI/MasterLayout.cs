@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.IO;
 using System.Text.Json;
@@ -17,6 +18,11 @@ namespace BrakeDiscInspector_GUI_ROI
         public RoiModel? Inspection { get; set; }
         public RoiModel? InspectionBaseline { get; set; }
 
+        public AnalyzeOptions Analyze { get; set; } = new();
+        public UiOptions Ui { get; set; } = new();
+        public Dictionary<string, List<RoiModel>> InspectionBaselinesByImage { get; set; }
+            = new(StringComparer.OrdinalIgnoreCase);
+
         public ObservableCollection<InspectionRoiConfig> InspectionRois { get; }
             = new ObservableCollection<InspectionRoiConfig>
             {
@@ -25,6 +31,18 @@ namespace BrakeDiscInspector_GUI_ROI
                 new InspectionRoiConfig(3),
                 new InspectionRoiConfig(4),
             };
+    }
+
+    public sealed class AnalyzeOptions
+    {
+        public double PosTolPx { get; set; } = 1.0;
+        public double AngTolDeg { get; set; } = 0.5;
+        public bool ScaleLock { get; set; } = true;
+    }
+
+    public sealed class UiOptions
+    {
+        public double HeatmapOverlayOpacity { get; set; } = 0.6;
     }
 
     public static class MasterLayoutManager
@@ -47,6 +65,7 @@ namespace BrakeDiscInspector_GUI_ROI
             }
 
             EnsureInspectionRoiDefaults(layout);
+            EnsureOptionDefaults(layout);
             return layout;
         }
 
@@ -72,6 +91,21 @@ namespace BrakeDiscInspector_GUI_ROI
                 {
                     roi.ModelKey = $"inspection-{i + 1}";
                 }
+            }
+        }
+
+        private static void EnsureOptionDefaults(MasterLayout layout)
+        {
+            layout.Analyze ??= new AnalyzeOptions();
+            layout.Ui ??= new UiOptions();
+
+            if (layout.InspectionBaselinesByImage == null)
+            {
+                layout.InspectionBaselinesByImage = new Dictionary<string, List<RoiModel>>(StringComparer.OrdinalIgnoreCase);
+            }
+            else if (!Equals(layout.InspectionBaselinesByImage.Comparer, StringComparer.OrdinalIgnoreCase))
+            {
+                layout.InspectionBaselinesByImage = new Dictionary<string, List<RoiModel>>(layout.InspectionBaselinesByImage, StringComparer.OrdinalIgnoreCase);
             }
         }
     }

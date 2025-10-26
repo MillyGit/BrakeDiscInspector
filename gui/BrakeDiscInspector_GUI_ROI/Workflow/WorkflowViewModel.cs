@@ -106,7 +106,9 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
             TrainSelectedRoiCommand = CreateCommand(async _ => await TrainSelectedRoiAsync().ConfigureAwait(false), _ => !IsBusy && SelectedInspectionRoi != null);
             CalibrateSelectedRoiCommand = CreateCommand(async _ => await CalibrateSelectedRoiAsync().ConfigureAwait(false), _ => !IsBusy && CanCalibrateSelectedRoi());
             EvaluateSelectedRoiCommand = CreateCommand(_ => EvaluateSelectedRoiAsync(), _ => !IsBusy && SelectedInspectionRoi != null && SelectedInspectionRoi.Enabled);
-            EvaluateAllRoisCommand = CreateCommand(_ => EvaluateAllRoisAsync(), _ => !IsBusy && HasAnyEnabledInspectionRoi());
+            var inferEnabledCommand = CreateCommand(_ => InferEnabledRoisAsync(), _ => !IsBusy && HasAnyEnabledInspectionRoi());
+            EvaluateAllRoisCommand = inferEnabledCommand;
+            InferEnabledRoisCommand = inferEnabledCommand;
 
             AddRoiToDatasetOkCommand = new AsyncCommand(async param =>
             {
@@ -512,6 +514,7 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
         public AsyncCommand CalibrateSelectedRoiCommand { get; }
         public AsyncCommand EvaluateSelectedRoiCommand { get; }
         public AsyncCommand EvaluateAllRoisCommand { get; }
+        public AsyncCommand InferEnabledRoisCommand { get; }
         public AsyncCommand AddRoiToDatasetOkCommand { get; }
         public AsyncCommand AddRoiToDatasetNgCommand { get; }
         public ICommand AddRoiToOkCommand { get; }
@@ -1689,6 +1692,7 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
                 var result = await _client.FitOkAsync(RoleId, roi.ModelKey, MmPerPx, okImages, roi.TrainMemoryFit, ct).ConfigureAwait(false);
                 var memoryHint = roi.TrainMemoryFit ? " (memory-fit)" : string.Empty;
                 FitSummary = $"Embeddings={result.n_embeddings} Coreset={result.coreset_size} TokenShape=[{string.Join(',', result.token_shape ?? Array.Empty<int>())}]" + memoryHint;
+                roi.HasFitOk = true;
             }
             catch (HttpRequestException ex)
             {
@@ -1696,6 +1700,7 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
                 {
                     FitSummary = "Model already trained";
                     _log($"[train] backend reported already trained: {ex.Message}");
+                    roi.HasFitOk = true;
                     return true;
                 }
 
@@ -1860,7 +1865,7 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
             await EvaluateRoiAsync(SelectedInspectionRoi, CancellationToken.None).ConfigureAwait(false);
         }
 
-        private async Task EvaluateAllRoisAsync()
+        private async Task InferEnabledRoisAsync()
         {
             if (_inspectionRois == null)
             {
@@ -1873,6 +1878,11 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
             }
 
             UpdateGlobalBadge();
+        }
+
+        private async Task EvaluateAllRoisAsync()
+        {
+            await InferEnabledRoisAsync().ConfigureAwait(false);
         }
 
         private async Task EvaluateRoiAsync(InspectionRoiConfig? roi, CancellationToken ct)
@@ -1984,6 +1994,12 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
             if (string.IsNullOrWhiteSpace(roi.ModelKey))
             {
                 message = "ModelKey is required for inference.";
+                return false;
+            }
+
+            if (!roi.HasFitOk)
+            {
+                message = $"Run fit_ok for ROI '{roi.Name}' before inference.";
                 return false;
             }
 

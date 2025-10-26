@@ -64,6 +64,9 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
             string defaultUrl = "http://127.0.0.1:8000";
 
             string? envBaseUrl =
+                Environment.GetEnvironmentVariable("BDI_BACKEND_BASEURL") ??
+                Environment.GetEnvironmentVariable("BDI_BACKEND_BASE_URL") ??
+                Environment.GetEnvironmentVariable("BDI_BACKEND_URL") ??
                 Environment.GetEnvironmentVariable("BRAKEDISC_BACKEND_BASEURL") ??
                 Environment.GetEnvironmentVariable("BRAKEDISC_BACKEND_BASE_URL") ??
                 Environment.GetEnvironmentVariable("BRAKEDISC_BACKEND_URL");
@@ -73,9 +76,11 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
                 return envBaseUrl;
             }
 
-            var host = Environment.GetEnvironmentVariable("BRAKEDISC_BACKEND_HOST") ??
+            var host = Environment.GetEnvironmentVariable("BDI_BACKEND_HOST") ??
+                       Environment.GetEnvironmentVariable("BRAKEDISC_BACKEND_HOST") ??
                        Environment.GetEnvironmentVariable("HOST");
-            var port = Environment.GetEnvironmentVariable("BRAKEDISC_BACKEND_PORT") ??
+            var port = Environment.GetEnvironmentVariable("BDI_BACKEND_PORT") ??
+                       Environment.GetEnvironmentVariable("BRAKEDISC_BACKEND_PORT") ??
                        Environment.GetEnvironmentVariable("PORT");
 
             if (!string.IsNullOrWhiteSpace(host) || !string.IsNullOrWhiteSpace(port))

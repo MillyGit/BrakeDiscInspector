@@ -1,5 +1,6 @@
 from __future__ import annotations
-import os, json
+import json
+import os
 from pathlib import Path
 from typing import Any, Dict
 
@@ -8,14 +9,23 @@ try:
 except Exception:
     yaml = None  # optional dependency
 
+def _env(new_key: str, legacy_key: str | None, default: str) -> str:
+    value = os.getenv(new_key)
+    if not value and legacy_key:
+        value = os.getenv(legacy_key)
+    return value if value not in (None, "") else default
+
+
 DEFAULTS: Dict[str, Any] = {
-    "server": {"host": os.getenv("BRAKEDISC_BACKEND_HOST", "127.0.0.1"),
-               "port": int(os.getenv("BRAKEDISC_BACKEND_PORT", "8000"))},
-    "models_dir": os.getenv("BRAKEDISC_MODELS_DIR", "models"),
+    "server": {
+        "host": _env("BDI_BACKEND_HOST", "BRAKEDISC_BACKEND_HOST", "127.0.0.1"),
+        "port": int(_env("BDI_BACKEND_PORT", "BRAKEDISC_BACKEND_PORT", "8000")),
+    },
+    "models_dir": _env("BDI_MODELS_DIR", "BRAKEDISC_MODELS_DIR", "models"),
     "inference": {
-        "coreset_rate": float(os.getenv("BRAKEDISC_CORESET_RATE", "0.10")),
-        "score_percentile": int(os.getenv("BRAKEDISC_SCORE_PERCENTILE", "99")),
-        "area_mm2_thr": float(os.getenv("BRAKEDISC_AREA_MM2_THR", "1.0")),
+        "coreset_rate": float(_env("BDI_CORESET_RATE", "BRAKEDISC_CORESET_RATE", "0.10")),
+        "score_percentile": int(_env("BDI_SCORE_PERCENTILE", "BRAKEDISC_SCORE_PERCENTILE", "99")),
+        "area_mm2_thr": float(_env("BDI_AREA_MM2_THR", "BRAKEDISC_AREA_MM2_THR", "1.0")),
     },
 }
 

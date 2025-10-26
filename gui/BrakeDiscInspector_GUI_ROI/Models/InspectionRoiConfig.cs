@@ -30,6 +30,7 @@ namespace BrakeDiscInspector_GUI_ROI.Models
         private int _datasetKoCount;
         private ObservableCollection<DatasetPreviewItem> _okPreview = new();
         private ObservableCollection<DatasetPreviewItem> _ngPreview = new();
+        private bool _hasFitOk;
 
         public InspectionRoiConfig(int index)
         {
@@ -84,6 +85,7 @@ namespace BrakeDiscInspector_GUI_ROI.Models
                 if (string.Equals(_modelKey, newValue, StringComparison.Ordinal)) return;
                 _modelKey = newValue;
                 OnPropertyChanged();
+                HasFitOk = false;
             }
         }
 
@@ -96,6 +98,7 @@ namespace BrakeDiscInspector_GUI_ROI.Models
                 _datasetPath = value;
                 OnPropertyChanged();
                 OnPropertyChanged(nameof(HasDatasetPath));
+                HasFitOk = false;
             }
         }
 
@@ -155,6 +158,17 @@ namespace BrakeDiscInspector_GUI_ROI.Models
             {
                 if (ReferenceEquals(_ngPreview, value)) return;
                 _ngPreview = value;
+                OnPropertyChanged();
+            }
+        }
+
+        public bool HasFitOk
+        {
+            get => _hasFitOk;
+            set
+            {
+                if (_hasFitOk == value) return;
+                _hasFitOk = value;
                 OnPropertyChanged();
             }
         }

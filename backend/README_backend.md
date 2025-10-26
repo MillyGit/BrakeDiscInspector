@@ -47,7 +47,7 @@ uvicorn backend.app:app --reload
 # por defecto: http://127.0.0.1:8000
 # docs interactivos: http://127.0.0.1:8000/docs
 
-# o con el script directo (respeta BRAKEDISC_BACKEND_HOST/BRAKEDISC_BACKEND_PORT o HOST/PORT)
+# o con el script directo (respeta BDI_BACKEND_HOST/BDI_BACKEND_PORT o HOST/PORT; acepta BRAKEDISC_* por compatibilidad)
 python backend/app.py
 ```
 
@@ -190,7 +190,7 @@ curl -X POST http://127.0.0.1:8000/infer   -F role_id=Master1   -F roi_id=Patter
   - `models/<role>/<roi>/index.faiss` (si FAISS)
   - `models/<role>/<roi>/calib.json` (umbral, p99_ok, p5_ng, mm_per_px, etc.)
 - **Respuesta de `/infer`**: añade `params` con metadatos de extractor, coreset y configuración usada.
-- **Configuración**: variables como `DEVICE`, `INPUT_SIZE`, `CORESET_RATE`, `MODELS_DIR` pueden definirse en un `.env` o como variables del sistema; revisa `DEV_GUIDE.md` para detalles.
+- **Configuración**: variables como `DEVICE`, `INPUT_SIZE`, `CORESET_RATE`, `MODELS_DIR` pueden definirse en un `.env` o como variables del sistema; usa el prefijo `BDI_` (por ejemplo `BDI_MODELS_DIR`, `BDI_CORESET_RATE`) y, por compatibilidad, también se aceptan los alias `BRAKEDISC_*`. Revisa `DEV_GUIDE.md` para detalles.
 
 ---
 

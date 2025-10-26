@@ -101,6 +101,9 @@ namespace BrakeDiscInspector_GUI_ROI
             try
             {
                 string? envBaseUrl =
+                    Environment.GetEnvironmentVariable("BDI_BACKEND_BASEURL") ??
+                    Environment.GetEnvironmentVariable("BDI_BACKEND_BASE_URL") ??
+                    Environment.GetEnvironmentVariable("BDI_BACKEND_URL") ??
                     Environment.GetEnvironmentVariable("BRAKEDISC_BACKEND_BASEURL") ??
                     Environment.GetEnvironmentVariable("BRAKEDISC_BACKEND_BASE_URL") ??
                     Environment.GetEnvironmentVariable("BRAKEDISC_BACKEND_URL");
@@ -111,9 +114,11 @@ namespace BrakeDiscInspector_GUI_ROI
                 }
                 else
                 {
-                    var host = Environment.GetEnvironmentVariable("BRAKEDISC_BACKEND_HOST") ??
+                    var host = Environment.GetEnvironmentVariable("BDI_BACKEND_HOST") ??
+                               Environment.GetEnvironmentVariable("BRAKEDISC_BACKEND_HOST") ??
                                Environment.GetEnvironmentVariable("HOST");
-                    var port = Environment.GetEnvironmentVariable("BRAKEDISC_BACKEND_PORT") ??
+                    var port = Environment.GetEnvironmentVariable("BDI_BACKEND_PORT") ??
+                               Environment.GetEnvironmentVariable("BRAKEDISC_BACKEND_PORT") ??
                                Environment.GetEnvironmentVariable("PORT");
 
                     if (!string.IsNullOrWhiteSpace(host) || !string.IsNullOrWhiteSpace(port))
@@ -148,7 +153,8 @@ namespace BrakeDiscInspector_GUI_ROI
                     }
                 }
 
-                var mmEnv = Environment.GetEnvironmentVariable("BRAKEDISC_MM_PER_PX");
+                var mmEnv = Environment.GetEnvironmentVariable("BDI_MM_PER_PX") ??
+                            Environment.GetEnvironmentVariable("BRAKEDISC_MM_PER_PX");
                 if (!string.IsNullOrWhiteSpace(mmEnv) &&
                     double.TryParse(mmEnv, NumberStyles.Float, CultureInfo.InvariantCulture, out var mmValue) &&
                     mmValue > 0)

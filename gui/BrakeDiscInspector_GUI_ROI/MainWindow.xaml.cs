@@ -92,6 +92,10 @@ namespace BrakeDiscInspector_GUI_ROI
         private PresetFile _preset = new();
         private MasterLayout _layout = new();     // inicio en blanco
 
+        // RESULTADO PLAN 12: La GUI canoniza el ROI (G1).
+        private readonly AppConfig _appConfig = AppConfigLoader.Load();
+        private bool _isInitializingOptions;
+
         private RoiModel? _tmpBuffer;
         private string _currentImagePath = "";
         private string _currentImagePathWin = "";
@@ -149,6 +153,126 @@ namespace BrakeDiscInspector_GUI_ROI
         public System.Collections.Generic.IReadOnlyList<RoiShape> AvailableShapes { get; }
             = (RoiShape[])System.Enum.GetValues(typeof(RoiShape));
 
+        public bool ScaleLock
+        {
+            get => _scaleLock;
+            set
+            {
+                if (_scaleLock == value)
+                {
+                    return;
+                }
+
+                _scaleLock = value;
+                OnPropertyChanged();
+                PersistAnalyzeOptions();
+            }
+        }
+
+        public double AnalyzePosTolerancePx
+        {
+            get => _analyzePosTolPx;
+            set
+            {
+                var clamped = Math.Max(0.01, value);
+                if (Math.Abs(_analyzePosTolPx - clamped) < 1e-6)
+                {
+                    return;
+                }
+
+                _analyzePosTolPx = clamped;
+                OnPropertyChanged();
+                PersistAnalyzeOptions();
+            }
+        }
+
+        public double AnalyzeAngToleranceDeg
+        {
+            get => _analyzeAngTolDeg;
+            set
+            {
+                var clamped = Math.Max(0.01, value);
+                if (Math.Abs(_analyzeAngTolDeg - clamped) < 1e-6)
+                {
+                    return;
+                }
+
+                _analyzeAngTolDeg = clamped;
+                OnPropertyChanged();
+                PersistAnalyzeOptions();
+            }
+        }
+
+        public double HeatmapOverlayOpacity
+        {
+            get => _heatmapOverlayOpacity;
+            set
+            {
+                var clamped = Math.Max(0.0, Math.Min(1.0, value));
+                if (Math.Abs(_heatmapOverlayOpacity - clamped) < 1e-6)
+                {
+                    return;
+                }
+
+                _heatmapOverlayOpacity = clamped;
+                OnPropertyChanged();
+
+                HeatmapOverlay?.SetCurrentValue(UIElement.OpacityProperty, _heatmapOverlayOpacity);
+
+                if (_workflowViewModel != null)
+                {
+                    _workflowViewModel.HeatmapOpacity = _heatmapOverlayOpacity;
+                }
+
+                PersistUiOptions();
+            }
+        }
+
+        private void PersistAnalyzeOptions()
+        {
+            if (_layout == null || _isInitializingOptions)
+            {
+                return;
+            }
+
+            _layout.Analyze ??= new AnalyzeOptions();
+            _layout.Analyze.PosTolPx = _analyzePosTolPx;
+            _layout.Analyze.AngTolDeg = _analyzeAngTolDeg;
+            _layout.Analyze.ScaleLock = _scaleLock;
+
+            TryPersistLayout();
+        }
+
+        private void PersistUiOptions()
+        {
+            if (_layout == null || _isInitializingOptions)
+            {
+                return;
+            }
+
+            _layout.Ui ??= new UiOptions();
+            _layout.Ui.HeatmapOverlayOpacity = _heatmapOverlayOpacity;
+
+            TryPersistLayout();
+        }
+
+        private void TryPersistLayout()
+        {
+            if (_layout == null || _preset == null || _isInitializingOptions)
+            {
+                return;
+            }
+
+            try
+            {
+                MasterLayoutManager.Save(_preset, _layout);
+            }
+            catch (Exception ex)
+            {
+                LogDebug($"[config] Failed to persist layout options: {ex.Message}");
+            }
+        }
+
         // === ROI diagnostics ===
         private static readonly string RoiDiagLogPath =
             System.IO.Path.Combine(
@@ -166,6 +290,9 @@ namespace BrakeDiscInspector_GUI_ROI
         private bool _useFixedInspectionBaseline = true;        // keep using fixed baseline (must be true)
         private RoiModel? _inspectionBaselineFixed = null;      // the fixed baseline for the current image
         private bool _inspectionBaselineSeededForImage = false; // has the baseline been seeded for the current image?
+        private readonly Dictionary<string, List<RoiModel>> _inspectionBaselinesByImage
+            = new(StringComparer.OrdinalIgnoreCase);
+        private string _currentImageHash = string.Empty;
         private string _lastImageSeedKey = "";                  // “signature” of the currently loaded image
 
         // --- Per-image master baselines (seeded on load) ---
@@ -179,10 +306,10 @@ namespace BrakeDiscInspector_GUI_ROI
         private double _lastAccM2X = double.NaN, _lastAccM2Y = double.NaN;
 
         // Tolerances (pixels / degrees). Tune if needed.
-        private const double ANALYZE_POS_TOL_PX = 1.0;    // <=1 px considered the same
-        private const double ANALYZE_ANG_TOL_DEG = 0.5;   // <=0.5° considered the same
+        private double _analyzePosTolPx = 1.0;    // <=1 px considered the same
+        private double _analyzeAngTolDeg = 0.5;   // <=0.5° considered the same
 
-        private bool _lockAnalyzeScale = true;                  // Size lock already in use; keep it true
+        private bool _scaleLock = true;                  // Size lock already in use; keep it true
 
         // ============================
         // Global switches / options
@@ -496,8 +623,7 @@ namespace BrakeDiscInspector_GUI_ROI
                 var mapped = MapBySt(m1Base, m2Base, m1Cross, m2Cross, new SWPoint(cx, cy), effectiveScaleLock);
                 SetRoiCenterImg(target, mapped.X, mapped.Y);
 
-                if (target.Shape == RoiShape.Rectangle)
-                    target.AngleDeg = baseline.AngleDeg + angleDelta * (180.0 / Math.PI);
+                target.AngleDeg = baseline.AngleDeg + angleDelta * (180.0 / Math.PI);
             }
         }
 
@@ -679,6 +805,7 @@ namespace BrakeDiscInspector_GUI_ROI
         private System.Windows.Controls.StackPanel _roiChecksPanel;
         private CheckBox? _chkHeatmap;
         private Slider? _sldHeatmapScale;
+        private Slider? _sldHeatmapOpacity;
         private TextBlock? _lblHeatmapScale;
         private bool _heatmapCheckboxEventsHooked;
         private bool _heatmapSliderEventsHooked;
@@ -1258,6 +1385,7 @@ namespace BrakeDiscInspector_GUI_ROI
             }
 
             _sldHeatmapScale ??= FindName("HeatmapScaleSlider") as Slider;
+            _sldHeatmapOpacity ??= FindName("HeatmapOpacitySlider") as Slider;
             _lblHeatmapScale ??= FindName("HeatmapScaleLabel") as TextBlock;
 
             if (_sldHeatmapScale != null)
@@ -1278,6 +1406,13 @@ namespace BrakeDiscInspector_GUI_ROI
                     _sldHeatmapScale.ValueChanged += HeatmapScaleSlider_ValueChangedSync;
                     _heatmapSliderEventsHooked = true;
                 }
+            }
+
+            if (_sldHeatmapOpacity != null)
+            {
+                _sldHeatmapOpacity.Minimum = 0.0;
+                _sldHeatmapOpacity.Maximum = 1.0;
+                _sldHeatmapOpacity.SetCurrentValue(RangeBase.ValueProperty, _heatmapOverlayOpacity);
             }
 
             if (_lblHeatmapScale != null)
@@ -1399,6 +1534,9 @@ namespace BrakeDiscInspector_GUI_ROI
             // SizeChanged += (_, __) => RoiOverlay.InvalidateOverlay();
             _preset = PresetManager.LoadOrDefault(_preset);
 
+            _layout = MasterLayoutManager.LoadOrNew(_preset);
+            InitializeOptionsFromConfig();
+
             InitUI();
             InitTrainPollingTimer();
             HookCanvasInput();
@@ -1409,9 +1547,74 @@ namespace BrakeDiscInspector_GUI_ROI
             this.Loaded += MainWindow_Loaded;
         }
 
+        private void InitializeOptionsFromConfig()
+        {
+            double defaultPosTol = _appConfig.Analyze?.PosTolPx > 0 ? _appConfig.Analyze.PosTolPx : 1.0;
+            double defaultAngTol = _appConfig.Analyze?.AngTolDeg > 0 ? _appConfig.Analyze.AngTolDeg : 0.5;
+            bool defaultScaleLock = _appConfig.Analyze?.ScaleLockDefault ?? true;
+            double defaultOpacity = _appConfig.UI?.HeatmapOverlayOpacity ?? 0.6;
+            defaultOpacity = Math.Max(0.0, Math.Min(1.0, defaultOpacity));
+
+            var layoutAnalyze = _layout?.Analyze;
+            var layoutUi = _layout?.Ui;
+
+            double posTol = layoutAnalyze != null && layoutAnalyze.PosTolPx > 0 ? layoutAnalyze.PosTolPx : defaultPosTol;
+            double angTol = layoutAnalyze != null && layoutAnalyze.AngTolDeg > 0 ? layoutAnalyze.AngTolDeg : defaultAngTol;
+            bool scaleLock = layoutAnalyze?.ScaleLock ?? defaultScaleLock;
+            double opacity = layoutUi != null && layoutUi.HeatmapOverlayOpacity >= 0
+                ? Math.Max(0.0, Math.Min(1.0, layoutUi.HeatmapOverlayOpacity))
+                : defaultOpacity;
+
+            _inspectionBaselinesByImage.Clear();
+            if (_layout?.InspectionBaselinesByImage != null)
+            {
+                foreach (var kv in _layout.InspectionBaselinesByImage)
+                {
+                    if (string.IsNullOrWhiteSpace(kv.Key) || kv.Value == null)
+                    {
+                        continue;
+                    }
+
+                    _inspectionBaselinesByImage[kv.Key] = kv.Value
+                        .Where(r => r != null)
+                        .Select(r => r.Clone())
+                        .ToList();
+                }
+            }
+
+            _isInitializingOptions = true;
+            try
+            {
+                ScaleLock = scaleLock;
+                AnalyzePosTolerancePx = posTol;
+                AnalyzeAngToleranceDeg = angTol;
+                HeatmapOverlayOpacity = opacity;
+            }
+            finally
+            {
+                _isInitializingOptions = false;
+            }
+
+            PersistAnalyzeOptions();
+            PersistUiOptions();
+        }
+
         private string EnsureDataRoot()
         {
-            var root = Path.Combine(AppContext.BaseDirectory, "data");
+            string? configured = _appConfig.Dataset?.Root;
+            string root;
+            if (!string.IsNullOrWhiteSpace(configured))
+            {
+                var trimmed = configured.Trim();
+                root = Path.IsPathRooted(trimmed)
+                    ? trimmed
+                    : Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, trimmed));
+            }
+            else
+            {
+                root = Path.Combine(AppContext.BaseDirectory, "data");
+            }
+
             Directory.CreateDirectory(root);
 
             var imagesRoot = Path.Combine(root, "images");
@@ -1483,6 +1686,7 @@ namespace BrakeDiscInspector_GUI_ROI
                 _workflowViewModel.PropertyChanged += WorkflowViewModelOnPropertyChanged;
                 _workflowViewModel.OverlayVisibilityChanged += WorkflowViewModelOnOverlayVisibilityChanged;
                 _workflowViewModel.IsImageLoaded = _hasLoadedImage;
+                _workflowViewModel.HeatmapOpacity = _heatmapOverlayOpacity;
 
                 if (WorkflowHost != null)
                 {
@@ -1866,6 +2070,7 @@ namespace BrakeDiscInspector_GUI_ROI
 
             ImgMain.Source = _imgSourceBI;
             OnImageLoaded_SetCurrentSource(_imgSourceBI);
+            _currentImageHash = ComputeImageSeedKey();
             // RoiOverlay disabled: labels are now drawn on Canvas only
             // RoiOverlay.InvalidateOverlay();
             _imgW = _imgSourceBI.PixelWidth;
@@ -1912,6 +2117,7 @@ namespace BrakeDiscInspector_GUI_ROI
             AppendLog($"Imagen cargada: {_imgW}x{_imgH}  (Canvas: {CanvasROI.ActualWidth:0}x{CanvasROI.ActualHeight:0})");
             RedrawOverlaySafe();
             ClearHeatmapOverlay();
+            RestoreInspectionBaselineForCurrentImage();
 
             if (HasAllMastersAndInspectionsDefined())
             {
@@ -1929,6 +2135,7 @@ namespace BrakeDiscInspector_GUI_ROI
 
             {
                 var seedKey = ComputeImageSeedKey();
+                _currentImageHash = seedKey;
                 // New image => reset and seed
                 if (!string.Equals(seedKey, _lastImageSeedKey, System.StringComparison.Ordinal))
                 {
@@ -1951,6 +2158,7 @@ namespace BrakeDiscInspector_GUI_ROI
 
             {
                 string key = ComputeImageSeedKey();
+                _currentImageHash = key;
                 var m1p = _layout?.Master1Pattern;
                 var m2p = _layout?.Master2Pattern;
 
@@ -2090,6 +2298,8 @@ namespace BrakeDiscInspector_GUI_ROI
             try { ClearCanvasInternalMaps(); } catch { }
             try { DetachPreviewAndAdorner(); } catch { }
             try { ResetAnalysisMarks(); } catch { }
+
+            _currentImageHash = string.Empty;
 
             if (RoiHudStack != null)
             {
@@ -2826,7 +3036,7 @@ namespace BrakeDiscInspector_GUI_ROI
                     if (HeatmapOverlay != null)
                     {
                         HeatmapOverlay.Visibility = Visibility.Visible;
-                        HeatmapOverlay.Opacity = 0.90;
+                        HeatmapOverlay.Opacity = _heatmapOverlayOpacity;
                     }
 
                     UpdateHeatmapOverlayLayoutAndClip();
@@ -5164,7 +5374,7 @@ namespace BrakeDiscInspector_GUI_ROI
                 var crossM2 = c2.Value;
                 var master1Baseline = _layout?.Master1Pattern?.Clone();
                 var master2Baseline = _layout?.Master2Pattern?.Clone();
-                bool scaleLock = _lockAnalyzeScale;
+                bool scaleLock = ScaleLock;
 
                 RepositionMastersToCrosses(crossM1, crossM2, scaleLock, master1Baseline, master2Baseline);
                 RepositionInspectionUsingSt(crossM1, crossM2, scaleLock, master1Baseline, master2Baseline);
@@ -5235,6 +5445,7 @@ namespace BrakeDiscInspector_GUI_ROI
                 AppendLog("[UI] Persist layout with detected ROI failed: " + ex.Message);
             }
 
+            SaveInspectionBaselineForCurrentImage();
             MasterLayoutManager.Save(_preset, _layout);
             AppendLog("[FLOW] Layout guardado");
 
@@ -5319,20 +5530,24 @@ namespace BrakeDiscInspector_GUI_ROI
         {
             try
             {
-                var bs = ImgMain?.Source as BitmapSource;
-                if (bs == null) return "0x0|0|0|";
-                int w = bs.PixelWidth;
-                int h = bs.PixelHeight;
-                double dpiX = bs.DpiX;
-                double dpiY = bs.DpiY;
-                // PixelFormat is a struct; do NOT use '?.' here
-                string fmt = bs.Format.ToString();
-                return $"{w}x{h}|{dpiX:F2}|{dpiY:F2}|{fmt}";
+                if (!string.IsNullOrWhiteSpace(_currentImagePathWin) && File.Exists(_currentImagePathWin))
+                {
+                    var bytes = File.ReadAllBytes(_currentImagePathWin);
+                    return HashSHA256(bytes);
+                }
+
+                var bs = ImgMain?.Source as BitmapSource ?? _currentImageSource;
+                if (bs != null)
+                {
+                    return HashSHA256(GetPixels(bs));
+                }
             }
             catch
             {
-                return "0x0|0|0|";
+                // ignored — fallback below
             }
+
+            return "0x0|0|0|";
         }
 
         private static double AngleDeg(double dy, double dx)
@@ -5367,6 +5582,57 @@ namespace BrakeDiscInspector_GUI_ROI
             _inspectionBaselineSeededForImage = true;
             _lastImageSeedKey = seedKey;
             InspLog($"[Seed] Fixed baseline SEEDED (key='{seedKey}') from: {FInsp(_inspectionBaselineFixed)}");
+        }
+
+        private List<RoiModel> SnapshotInspectionRois()
+        {
+            return CollectSavedInspectionRois()
+                .Select(r => r.Clone())
+                .ToList();
+        }
+
+        private void SaveInspectionBaselineForCurrentImage()
+        {
+            if (string.IsNullOrWhiteSpace(_currentImageHash))
+            {
+                return;
+            }
+
+            var snapshot = SnapshotInspectionRois();
+            if (snapshot.Count == 0)
+            {
+                _inspectionBaselinesByImage.Remove(_currentImageHash);
+            }
+            else
+            {
+                _inspectionBaselinesByImage[_currentImageHash] = snapshot;
+            }
+
+            if (_layout != null)
+            {
+                _layout.InspectionBaselinesByImage = new Dictionary<string, List<RoiModel>>(_inspectionBaselinesByImage, StringComparer.OrdinalIgnoreCase);
+                TryPersistLayout();
+            }
+        }
+
+        private void RestoreInspectionBaselineForCurrentImage()
+        {
+            if (string.IsNullOrWhiteSpace(_currentImageHash))
+            {
+                return;
+            }
+
+            if (_inspectionBaselinesByImage.TryGetValue(_currentImageHash, out var snapshot) && snapshot.Count > 0)
+            {
+                var clones = snapshot.Select(r => r.Clone()).ToList();
+                if (clones.Count > 0)
+                {
+                    _layout.Inspection = clones[0];
+                }
+
+                RefreshInspectionRoiSlots(clones);
+                RedrawAllRois();
+            }
         }
 
         // Apply translation/rotation/scale to a target ROI using a baseline ROI and an old->new pivot
@@ -5410,8 +5676,7 @@ namespace BrakeDiscInspector_GUI_ROI
 
             // Apply angle rotation for rectangular ROIs
             double dAngDeg = (angleDeltaRad * 180.0 / Math.PI);
-            if (target.Shape == RoiShape.Rectangle)
-                target.AngleDeg = baseline.AngleDeg + dAngDeg;
+            target.AngleDeg = baseline.AngleDeg + dAngDeg;
         }
 
         private void MoveInspectionTo(RoiModel insp, SWPoint master1, SWPoint master2)
@@ -5424,6 +5689,7 @@ namespace BrakeDiscInspector_GUI_ROI
 
             // === Analyze: BEFORE state & current image key ===
             var __seedKeyNow = ComputeImageSeedKey();
+            _currentImageHash = __seedKeyNow;
             InspLog($"[Analyze] Key='{__seedKeyNow}' BEFORE insp: {FInsp(insp)}  M1=({master1.X:F3},{master1.Y:F3}) M2=({master2.X:F3},{master2.Y:F3})");
 
             // DEFENSIVE: do NOT re-seed here if already seeded for this image
@@ -5496,7 +5762,7 @@ namespace BrakeDiscInspector_GUI_ROI
                 double dAng = System.Math.Abs(angNew - angOld);
                 if (dAng > 180.0) dAng = 360.0 - dAng;
 
-                if (dM1 <= ANALYZE_POS_TOL_PX && dM2 <= ANALYZE_POS_TOL_PX && dAng <= ANALYZE_ANG_TOL_DEG)
+                if (dM1 <= _analyzePosTolPx && dM2 <= _analyzePosTolPx && dAng <= _analyzeAngTolDeg)
                 {
                     InspLog($"[Analyze] NO-OP: detection within tolerance (dM1={dM1:F3}px, dM2={dM2:F3}px, dAng={dAng:F3}°).");
                     return;
@@ -5525,8 +5791,8 @@ namespace BrakeDiscInspector_GUI_ROI
                 double lenNew = Math.Sqrt(dxNew * dxNew + dyNew * dyNew);
 
                 scale = (lenOld > 1e-9) ? (lenNew / lenOld) : 1.0;
-                effectiveScale = _lockAnalyzeScale ? 1.0 : scale;
-                AppendLog($"[UI] AnalyzeMaster scale lock={_lockAnalyzeScale}, scale={scale:F6} -> eff={effectiveScale:F6}");
+                effectiveScale = ScaleLock ? 1.0 : scale;
+                AppendLog($"[UI] AnalyzeMaster scale lock={ScaleLock}, scale={scale:F6} -> eff={effectiveScale:F6}");
 
                 double angOldRad = Math.Atan2(dyOld, dxOld);
                 double angNewRad = Math.Atan2(dyNew, dxNew);
@@ -5544,7 +5810,7 @@ namespace BrakeDiscInspector_GUI_ROI
                         $"M2_base=({m2OldX:F3},{m2OldY:F3}) → M2_new=({m2NewX:F3},{m2NewY:F3}); angΔ={angDelta * 180 / Math.PI:F3}°, effScale={effectiveScale:F6}");
             }
 
-            if (!__canTransform && _lockAnalyzeScale && insp != null)
+            if (!__canTransform && ScaleLock && insp != null)
             {
                 double cx = insp.CX, cy = insp.CY;
                 insp.Width  = __inspW0;
@@ -6484,9 +6750,11 @@ namespace BrakeDiscInspector_GUI_ROI
         private void BtnLoadLayout_Click(object sender, RoutedEventArgs e)
         {
             _layout = MasterLayoutManager.LoadOrNew(_preset);
+            InitializeOptionsFromConfig();
             EnsureInspectionDatasetStructure();
             _workflowViewModel?.SetInspectionRoisCollection(_layout?.InspectionRois);
             RefreshInspectionRoiSlots();
+            RestoreInspectionBaselineForCurrentImage();
             EnsureInspectionBaselineInitialized();
             {
                 var seedKey = ComputeImageSeedKey();
@@ -6979,8 +7247,7 @@ namespace BrakeDiscInspector_GUI_ROI
                         LogHeatmap("Heatmap Source: <null>");
                     }
 
-                    // OPTIONAL: bump overlay opacity a bit (visual only)
-                    if (HeatmapOverlay != null) HeatmapOverlay.Opacity = 0.90;
+                    if (HeatmapOverlay != null) HeatmapOverlay.Opacity = _heatmapOverlayOpacity;
 
                     UpdateHeatmapOverlayLayoutAndClip();
 
