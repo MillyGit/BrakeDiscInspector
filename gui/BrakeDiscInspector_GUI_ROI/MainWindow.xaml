@@ -9,8 +9,7 @@
         WindowState="Maximized"
         WindowStartupLocation="CenterScreen"
         Background="#0E0E10"
-        UseLayoutRounding="True"
-        Loaded="MainWindow_Loaded">
+        UseLayoutRounding="True">
 
   <Window.Resources>
     <conv:BoolToEditSaveTextConverter x:Key="BoolToEditSaveText" />
@@ -25,6 +24,33 @@
       <ColumnDefinition Width="*" />
       <ColumnDefinition x:Name="SidePanelColumn" Width="840" MinWidth="840" />
     </Grid.ColumnDefinitions>
+
+    <StackPanel x:Name="PrimaryCommandsPanel"
+                Orientation="Horizontal"
+                Margin="8"
+                VerticalAlignment="Top"
+                Grid.Column="0"
+                Grid.ColumnSpan="2">
+      <!-- Cargar imagen FIRST -->
+      <Button x:Name="BtnLoadImage"
+              Click="BtnLoadImage_Click"
+              Content="Cargar imagen"
+              Margin="0,0,8,0"/>
+      <!-- Keep Analyze Master next -->
+      <Button x:Name="BtnAnalyzeMaster"
+              Click="BtnAnalyzeMaster_Click"
+              Content="Analyze Master"
+              Margin="0,0,8,0"/>
+      <Button x:Name="BtnLoadPreset"
+              Content="Cargar preset"
+              Click="BtnLoadPreset_Click"
+              IsEnabled="{Binding IsImageLoaded}"
+              Margin="0,0,8,0"/>
+      <!-- Keep scale-lock and local matcher -->
+      <CheckBox x:Name="ChkScaleLock" Content="Scale Lock" Margin="0,0,8,0"/>
+      <CheckBox x:Name="ChkUseLocalMatcher" Content="Usar matcher local" Margin="0,0,8,0"/>
+      <!-- Heatmap UI is created dynamically in code-behind (keep as-is) -->
+    </StackPanel>
 
     <!-- ===== Tabs (left) ===== -->
     <TabControl Grid.Row="1" Grid.Column="1" x:Name="MainTabs" TabStripPlacement="Left">
@@ -87,12 +113,11 @@
 
             <StackPanel Orientation="Horizontal" Margin="8,4,8,0">
               <TextBlock Text="Inspection 1" Width="120" VerticalAlignment="Center"/>
-              <ComboBox x:Name="CmbShapeInspection1"
-                        Width="130"
-                        Tag="1"
-                        ItemsSource="{Binding AvailableShapes}"
-                        SelectedItem="{Binding DataContext.InspectionRois[0].Shape, ElementName=WorkflowHost, Mode=TwoWay}"
-                        SelectionChanged="InspectionShape_SelectionChanged"/>
+              <ComboBox x:Name="CmbShapeInspection1" Width="130" SelectedValuePath="Tag" SelectedValue="{Binding Inspection1.Shape}">
+                <ComboBoxItem Content="square" Tag="{x:Static local:RoiShape.Rectangle}"/>
+                <ComboBoxItem Content="circle" Tag="{x:Static local:RoiShape.Circle}"/>
+                <ComboBoxItem Content="annulus" Tag="{x:Static local:RoiShape.Annulus}"/>
+              </ComboBox>
               <Button x:Name="BtnToggleInspection1"
                       Margin="8,0,0,0"
                       Click="BtnToggleInspection1_Click">
@@ -114,12 +139,11 @@
 
             <StackPanel Orientation="Horizontal" Margin="8,4,8,0">
               <TextBlock Text="Inspection 2" Width="120" VerticalAlignment="Center"/>
-              <ComboBox x:Name="CmbShapeInspection2"
-                        Width="130"
-                        Tag="2"
-                        ItemsSource="{Binding AvailableShapes}"
-                        SelectedItem="{Binding DataContext.InspectionRois[1].Shape, ElementName=WorkflowHost, Mode=TwoWay}"
-                        SelectionChanged="InspectionShape_SelectionChanged"/>
+              <ComboBox x:Name="CmbShapeInspection2" Width="130" SelectedValuePath="Tag" SelectedValue="{Binding Inspection2.Shape}">
+                <ComboBoxItem Content="square" Tag="{x:Static local:RoiShape.Rectangle}"/>
+                <ComboBoxItem Content="circle" Tag="{x:Static local:RoiShape.Circle}"/>
+                <ComboBoxItem Content="annulus" Tag="{x:Static local:RoiShape.Annulus}"/>
+              </ComboBox>
               <Button x:Name="BtnToggleInspection2"
                       Margin="8,0,0,0"
                       Click="BtnToggleInspection2_Click">
@@ -141,12 +165,11 @@
 
             <StackPanel Orientation="Horizontal" Margin="8,4,8,0">
               <TextBlock Text="Inspection 3" Width="120" VerticalAlignment="Center"/>
-              <ComboBox x:Name="CmbShapeInspection3"
-                        Width="130"
-                        Tag="3"
-                        ItemsSource="{Binding AvailableShapes}"
-                        SelectedItem="{Binding DataContext.InspectionRois[2].Shape, ElementName=WorkflowHost, Mode=TwoWay}"
-                        SelectionChanged="InspectionShape_SelectionChanged"/>
+              <ComboBox x:Name="CmbShapeInspection3" Width="130" SelectedValuePath="Tag" SelectedValue="{Binding Inspection3.Shape}">
+                <ComboBoxItem Content="square" Tag="{x:Static local:RoiShape.Rectangle}"/>
+                <ComboBoxItem Content="circle" Tag="{x:Static local:RoiShape.Circle}"/>
+                <ComboBoxItem Content="annulus" Tag="{x:Static local:RoiShape.Annulus}"/>
+              </ComboBox>
               <Button x:Name="BtnToggleInspection3"
                       Margin="8,0,0,0"
                       Click="BtnToggleInspection3_Click">
@@ -168,12 +191,11 @@
 
             <StackPanel Orientation="Horizontal" Margin="8,4,8,0">
               <TextBlock Text="Inspection 4" Width="120" VerticalAlignment="Center"/>
-              <ComboBox x:Name="CmbShapeInspection4"
-                        Width="130"
-                        Tag="4"
-                        ItemsSource="{Binding AvailableShapes}"
-                        SelectedItem="{Binding DataContext.InspectionRois[3].Shape, ElementName=WorkflowHost, Mode=TwoWay}"
-                        SelectionChanged="InspectionShape_SelectionChanged"/>
+              <ComboBox x:Name="CmbShapeInspection4" Width="130" SelectedValuePath="Tag" SelectedValue="{Binding Inspection4.Shape}">
+                <ComboBoxItem Content="square" Tag="{x:Static local:RoiShape.Rectangle}"/>
+                <ComboBoxItem Content="circle" Tag="{x:Static local:RoiShape.Circle}"/>
+                <ComboBoxItem Content="annulus" Tag="{x:Static local:RoiShape.Annulus}"/>
+              </ComboBox>
               <Button x:Name="BtnToggleInspection4"
                       Margin="8,0,0,0"
                       Click="BtnToggleInspection4_Click">
@@ -231,6 +253,23 @@
 
     </TabControl>
 
+    <StackPanel Grid.Row="1"
+                Grid.Column="1"
+                Visibility="Collapsed"
+                DataContext="{Binding DataContext, ElementName=WorkflowHost}">
+      <ComboBox x:Name="ComboInspShape"
+                SelectedValue="{Binding SelectedInspectionRoi.Shape}">
+        <ComboBoxItem Content="square"/>
+        <ComboBoxItem Content="circle"/>
+        <ComboBoxItem Content="annulus"/>
+      </ComboBox>
+      <CheckBox x:Name="ChkShowMaster1Pattern" IsChecked="{Binding ShowMaster1Pattern}"/>
+      <CheckBox x:Name="ChkShowMaster1Inspection" IsChecked="{Binding ShowMaster1Inspection}"/>
+      <CheckBox x:Name="ChkShowMaster2Pattern" IsChecked="{Binding ShowMaster2Pattern}"/>
+      <CheckBox x:Name="ChkShowMaster2Inspection" IsChecked="{Binding ShowMaster2Inspection}"/>
+      <CheckBox x:Name="ChkShowInspectionRoi" IsChecked="{Binding ShowInspectionRoi}"/>
+    </StackPanel>
+
       <!-- ===== Viewer/Canvas (right) ===== -->
       <Grid Grid.Column="0" Grid.RowSpan="2" x:Name="ViewerHost">
       <Grid Margin="10">
@@ -270,110 +309,15 @@
                      IsLocked="True"
                      Background="#222"
                      Visibility="Visible">
-          <ToolBar x:Name="TbPrimaryCommands" Band="0" BandIndex="0" Padding="2">
-            <Button x:Name="BtnLoadImage"
-                    Content="Cargar imagen"
-                    MinWidth="120"
-                    Margin="0,0,4,0"
-                    ToolTip="Abrir una imagen"
-                    Click="BtnLoadImage_Click"/>
-            <Button x:Name="BtnAnalyzeMaster"
-                    Content="Analyze Master"
-                    MinWidth="120"
-                    Margin="0,0,4,0"
-                    ToolTip="Analizar masters actuales"
-                    Click="BtnAnalyzeMaster_Click"/>
-            <Button x:Name="BtnLoadPreset"
-                    Content="Cargar preset"
-                    MinWidth="130"
-                    Margin="0,0,4,0"
-                    ToolTip="Cargar configuración guardada"
-                    Click="BtnLoadPreset_Click"
-                    IsEnabled="{Binding IsImageLoaded}"/>
-            <Separator/>
-            <CheckBox x:Name="ChkScaleLock"
-                      Content="Scale Lock"
-                      Margin="4,0,4,0"
-                      ToolTip="Bloquear escala durante análisis"/>
-            <CheckBox x:Name="ChkUseLocalMatcher"
-                      Content="Usar matcher local"
-                      Margin="4,0,0,0"
-                      ToolTip="Forzar matcher local"/>
+          <ToolBar x:Name="TbDrawShapes" Band="0" BandIndex="0">
+            <ToggleButton Content="Rect"   ToolTip="Rectángulo"/>
+            <ToggleButton Content="Circle" ToolTip="Círculo"/>
+            <ToggleButton Content="Annulus" ToolTip="Anillo"/>
           </ToolBar>
-
-          <ToolBar x:Name="TbDrawTools" Band="1" BandIndex="0" Padding="2">
-            <ToggleButton x:Name="RectToolButton"
-                          Content="Rect"
-                          Margin="0,0,4,0"
-                          Tag="Rectangle"
-                          ToolTip="Dibujar rectángulos"
-                          Checked="DrawToolToggle_Checked"
-                          Unchecked="DrawToolToggle_Unchecked"/>
-            <ToggleButton x:Name="CircleToolButton"
-                          Content="Circ"
-                          Margin="0,0,4,0"
-                          Tag="Circle"
-                          ToolTip="Dibujar círculos"
-                          Checked="DrawToolToggle_Checked"
-                          Unchecked="DrawToolToggle_Unchecked"/>
-            <ToggleButton x:Name="AnnulusToolButton"
-                          Content="Annulus"
-                          Margin="0,0,4,0"
-                          Tag="Annulus"
-                          ToolTip="Dibujar anillos"
-                          Checked="DrawToolToggle_Checked"
-                          Unchecked="DrawToolToggle_Unchecked"/>
-            <Separator/>
-            <Button x:Name="BtnClearRoi"
-                    Content="Borrar"
-                    MinWidth="80"
-                    ToolTip="Eliminar ROI actual"
-                    Click="BtnClearRoi_Click"/>
+          <ToolBar x:Name="TbRoiActions" Band="0" BandIndex="1">
+            <Button Content="Borrar" ToolTip="Borrar selección"/>
           </ToolBar>
         </ToolBarTray>
-
-        <Border x:Name="RoiVisibilityPanel"
-                HorizontalAlignment="Left"
-                VerticalAlignment="Bottom"
-                Margin="8"
-                Padding="6"
-                Background="#CC1E1E1E"
-                CornerRadius="6"
-                Panel.ZIndex="900"
-                DataContext="{Binding DataContext, ElementName=WorkflowHost}">
-          <StackPanel Orientation="Horizontal" Foreground="White">
-            <CheckBox x:Name="ChkShowMaster1Pattern"
-                      Content="Master 1"
-                      IsChecked="{Binding ShowMaster1Pattern}"
-                      Margin="0,0,6,0"
-                      Checked="RoiVisibilityCheckChanged"
-                      Unchecked="RoiVisibilityCheckChanged"/>
-            <CheckBox x:Name="ChkShowMaster1Inspection"
-                      Content="Search 1"
-                      IsChecked="{Binding ShowMaster1Inspection}"
-                      Margin="0,0,6,0"
-                      Checked="RoiVisibilityCheckChanged"
-                      Unchecked="RoiVisibilityCheckChanged"/>
-            <CheckBox x:Name="ChkShowMaster2Pattern"
-                      Content="Master 2"
-                      IsChecked="{Binding ShowMaster2Pattern}"
-                      Margin="0,0,6,0"
-                      Checked="RoiVisibilityCheckChanged"
-                      Unchecked="RoiVisibilityCheckChanged"/>
-            <CheckBox x:Name="ChkShowMaster2Inspection"
-                      Content="Search 2"
-                      IsChecked="{Binding ShowMaster2Inspection}"
-                      Margin="0,0,6,0"
-                      Checked="RoiVisibilityCheckChanged"
-                      Unchecked="RoiVisibilityCheckChanged"/>
-            <CheckBox x:Name="ChkShowInspectionRoi"
-                      Content="Inspection"
-                      IsChecked="{Binding ShowInspectionRoi}"
-                      Margin="0,0,6,0"
-                      Checked="RoiVisibilityCheckChanged"
-                      Unchecked="RoiVisibilityCheckChanged"/>
-          </StackPanel>
-        </Border>
       </Grid>
       <Grid x:Name="DiskStatusHUD"
             HorizontalAlignment="Right"
