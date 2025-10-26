@@ -445,7 +445,7 @@
         <Grid x:Name="RoiHudOverlay"
               HorizontalAlignment="Left"
               VerticalAlignment="Top"
-              Margin="12"
+              Margin="12,64,0,0"
               Panel.ZIndex="900"
               IsHitTestVisible="True"
               Visibility="Collapsed">
