@@ -20,7 +20,6 @@ using System.Text.Json;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Controls.Primitives;
 using System.Windows.Documents;
 using System.Windows.Input;
 // WPF media & shapes
@@ -45,7 +44,6 @@ using WSize = System.Windows.Size;
 using LegacyROI = BrakeDiscInspector_GUI_ROI.ROI;
 using ROI = BrakeDiscInspector_GUI_ROI.RoiModel;
 using RoiShapeType = BrakeDiscInspector_GUI_ROI.RoiShape;
-using BrakeDiscInspector_GUI_ROI.Models;
 // --- BEGIN: UI/OCV type aliases ---
 using SW = System.Windows;
 using SWM = System.Windows.Media;
@@ -660,10 +658,6 @@ namespace BrakeDiscInspector_GUI_ROI
         };
         private Mat? bgrFrame; // tu frame actual
         private bool UseAnnulus = false;
-
-        private bool _loadedOnce;
-        private RoiShape _currentDrawTool = RoiShape.Rectangle;
-        private bool _updatingDrawToolUi;
 
         private readonly Dictionary<string, Shape> _roiShapesById = new();
         private readonly Dictionary<Shape, FrameworkElement> _roiLabels = new();
@@ -1359,7 +1353,6 @@ namespace BrakeDiscInspector_GUI_ROI
         {
             InitializeComponent();
             if (this.DataContext == null) this.DataContext = this;
-            ApplyDrawToolSelection(_currentDrawTool, updateViewModel: false);
             this.SizeChanged += (s,e) =>
             {
                 try
@@ -1492,8 +1485,6 @@ namespace BrakeDiscInspector_GUI_ROI
                 EnsureInspectionDatasetStructure();
                 _workflowViewModel.SetInspectionRoisCollection(_layout?.InspectionRois);
 
-                SyncDrawToolFromViewModel();
-
                 Dispatcher.BeginInvoke(new Action(() =>
                 {
                     _workflowViewModel?.RefreshDatasetCommand.Execute(null);
@@ -1532,24 +1523,7 @@ namespace BrakeDiscInspector_GUI_ROI
         }
 
         private string GetInspectionShapeFromModel()
-        {
-            if (ViewModel?.SelectedInspectionRoi != null)
-            {
-                return ViewModel.SelectedInspectionRoi.Shape.ToString().ToLowerInvariant();
-            }
-
-            return _currentDrawTool.ToString().ToLowerInvariant();
-        }
-
-        private InspectionRoiConfig? GetInspectionConfigByIndex(int index)
-        {
-            if (ViewModel?.InspectionRois == null)
-            {
-                return null;
-            }
-
-            return ViewModel.InspectionRois.FirstOrDefault(r => r.Index == index);
-        }
+            => ViewModel?.SelectedInspectionShape ?? "square";
 
         private bool GetShowMaster1Pattern() => ViewModel?.ShowMaster1Pattern ?? true;
         private bool GetShowMaster1Inspection() => ViewModel?.ShowMaster1Inspection ?? true;
@@ -3717,11 +3691,6 @@ namespace BrakeDiscInspector_GUI_ROI
             {
                 OnPropertyChanged(nameof(IsImageLoaded));
             }
-            else if (string.Equals(e.PropertyName, nameof(Workflow.WorkflowViewModel.SelectedInspectionRoi), StringComparison.Ordinal)
-                     || string.Equals(e.PropertyName, nameof(Workflow.WorkflowViewModel.SelectedInspectionShape), StringComparison.Ordinal))
-            {
-                Dispatcher.Invoke(SyncDrawToolFromViewModel);
-            }
         }
 
         private void WorkflowViewModelOnOverlayVisibilityChanged(object? sender, EventArgs e)
@@ -3787,13 +3756,6 @@ namespace BrakeDiscInspector_GUI_ROI
         }
         private void MainWindow_Loaded(object sender, RoutedEventArgs e)
         {
-            if (_loadedOnce)
-            {
-                return;
-            }
-
-            _loadedOnce = true;
-
             var tray = FindName("TopLeftTray") as ToolBarTray ?? FindVisualChildByName<ToolBarTray>(this, "TopLeftTray");
             if (tray != null)
             {
@@ -3812,7 +3774,6 @@ namespace BrakeDiscInspector_GUI_ROI
             RedrawAnalysisCrosses();
 
             WireExistingHeatmapControls();
-            SyncDrawToolFromViewModel();
         }
 
         private void MainWindow_SizeChanged(object sender, SizeChangedEventArgs e)
@@ -3832,155 +3793,10 @@ namespace BrakeDiscInspector_GUI_ROI
         }
 
 
-        private static RoiShape ReadShapeFromToggle(ToggleButton toggle)
-        {
-            var tag = toggle.Tag?.ToString();
-            if (!string.IsNullOrWhiteSpace(tag)
-                && Enum.TryParse(tag, true, out RoiShape parsed))
-            {
-                return parsed;
-            }
-
-            return RoiShape.Rectangle;
-        }
-
-        private void ApplyDrawToolSelection(RoiShape shape, bool updateViewModel)
-        {
-            _currentDrawTool = shape;
-
-            _updatingDrawToolUi = true;
-            try
-            {
-                if (RectToolButton != null)
-                {
-                    RectToolButton.IsChecked = shape == RoiShape.Rectangle;
-                }
-
-                if (CircleToolButton != null)
-                {
-                    CircleToolButton.IsChecked = shape == RoiShape.Circle;
-                }
-
-                if (AnnulusToolButton != null)
-                {
-                    AnnulusToolButton.IsChecked = shape == RoiShape.Annulus;
-                }
-            }
-            finally
-            {
-                _updatingDrawToolUi = false;
-            }
-
-            if (updateViewModel && ViewModel?.SelectedInspectionRoi != null
-                && ViewModel.SelectedInspectionRoi.Shape != shape)
-            {
-                ViewModel.SelectedInspectionRoi.Shape = shape;
-            }
-        }
-
-        private void SyncDrawToolFromViewModel()
-        {
-            if (ViewModel?.SelectedInspectionRoi != null)
-            {
-                ApplyDrawToolSelection(ViewModel.SelectedInspectionRoi.Shape, updateViewModel: false);
-            }
-        }
-
-        private void DrawToolToggle_Checked(object sender, RoutedEventArgs e)
-        {
-            if (_updatingDrawToolUi)
-            {
-                return;
-            }
-
-            if (sender is ToggleButton toggle)
-            {
-                var shape = ReadShapeFromToggle(toggle);
-                ApplyDrawToolSelection(shape, updateViewModel: true);
-            }
-        }
-
-        private void DrawToolToggle_Unchecked(object sender, RoutedEventArgs e)
-        {
-            if (_updatingDrawToolUi)
-            {
-                return;
-            }
-
-            if (sender is ToggleButton toggle)
-            {
-                var shape = ReadShapeFromToggle(toggle);
-                if (shape == _currentDrawTool)
-                {
-                    _updatingDrawToolUi = true;
-                    try
-                    {
-                        toggle.IsChecked = true;
-                    }
-                    finally
-                    {
-                        _updatingDrawToolUi = false;
-                    }
-                }
-            }
-        }
-
-        private void InspectionShape_SelectionChanged(object sender, SelectionChangedEventArgs e)
-        {
-            if (_updatingDrawToolUi)
-            {
-                return;
-            }
-
-            if (sender is ComboBox combo && combo.SelectedItem is RoiShape shape)
-            {
-                InspectionRoiConfig? config = null;
-
-                if (combo.Tag is string tag &&
-                    int.TryParse(tag, NumberStyles.Integer, CultureInfo.InvariantCulture, out var index))
-                {
-                    config = GetInspectionConfigByIndex(index);
-                    if (config != null && config.Shape != shape)
-                    {
-                        config.Shape = shape;
-                    }
-                }
-
-                if (ReferenceEquals(config, ViewModel?.SelectedInspectionRoi) || config == null)
-                {
-                    ApplyDrawToolSelection(shape, updateViewModel: false);
-                }
-            }
-        }
-
-        private void BtnClearRoi_Click(object sender, RoutedEventArgs e)
-        {
-            var previousState = _state;
-            var cleared = TryClearCurrentStatePersistedRoi(out var clearedRole);
-
-            if (cleared)
-            {
-                ClearPreview();
-                RedrawOverlaySafe();
-                UpdateWizardState();
-                Snack("ROI eliminado. Dibuja un ROI válido antes de guardar.");
-                AppendLog($"[wizard] ROI cleared via toolbar (prevState={previousState}, role={clearedRole})");
-            }
-            else
-            {
-                Snack("No hay ROI que eliminar.");
-            }
-        }
-
-        private RoiShape ReadCurrentInspectionShape()
-        {
-            return _currentDrawTool;
-        }
-
         // ====== Ratón & dibujo ======
         private RoiShape ReadShapeForCurrentStep()
         {
-            string ToLower(object? x) => (x?.ToString() ?? string.Empty).ToLowerInvariant();
+            string ToLower(object? x) => (x?.ToString() ?? "").ToLowerInvariant();
 
             if (_state == MasterState.DrawM1_Pattern || _state == MasterState.DrawM1_Search)
             {
@@ -3988,23 +3804,19 @@ namespace BrakeDiscInspector_GUI_ROI
                 if (t.Contains("círculo") || t.Contains("circulo")) return RoiShape.Circle;
                 return RoiShape.Rectangle;
             }
-
-            if (_state == MasterState.DrawM2_Pattern || _state == MasterState.DrawM2_Search)
+            else if (_state == MasterState.DrawM2_Pattern || _state == MasterState.DrawM2_Search)
             {
                 var t = ToLower(ComboM2Shape.SelectedItem);
                 if (t.Contains("círculo") || t.Contains("circulo")) return RoiShape.Circle;
                 return RoiShape.Rectangle;
             }
-
-            if (_state == MasterState.DrawInspection || _state == MasterState.Ready)
+            else
             {
-                return ReadCurrentInspectionShape();
+                var t = ToLower(GetInspectionShapeFromModel());
+                if (t.Contains("círculo") || t.Contains("circulo")) return RoiShape.Circle;
+                if (t.Contains("annulus")) return RoiShape.Annulus;
+                return RoiShape.Rectangle;
             }
-
-            var shapeText = ToLower(GetInspectionShapeFromModel());
-            if (shapeText.Contains("círculo") || shapeText.Contains("circulo")) return RoiShape.Circle;
-            if (shapeText.Contains("annulus")) return RoiShape.Annulus;
-            return RoiShape.Rectangle;
         }
 
         private void BeginDraw(RoiShape shape, SWPoint p0)
