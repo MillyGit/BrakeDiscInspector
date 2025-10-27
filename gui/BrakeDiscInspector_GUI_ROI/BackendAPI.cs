@@ -358,6 +358,10 @@ namespace BrakeDiscInspector_GUI_ROI
                 var result = await InferAsync(request, log).ConfigureAwait(false);
                 return (true, result, null);
             }
+            catch (BackendBadRequestException)
+            {
+                throw;
+            }
             catch (Exception ex)
             {
                 log?.Invoke("[infer] EX: " + ex.Message);
