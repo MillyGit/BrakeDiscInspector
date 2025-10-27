@@ -24,6 +24,22 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
         private readonly HttpClient _httpClient;
         private readonly HttpClient _httpTrainClient;
 
+        public readonly struct FitImage
+        {
+            public FitImage(byte[] bytes, string fileName, string? mediaType = null)
+            {
+                Bytes = bytes ?? Array.Empty<byte>();
+                FileName = string.IsNullOrWhiteSpace(fileName) ? "sample.png" : fileName;
+                MediaType = string.IsNullOrWhiteSpace(mediaType) ? null : mediaType;
+            }
+
+            public byte[] Bytes { get; }
+            public string FileName { get; }
+            public string? MediaType { get; }
+
+            public bool HasContent => Bytes.Length > 0;
+        }
+
         public BackendClient(HttpClient? httpClient = null)
         {
             _httpClient = httpClient ?? new HttpClient();
@@ -134,6 +150,29 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
             bool memoryFit = false,
             CancellationToken ct = default)
         {
+            var images = new List<FitImage>();
+            foreach (var path in okImagePaths)
+            {
+                if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
+                {
+                    continue;
+                }
+
+                var bytes = await File.ReadAllBytesAsync(path, ct).ConfigureAwait(false);
+                images.Add(new FitImage(bytes, Path.GetFileName(path)));
+            }
+
+            return await FitOkAsync(roleId, roiId, mmPerPx, images, memoryFit, ct).ConfigureAwait(false);
+        }
+
+        public async Task<FitOkResult> FitOkAsync(
+            string roleId,
+            string roiId,
+            double mmPerPx,
+            IEnumerable<FitImage> okImages,
+            bool memoryFit = false,
+            CancellationToken ct = default)
+        {
             if (string.IsNullOrWhiteSpace(roleId)) throw new ArgumentException("Role id required", nameof(roleId));
             if (string.IsNullOrWhiteSpace(roiId)) throw new ArgumentException("ROI id required", nameof(roiId));
 
@@ -144,17 +183,19 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
             form.Add(new StringContent(memoryFit ? "true" : "false"), "memory_fit");
 
             bool hasImage = false;
-            foreach (var path in okImagePaths)
+            foreach (var image in okImages)
             {
-                if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
+                if (!image.HasContent)
+                {
                     continue;
+                }
 
-                var stream = File.OpenRead(path);
-                var content = new StreamContent(stream);
-                content.Headers.ContentType =
-                    new System.Net.Http.Headers.MediaTypeHeaderValue(GuessMediaType(path));
-                // Importante: mismo nombre de campo para cada imagen -> "images"
-                form.Add(content, "images", Path.GetFileName(path));
+                var content = new ByteArrayContent(image.Bytes);
+                var mediaType = !string.IsNullOrWhiteSpace(image.MediaType)
+                    ? image.MediaType
+                    : GuessMediaType(image.FileName);
+                content.Headers.ContentType = new MediaTypeHeaderValue(mediaType);
+                form.Add(content, "images", image.FileName);
                 hasImage = true;
             }
 
@@ -298,7 +339,20 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
             using var response = await _httpClient.PostAsync("infer", form, ct).ConfigureAwait(false);
             var raw = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
             if (!response.IsSuccessStatusCode)
+            {
+                if (response.StatusCode == HttpStatusCode.BadRequest)
+                {
+                    var detail = ExtractDetail(raw);
+                    if (IsMemoryNotFitted(detail))
+                    {
+                        throw new BackendMemoryNotFittedException(detail);
+                    }
+
+                    throw new BackendBadRequestException("Backend returned 400", detail);
+                }
+
                 throw new HttpRequestException($"/infer {response.StatusCode}: {raw}");
+            }
 
             using var stream = new MemoryStream(Encoding.UTF8.GetBytes(raw));
             var payload = await JsonSerializer.DeserializeAsync<InferResult>(stream, JsonOptions, ct).ConfigureAwait(false)
@@ -327,9 +381,150 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
             }
         }
 
+        public async Task<bool> EnsureFittedAsync(
+            string roleId,
+            string roiId,
+            double mmPerPx,
+            Func<CancellationToken, Task<IReadOnlyList<FitImage>>>? sampleProvider = null,
+            bool memoryFit = false,
+            CancellationToken ct = default)
+        {
+            try
+            {
+                var fitted = await QueryFitStateAsync(roleId, roiId, ct).ConfigureAwait(false);
+                if (fitted == true)
+                {
+                    return true;
+                }
+            }
+            catch
+            {
+                // ignore /state failures and fallback to fit
+            }
+
+            if (sampleProvider == null)
+            {
+                return false;
+            }
+
+            IReadOnlyList<FitImage> samples;
+            try
+            {
+                samples = await sampleProvider(ct).ConfigureAwait(false);
+            }
+            catch
+            {
+                return false;
+            }
+
+            if (samples == null || samples.Count == 0)
+            {
+                return false;
+            }
+
+            try
+            {
+                await FitOkAsync(roleId, roiId, mmPerPx, samples, memoryFit, ct).ConfigureAwait(false);
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
         // =========================
         // Utilidades
         // =========================
+
+        private async Task<bool?> QueryFitStateAsync(string roleId, string roiId, CancellationToken ct)
+        {
+            try
+            {
+                var query = $"state?role_id={Uri.EscapeDataString(roleId)}&roi_id={Uri.EscapeDataString(roiId)}";
+                using var response = await _httpClient.GetAsync(query, ct).ConfigureAwait(false);
+                if (!response.IsSuccessStatusCode)
+                {
+                    return null;
+                }
+
+                var raw = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+                if (string.IsNullOrWhiteSpace(raw))
+                {
+                    return null;
+                }
+
+                using var doc = JsonDocument.Parse(raw);
+                var root = doc.RootElement;
+                if (root.ValueKind == JsonValueKind.Object)
+                {
+                    if (root.TryGetProperty("fitted", out var fittedEl) && fittedEl.ValueKind == JsonValueKind.True)
+                    {
+                        return true;
+                    }
+
+                    if (root.TryGetProperty("memory_fitted", out var memEl) && memEl.ValueKind == JsonValueKind.True)
+                    {
+                        return true;
+                    }
+                }
+            }
+            catch
+            {
+                return null;
+            }
+
+            return null;
+        }
+
+        private static string? ExtractDetail(string raw)
+        {
+            if (string.IsNullOrWhiteSpace(raw))
+            {
+                return null;
+            }
+
+            try
+            {
+                using var doc = JsonDocument.Parse(raw);
+                var root = doc.RootElement;
+                if (root.ValueKind == JsonValueKind.Object)
+                {
+                    if (root.TryGetProperty("detail", out var detailEl))
+                    {
+                        if (detailEl.ValueKind == JsonValueKind.String)
+                        {
+                            return detailEl.GetString();
+                        }
+
+                        if (detailEl.ValueKind == JsonValueKind.Object && detailEl.TryGetProperty("message", out var messageEl) && messageEl.ValueKind == JsonValueKind.String)
+                        {
+                            return messageEl.GetString();
+                        }
+                    }
+                }
+            }
+            catch
+            {
+                // ignore parse errors
+            }
+
+            return raw;
+        }
+
+        private static bool IsMemoryNotFitted(string? detail)
+        {
+            if (string.IsNullOrWhiteSpace(detail))
+            {
+                return false;
+            }
+
+            var lowered = detail.ToLowerInvariant();
+            return lowered.Contains("memory not fitted")
+                   || (lowered.Contains("memoria") && lowered.Contains("no") && lowered.Contains("prepar"))
+                   || (lowered.Contains("baseline") && lowered.Contains("missing"))
+                   || (lowered.Contains("memory") && lowered.Contains("not") && lowered.Contains("loaded"));
+        }
 
         private static string GuessMediaType(string pathOrName)
         {

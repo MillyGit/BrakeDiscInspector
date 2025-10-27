@@ -14,6 +14,9 @@
 
   <Window.Resources>
     <conv:BoolToEditSaveTextConverter x:Key="BoolToEditSaveText" />
+    <Style x:Key="ForegroundWhiteStyle" TargetType="{x:Type StackPanel}">
+      <Setter Property="TextElement.Foreground" Value="White"/>
+    </Style>
   </Window.Resources>
 
   <Grid x:Name="RootGrid">
@@ -97,7 +100,9 @@
                       Margin="8,0,0,0"
                       Click="BtnToggleInspection1_Click">
                 <Button.Content>
-                  <TextBlock Text="{Binding Inspection1.IsFrozen, Converter={StaticResource BoolToEditSaveText}}"/>
+                  <StackPanel Orientation="Horizontal" Style="{StaticResource ForegroundWhiteStyle}">
+                    <TextBlock Text="{Binding Inspection1.IsFrozen, Converter={StaticResource BoolToEditSaveText}}"/>
+                  </StackPanel>
                 </Button.Content>
               </Button>
               <Button x:Name="BtnAddOkInspection1"
@@ -124,7 +129,9 @@
                       Margin="8,0,0,0"
                       Click="BtnToggleInspection2_Click">
                 <Button.Content>
-                  <TextBlock Text="{Binding Inspection2.IsFrozen, Converter={StaticResource BoolToEditSaveText}}"/>
+                  <StackPanel Orientation="Horizontal" Style="{StaticResource ForegroundWhiteStyle}">
+                    <TextBlock Text="{Binding Inspection2.IsFrozen, Converter={StaticResource BoolToEditSaveText}}"/>
+                  </StackPanel>
                 </Button.Content>
               </Button>
               <Button x:Name="BtnAddOkInspection2"
@@ -151,7 +158,9 @@
                       Margin="8,0,0,0"
                       Click="BtnToggleInspection3_Click">
                 <Button.Content>
-                  <TextBlock Text="{Binding Inspection3.IsFrozen, Converter={StaticResource BoolToEditSaveText}}"/>
+                  <StackPanel Orientation="Horizontal" Style="{StaticResource ForegroundWhiteStyle}">
+                    <TextBlock Text="{Binding Inspection3.IsFrozen, Converter={StaticResource BoolToEditSaveText}}"/>
+                  </StackPanel>
                 </Button.Content>
               </Button>
               <Button x:Name="BtnAddOkInspection3"
@@ -178,7 +187,9 @@
                       Margin="8,0,0,0"
                       Click="BtnToggleInspection4_Click">
                 <Button.Content>
-                  <TextBlock Text="{Binding Inspection4.IsFrozen, Converter={StaticResource BoolToEditSaveText}}"/>
+                  <StackPanel Orientation="Horizontal" Style="{StaticResource ForegroundWhiteStyle}">
+                    <TextBlock Text="{Binding Inspection4.IsFrozen, Converter={StaticResource BoolToEditSaveText}}"/>
+                  </StackPanel>
                 </Button.Content>
               </Button>
               <Button x:Name="BtnAddOkInspection4"
@@ -362,6 +373,25 @@
             </Grid>
           </AdornerDecorator>
 
+          <!-- ===== HUD: ROI list (top-left) ===== -->
+          <Grid x:Name="RoiHudOverlay"
+                Grid.Row="1"
+                VerticalAlignment="Top"
+                HorizontalAlignment="Left"
+                Margin="12,8,0,0"
+                Panel.ZIndex="400"
+                IsHitTestVisible="True"
+                Visibility="Collapsed">
+            <Border x:Name="RoiHudPanel"
+                    Background="#CC000000"
+                    BorderBrush="#39FF14"
+                    BorderThickness="1.5"
+                    CornerRadius="6"
+                    Padding="8">
+              <StackPanel x:Name="RoiHudStack" />
+            </Border>
+          </Grid>
+
           <Border x:Name="RoiVisibilityPanel"
                   Grid.Row="2"
                   HorizontalAlignment="Left"
@@ -439,23 +469,6 @@
                        FontWeight="Bold"
                        FontSize="22"
                        Foreground="White"/>
-          </Border>
-        </Grid>
-        <!-- ===== HUD: ROI list (top-left) ===== -->
-        <Grid x:Name="RoiHudOverlay"
-              HorizontalAlignment="Left"
-              VerticalAlignment="Top"
-              Margin="12,64,0,0"
-              Panel.ZIndex="900"
-              IsHitTestVisible="True"
-              Visibility="Collapsed">
-          <Border x:Name="RoiHudPanel"
-                  Background="#CC000000"
-                  BorderBrush="#39FF14"
-                  BorderThickness="1.5"
-                  CornerRadius="6"
-                  Padding="8">
-            <StackPanel x:Name="RoiHudStack" />
           </Border>
         </Grid>
         <!-- ===== HUD: bottom-right Heatmap controls ===== -->

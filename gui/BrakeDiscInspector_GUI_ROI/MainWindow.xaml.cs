@@ -108,6 +108,7 @@ namespace BrakeDiscInspector_GUI_ROI
 
         private WorkflowViewModel? _workflowViewModel;
         private WorkflowViewModel? ViewModel => _workflowViewModel;
+        private BackendClient? _backendClient;
         private string? _dataRoot;
         private double _heatmapOverlayOpacity = 0.6;
 
@@ -721,6 +722,7 @@ namespace BrakeDiscInspector_GUI_ROI
         // IMAGE-space centers (pixels) of found masters
         private CvPoint? _lastM1CenterPx;
         private CvPoint? _lastM2CenterPx;
+        private CvPoint? _lastMidCenterPx;
 
         private Shape? _previewShape;
         private bool _isDrawing;
@@ -1666,6 +1668,8 @@ namespace BrakeDiscInspector_GUI_ROI
                     backendClient.BaseUrl = BackendAPI.BaseUrl;
                 }
 
+                _backendClient = backendClient;
+
                 var datasetManager = new DatasetManager(_dataRoot);
                 if (_workflowViewModel != null)
                 {
@@ -1887,11 +1891,35 @@ namespace BrakeDiscInspector_GUI_ROI
                     continue;
 
                 bool visible = IsRoiRoleVisible(roi.Role);
-                shape.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
-
-                if (_roiLabels.TryGetValue(shape, out var label) && label != null)
+                if (visible)
                 {
-                    label.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
+                    shape.Visibility = Visibility.Visible;
+
+                    if (_roiLabels.TryGetValue(shape, out var label) && label != null)
+                    {
+                        if (!CanvasROI.Children.Contains(label))
+                        {
+                            CanvasROI.Children.Add(label);
+                        }
+                        label.Visibility = Visibility.Visible;
+                    }
+
+                    AttachRoiAdorner(shape);
+                }
+                else
+                {
+                    shape.Visibility = Visibility.Collapsed;
+
+                    if (_roiLabels.TryGetValue(shape, out var label) && label != null)
+                    {
+                        label.Visibility = Visibility.Collapsed;
+                        if (CanvasROI.Children.Contains(label))
+                        {
+                            CanvasROI.Children.Remove(label);
+                        }
+                    }
+
+                    RemoveRoiAdorners(shape);
                 }
             }
         }
@@ -3408,6 +3436,7 @@ namespace BrakeDiscInspector_GUI_ROI
             RemoveAnalysisMarks();
             _lastM1CenterPx = null;
             _lastM2CenterPx = null;
+            _lastMidCenterPx = null;
             RedrawAnalysisCrosses();
             ClearHeatmapOverlay();
             RedrawOverlaySafe();
@@ -3541,22 +3570,24 @@ namespace BrakeDiscInspector_GUI_ROI
             if (CanvasROI == null)
                 return;
 
-            // 1) Remove previous crosses
-            var old = CanvasROI.Children.OfType<System.Windows.Shapes.Shape>()
-                      .Where(s => (s.Tag as string) == "AnalysisCross")
-                      .ToList();
-            foreach (var s in old) CanvasROI.Children.Remove(s);
+            RemoveAnalysisMarks();
 
-            // 3) Convert IMAGE-space → CANVAS and draw
-            if (_lastM1CenterPx.HasValue)
+            if (_lastM1CenterPx.HasValue && _layout?.Master1Pattern != null)
             {
-                var p = ImagePxToCanvasPt(_lastM1CenterPx.Value);
-                DrawCrossAt(p);
+                var m1Point = new SWPoint(_lastM1CenterPx.Value.X, _lastM1CenterPx.Value.Y);
+                DrawMasterMatch(_layout.Master1Pattern, m1Point, "M1", Brushes.LimeGreen, false);
             }
-            if (_lastM2CenterPx.HasValue)
+
+            if (_lastM2CenterPx.HasValue && _layout?.Master2Pattern != null)
             {
-                var p = ImagePxToCanvasPt(_lastM2CenterPx.Value);
-                DrawCrossAt(p);
+                var m2Point = new SWPoint(_lastM2CenterPx.Value.X, _lastM2CenterPx.Value.Y);
+                DrawMasterMatch(_layout.Master2Pattern, m2Point, "M2", Brushes.Orange, false);
+            }
+
+            if (_lastMidCenterPx.HasValue)
+            {
+                var midCanvas = ImagePxToCanvasPt(_lastMidCenterPx.Value);
+                DrawCross(midCanvas.X, midCanvas.Y, 24, Brushes.OrangeRed, 3);
             }
         }
 
@@ -5242,6 +5273,73 @@ namespace BrakeDiscInspector_GUI_ROI
         // ===== En MainWindow.xaml.cs =====
         private async Task AnalyzeMastersAsync()
         {
+            for (int attempt = 0; attempt < 2; attempt++)
+            {
+                try
+                {
+                    await AnalyzeMastersCoreAsync().ConfigureAwait(false);
+                    return;
+                }
+                catch (BackendMemoryNotFittedException ex)
+                {
+                    AppendLog("[ANALYZE] backend memory not fitted: " + (ex.Detail ?? ex.Message));
+
+                    if (attempt >= 1)
+                    {
+                        MessageBox.Show(
+                            "No hay memoria preparada en el backend. Ejecuta Fit OK desde Dataset y vuelve a intentarlo.",
+                            "Memoria no preparada",
+                            MessageBoxButton.OK,
+                            MessageBoxImage.Warning);
+                        return;
+                    }
+
+                    var choice = MessageBox.Show(
+                        "No hay memoria/baseline cargada para inferencia. ¿Quieres ajustarla ahora (Fit OK) y reintentar?",
+                        "Memoria no preparada",
+                        MessageBoxButton.YesNo,
+                        MessageBoxImage.Information);
+
+                    if (choice != MessageBoxResult.Yes)
+                    {
+                        MessageBox.Show(
+                            "Operación cancelada. Ejecuta Fit OK desde la pestaña Dataset antes de volver a analizar.",
+                            "Memoria no preparada",
+                            MessageBoxButton.OK,
+                            MessageBoxImage.Information);
+                        return;
+                    }
+
+                    bool fitted = await EnsureMasterBaselinesAsync().ConfigureAwait(false);
+                    if (!fitted)
+                    {
+                        MessageBox.Show(
+                            "No se pudo ajustar la memoria automáticamente. Revisa la carpeta del dataset OK y los logs.",
+                            "Fit OK",
+                            MessageBoxButton.OK,
+                            MessageBoxImage.Error);
+                        return;
+                    }
+
+                    AppendLog("[ANALYZE] Baseline ajustada, reintentando Analyze Masters...");
+                }
+                catch (BackendBadRequestException ex)
+                {
+                    var detail = ex.Detail ?? ex.Message;
+                    MessageBox.Show($"Error del backend (400): {detail}", "Inferencia", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    return;
+                }
+                catch (Exception ex)
+                {
+                    AppendLog("[ANALYZE] error inesperado: " + ex);
+                    MessageBox.Show($"Analyze Masters error: {ex.Message}", "Analyze", MessageBoxButton.OK, MessageBoxImage.Error);
+                    return;
+                }
+            }
+        }
+
+        private async Task AnalyzeMastersCoreAsync()
+        {
             AppendLog("[ANALYZE] Begin AnalyzeMastersAsync");
             AppendLog("[FLOW] Entrando en AnalyzeMastersAsync");
 
@@ -5365,6 +5463,7 @@ namespace BrakeDiscInspector_GUI_ROI
 
             _lastM1CenterPx = new CvPoint((int)System.Math.Round(c1.Value.X), (int)System.Math.Round(c1.Value.Y));
             _lastM2CenterPx = new CvPoint((int)System.Math.Round(c2.Value.X), (int)System.Math.Round(c2.Value.Y));
+            _lastMidCenterPx = new CvPoint((int)System.Math.Round(mid.X), (int)System.Math.Round(mid.Y));
             RedrawAnalysisCrosses();
 
             // === BEGIN: reposition Masters & Inspections ===
@@ -5467,6 +5566,80 @@ namespace BrakeDiscInspector_GUI_ROI
             _state = MasterState.Ready;
             UpdateWizardState();
             AppendLog("[FLOW] AnalyzeMastersAsync terminado");
+        }
+
+        private async Task<bool> EnsureMasterBaselinesAsync()
+        {
+            if (_backendClient == null)
+            {
+                AppendLog("[ANALYZE] Backend client no disponible para auto-fit.");
+                return false;
+            }
+
+            if (string.IsNullOrWhiteSpace(_currentImagePathWin) || !File.Exists(_currentImagePathWin))
+            {
+                AppendLog("[ANALYZE] Ruta de imagen inválida para auto-fit.");
+                return false;
+            }
+
+            double mmPerPx = BackendAPI.ResolveMmPerPx(_preset);
+            var rois = new[] { _layout.Master1Pattern, _layout.Master2Pattern };
+            bool any = false;
+            bool allOk = true;
+
+            foreach (var roi in rois)
+            {
+                if (roi == null)
+                {
+                    continue;
+                }
+
+                any = true;
+                string roleId = BackendAPI.ResolveRoleId(roi);
+                string roiId = BackendAPI.ResolveRoiId(roi);
+
+                try
+                {
+                    bool fitted = await _backendClient.EnsureFittedAsync(
+                        roleId,
+                        roiId,
+                        mmPerPx,
+                        async _ =>
+                        {
+                            if (!BackendAPI.TryPrepareCanonicalRoi(_currentImagePathWin, roi, out var payload, out var fileName, AppendLog) || payload == null)
+                            {
+                                GuiLog.Warn($"Auto-fit sin muestras para role='{roleId}' roi='{roiId}'");
+                                return Array.Empty<BackendClient.FitImage>();
+                            }
+
+                            GuiLog.Info($"Auto-fit enviando muestra para role='{roleId}' roi='{roiId}'");
+                            return new[]
+                            {
+                                new BackendClient.FitImage(payload.PngBytes, fileName)
+                            };
+                        },
+                        memoryFit: false).ConfigureAwait(false);
+
+                    if (!fitted)
+                    {
+                        AppendLog($"[ANALYZE] Auto-fit fallido o incompleto para {roleId}/{roiId}.");
+                        GuiLog.Warn($"Auto-fit incompleto para role='{roleId}' roi='{roiId}'");
+                        allOk = false;
+                    }
+                    else
+                    {
+                        GuiLog.Info($"Auto-fit completado para role='{roleId}' roi='{roiId}'");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    AppendLog($"[ANALYZE] Auto-fit error para {roleId}/{roiId}: {ex.Message}");
+                    GuiLog.Error($"Auto-fit error para role='{roleId}' roi='{roiId}'", ex);
+                    allOk = false;
+                }
+            }
+
+            return any && allOk;
         }
 
 

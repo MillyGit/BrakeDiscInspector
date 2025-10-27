@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Text.Json;
 using System.Threading.Tasks;
+using BrakeDiscInspector_GUI_ROI;
 
 namespace BrakeDiscInspector_GUI_ROI.Workflow
 {
@@ -45,28 +46,41 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
             var timestamp = DateTime.UtcNow;
             string fileName = $"SAMPLE_{Sanitize(roleId)}_{Sanitize(roiId)}_{timestamp:yyyyMMdd_HHmmssfff}.png";
             string imagePath = Path.Combine(labelDir, fileName);
-            await File.WriteAllBytesAsync(imagePath, pngBytes).ConfigureAwait(false);
 
-            var metadata = new SampleMetadata
+            GuiLog.Info($"AddToDataset SaveSample role='{roleId}' roi='{roiId}' label={(isNg ? "NG" : "OK")} dest='{imagePath}' source='{sourceImagePath}'");
+
+            try
             {
-                role_id = roleId,
-                roi_id = roiId,
-                mm_per_px = mmPerPx,
-                shape_json = shapeJson,
-                source_path = sourceImagePath,
-                angle = angleDeg,
-                timestamp = timestamp
-            };
+                await File.WriteAllBytesAsync(imagePath, pngBytes).ConfigureAwait(false);
 
-            string metadataPath = Path.ChangeExtension(imagePath, ".json");
-            var options = new JsonSerializerOptions(JsonSerializerDefaults.Web)
+                var metadata = new SampleMetadata
+                {
+                    role_id = roleId,
+                    roi_id = roiId,
+                    mm_per_px = mmPerPx,
+                    shape_json = shapeJson,
+                    source_path = sourceImagePath,
+                    angle = angleDeg,
+                    timestamp = timestamp
+                };
+
+                string metadataPath = Path.ChangeExtension(imagePath, ".json");
+                var options = new JsonSerializerOptions(JsonSerializerDefaults.Web)
+                {
+                    WriteIndented = true
+                };
+                var jsonBytes = JsonSerializer.SerializeToUtf8Bytes(metadata, options);
+                await File.WriteAllBytesAsync(metadataPath, jsonBytes).ConfigureAwait(false);
+
+                GuiLog.Info($"AddToDataset saved '{imagePath}'");
+
+                return new DatasetSample(imagePath, metadataPath, isNg, metadata);
+            }
+            catch (Exception ex)
             {
-                WriteIndented = true
-            };
-            var jsonBytes = JsonSerializer.SerializeToUtf8Bytes(metadata, options);
-            await File.WriteAllBytesAsync(metadataPath, jsonBytes).ConfigureAwait(false);
-
-            return new DatasetSample(imagePath, metadataPath, isNg, metadata);
+                GuiLog.Error($"AddToDataset failed for '{imagePath}'", ex);
+                throw;
+            }
         }
 
         public Task<IReadOnlyList<DatasetSample>> LoadSamplesAsync(string roleId, string roiId, bool isNg)

@@ -839,10 +839,13 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
                 return;
             }
 
+            GuiLog.Info($"AddToDataset (config) roi='{roi.DisplayName}' label={(isOk ? "OK" : "NG")} dataset='{roi.DatasetPath}' source='{_getSourceImagePath()}'");
+
             var export = await _exportRoiAsync().ConfigureAwait(false);
             if (export == null)
             {
                 await ShowMessageAsync("No image loaded.", "Dataset");
+                GuiLog.Warn($"AddToDataset aborted: no export for roi='{roi.DisplayName}'");
                 return;
             }
 
@@ -850,6 +853,7 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
             if (cropped == null)
             {
                 await ShowMessageAsync($"Could not crop ROI '{roi.DisplayName}'.", "Dataset");
+                GuiLog.Warn($"AddToDataset aborted: crop failed for roi='{roi.DisplayName}'");
                 return;
             }
 
@@ -858,12 +862,22 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
             Directory.CreateDirectory(saveDir);
             string fileName = $"{DateTime.UtcNow:yyyyMMdd_HHmmss_fff}.png";
             string fullPath = Path.Combine(saveDir, fileName);
-            SavePng(fullPath, cropped);
 
-            await RefreshRoiDatasetStateAsync(roi).ConfigureAwait(false);
-            await RefreshDatasetPreviewsForRoiAsync(roi).ConfigureAwait(false);
+            try
+            {
+                SavePng(fullPath, cropped);
+                GuiLog.Info($"AddToDataset saved roi='{roi.DisplayName}' -> '{fullPath}'");
 
-            await ShowTransientToastAsync($"{roi.DisplayName}: added to {(isOk ? "OK" : "NG")} dataset");
+                await RefreshRoiDatasetStateAsync(roi).ConfigureAwait(false);
+                await RefreshDatasetPreviewsForRoiAsync(roi).ConfigureAwait(false);
+
+                await ShowTransientToastAsync($"{roi.DisplayName}: added to {(isOk ? "OK" : "NG")} dataset");
+            }
+            catch (Exception ex)
+            {
+                GuiLog.Error($"AddToDataset save failed roi='{roi.DisplayName}' dest='{fullPath}'", ex);
+                await ShowMessageAsync($"Could not save dataset image. Revisa la carpeta y los permisos. (Ver logs)", "Dataset");
+            }
         }
 
         private async Task AddRoiToDatasetAsync(RoiModel roi, bool positive)
@@ -881,21 +895,32 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
                 return;
             }
 
+            GuiLog.Info($"AddToDataset (legacy) roi='{roi.Label ?? roi.Id}' label={(positive ? "OK" : "NG")} source='{_getSourceImagePath()}'");
+
             var export = await _exportRoiAsync().ConfigureAwait(false);
             if (export == null)
             {
                 await ShowMessageAsync("No image loaded.", "Dataset");
+                GuiLog.Warn("AddToDataset aborted: no export for legacy roi");
                 return;
             }
 
             string role = roi.Role.ToString();
             string roiId = string.IsNullOrWhiteSpace(roi.Id) ? roi.Role.ToString() : roi.Id;
 
-            await _datasetManager.SaveSampleAsync(role, roiId, isNg: !positive, export.PngBytes, export.ShapeJson, MmPerPx,
-                _getSourceImagePath() ?? string.Empty, export.RoiImage.AngleDeg).ConfigureAwait(false);
+            try
+            {
+                await _datasetManager.SaveSampleAsync(role, roiId, isNg: !positive, export.PngBytes, export.ShapeJson, MmPerPx,
+                    _getSourceImagePath() ?? string.Empty, export.RoiImage.AngleDeg).ConfigureAwait(false);
 
-            await RefreshRoiDatasetStateAsync(roi).ConfigureAwait(false);
-            await ShowTransientToastAsync($"{(roi.Label ?? roi.Role.ToString())}: added to {(positive ? "OK" : "NG")} dataset");
+                await RefreshRoiDatasetStateAsync(roi).ConfigureAwait(false);
+                await ShowTransientToastAsync($"{(roi.Label ?? roi.Role.ToString())}: added to {(positive ? "OK" : "NG")} dataset");
+            }
+            catch (Exception ex)
+            {
+                GuiLog.Error($"AddToDataset legacy failed roi='{roi.Label ?? roi.Id}'", ex);
+                await ShowMessageAsync("No se pudo guardar el ROI en el dataset. Revisa los logs para más detalles.", "Dataset");
+            }
         }
 
         private async Task RefreshRoiDatasetStateAsync(RoiModel roi)
