@@ -16,7 +16,7 @@ using System.Windows;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
-using BrakeDiscInspector_GUI_ROI;
+using BrakeDiscInspector_GUI_ROI.Util;
 using BrakeDiscInspector_GUI_ROI.Models;
 using Forms = System.Windows.Forms;
 
@@ -32,6 +32,7 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
         private readonly Func<RoiExportResult, byte[], double, Task> _showHeatmapAsync;
         private readonly Action _clearHeatmap;
         private readonly Action<bool?> _updateGlobalBadge;
+        private readonly Action<int>? _activateInspectionIndex;
 
         private ObservableCollection<InspectionRoiConfig>? _inspectionRois;
         private RoiModel? _inspection1;
@@ -76,7 +77,8 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
             Action<string> log,
             Func<RoiExportResult, byte[], double, Task> showHeatmapAsync,
             Action clearHeatmap,
-            Action<bool?> updateGlobalBadge)
+            Action<bool?> updateGlobalBadge,
+            Action<int>? activateInspectionIndex = null)
         {
             _client = client ?? throw new ArgumentNullException(nameof(client));
             _datasetManager = datasetManager ?? throw new ArgumentNullException(nameof(datasetManager));
@@ -86,6 +88,7 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
             _showHeatmapAsync = showHeatmapAsync ?? throw new ArgumentNullException(nameof(showHeatmapAsync));
             _clearHeatmap = clearHeatmap ?? throw new ArgumentNullException(nameof(clearHeatmap));
             _updateGlobalBadge = updateGlobalBadge ?? (_ => { });
+            _activateInspectionIndex = activateInspectionIndex;
 
             _backendBaseUrl = _client.BaseUrl;
 
@@ -833,6 +836,8 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
                 return;
             }
 
+            _activateInspectionIndex?.Invoke(roi.Index);
+
             if (string.IsNullOrWhiteSpace(roi.DatasetPath))
             {
                 await ShowMessageAsync($"Dataset path not set for '{roi.DisplayName}'.", "Dataset");
@@ -876,7 +881,10 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
             catch (Exception ex)
             {
                 GuiLog.Error($"AddToDataset save failed roi='{roi.DisplayName}' dest='{fullPath}'", ex);
-                await ShowMessageAsync($"Could not save dataset image. Revisa la carpeta y los permisos. (Ver logs)", "Dataset");
+                await ShowMessageAsync(
+                    $"Could not save dataset image. Revisa la carpeta y los permisos. (Ver logs)",
+                    "Dataset",
+                    MessageBoxImage.Error);
             }
         }
 
@@ -888,6 +896,8 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
                 return;
             }
 
+            ActivateInspectionIndexForRoi(roi);
+
             var config = FindInspectionConfigForRoi(roi);
             if (config != null)
             {
@@ -895,7 +905,7 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
                 return;
             }
 
-            GuiLog.Info($"AddToDataset (legacy) roi='{roi.Label ?? roi.Id}' label={(positive ? "OK" : "NG")} source='{_getSourceImagePath()}'");
+            GuiLog.Info($"AddToDataset (direct) roi='{roi.Label ?? roi.Id}' target={(positive ? "OK" : "NG")} source='{_getSourceImagePath()}'");
 
             var export = await _exportRoiAsync().ConfigureAwait(false);
             if (export == null)
@@ -910,17 +920,66 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
 
             try
             {
-                await _datasetManager.SaveSampleAsync(role, roiId, isNg: !positive, export.PngBytes, export.ShapeJson, MmPerPx,
+                var sample = await _datasetManager.SaveSampleAsync(role, roiId, isNg: !positive, export.PngBytes, export.ShapeJson, MmPerPx,
                     _getSourceImagePath() ?? string.Empty, export.RoiImage.AngleDeg).ConfigureAwait(false);
 
                 await RefreshRoiDatasetStateAsync(roi).ConfigureAwait(false);
-                await ShowTransientToastAsync($"{(roi.Label ?? roi.Role.ToString())}: added to {(positive ? "OK" : "NG")} dataset");
+                if (positive)
+                {
+                    GuiLog.Info($"AddToDataset (direct) saved OK -> '{sample.ImagePath}'");
+                    await ShowMessageAsync($"Guardado en OK:\n{sample.ImagePath}", "Add to OK");
+                }
+                else
+                {
+                    GuiLog.Info($"AddToDataset (direct) saved NG -> '{sample.ImagePath}'");
+                    await ShowTransientToastAsync($"{(roi.Label ?? roi.Role.ToString())}: added to NG dataset");
+                }
             }
             catch (Exception ex)
             {
                 GuiLog.Error($"AddToDataset legacy failed roi='{roi.Label ?? roi.Id}'", ex);
-                await ShowMessageAsync("No se pudo guardar el ROI en el dataset. Revisa los logs para más detalles.", "Dataset");
+                await ShowMessageAsync(
+                    "No se pudo guardar el ROI en el dataset. Revisa los logs para más detalles.",
+                    "Dataset",
+                    MessageBoxImage.Error);
             }
+        }
+
+        private void ActivateInspectionIndexForRoi(RoiModel roi)
+        {
+            var index = TryResolveInspectionIndex(roi);
+            if (index.HasValue)
+            {
+                _activateInspectionIndex?.Invoke(index.Value);
+            }
+        }
+
+        private static int? TryResolveInspectionIndex(RoiModel roi)
+        {
+            if (roi == null)
+            {
+                return null;
+            }
+
+            if (!string.IsNullOrWhiteSpace(roi.Id))
+            {
+                var parts = roi.Id.Split('_');
+                if (parts.Length > 1 && int.TryParse(parts[^1], NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsedId))
+                {
+                    return parsedId;
+                }
+            }
+
+            if (!string.IsNullOrWhiteSpace(roi.Label))
+            {
+                var labelParts = roi.Label.Split(' ');
+                if (labelParts.Length > 1 && int.TryParse(labelParts[^1], NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsedLabel))
+                {
+                    return parsedLabel;
+                }
+            }
+
+            return null;
         }
 
         private async Task RefreshRoiDatasetStateAsync(RoiModel roi)
@@ -2161,11 +2220,14 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
             return null;
         }
 
-        private static async Task ShowMessageAsync(string message, string caption = "BrakeDiscInspector")
+        private static async Task ShowMessageAsync(
+            string message,
+            string caption = "BrakeDiscInspector",
+            MessageBoxImage icon = MessageBoxImage.Information)
         {
             await Application.Current.Dispatcher.InvokeAsync(() =>
             {
-                MessageBox.Show(message, caption, MessageBoxButton.OK, MessageBoxImage.Information);
+                MessageBox.Show(message, caption, MessageBoxButton.OK, icon);
             });
         }
 

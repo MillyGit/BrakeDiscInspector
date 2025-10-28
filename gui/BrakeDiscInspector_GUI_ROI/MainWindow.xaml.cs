@@ -3,6 +3,8 @@ using Microsoft.Win32;
 using OpenCvSharp;
 using OpenCvSharp.WpfExtensions;
 using BrakeDiscInspector_GUI_ROI.Workflow;
+using BrakeDiscInspector_GUI_ROI.Overlay;
+using BrakeDiscInspector_GUI_ROI.Util;
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
@@ -85,6 +87,243 @@ namespace BrakeDiscInspector_GUI_ROI
             OnPropertyChanged(propertyName);
         }
 
+        private RoiModel? GetInspectionSlotModel(int index)
+        {
+            if (_layout == null)
+            {
+                return null;
+            }
+
+            return index switch
+            {
+                1 => _layout.Inspection1,
+                2 => _layout.Inspection2,
+                3 => _layout.Inspection3,
+                4 => _layout.Inspection4,
+                _ => null
+            };
+        }
+
+        private void SetInspectionSlotModel(int index, RoiModel? model, bool updateActive = true)
+        {
+            if (_layout == null)
+            {
+                return;
+            }
+
+            if (model != null)
+            {
+                NormalizeInspectionRoi(model, index);
+            }
+
+            switch (index)
+            {
+                case 1:
+                    _layout.Inspection1 = model;
+                    break;
+                case 2:
+                    _layout.Inspection2 = model;
+                    break;
+                case 3:
+                    _layout.Inspection3 = model;
+                    break;
+                case 4:
+                    _layout.Inspection4 = model;
+                    break;
+            }
+
+            if (updateActive && index == _activeInspectionIndex)
+            {
+                SyncActiveInspectionToLayout();
+            }
+        }
+
+        private RoiModel? GetFirstInspectionRoi()
+        {
+            for (int i = 1; i <= 4; i++)
+            {
+                var roi = GetInspectionSlotModel(i);
+                if (roi != null && IsRoiSaved(roi))
+                {
+                    return roi;
+                }
+            }
+
+            return null;
+        }
+
+        private void NormalizeInspectionRoi(RoiModel roi, int index)
+        {
+            if (roi == null)
+            {
+                return;
+            }
+
+            roi.Role = RoiRole.Inspection;
+
+            var expectedId = $"Inspection_{index}";
+            if (string.IsNullOrWhiteSpace(roi.Id) || !string.Equals(roi.Id, expectedId, StringComparison.OrdinalIgnoreCase))
+            {
+                roi.Id = expectedId;
+            }
+
+            var desiredLabel = GetInspectionDisplayName(index);
+            if (string.IsNullOrWhiteSpace(roi.Label)
+                || string.Equals(roi.Label, "Inspection", StringComparison.OrdinalIgnoreCase)
+                || LabelMatchesDifferentInspection(roi.Label, index))
+            {
+                roi.Label = desiredLabel;
+            }
+        }
+
+        private string GetInspectionDisplayName(int index)
+        {
+            if (_layout?.InspectionRois != null && _layout.InspectionRois.Count >= index)
+            {
+                var cfg = _layout.InspectionRois[index - 1];
+                if (!string.IsNullOrWhiteSpace(cfg?.Name))
+                {
+                    return cfg.Name;
+                }
+
+                return cfg?.DisplayName ?? $"Inspection {index}";
+            }
+
+            var vmCfg = ViewModel?.InspectionRois?.FirstOrDefault(r => r.Index == index);
+            if (vmCfg != null && !string.IsNullOrWhiteSpace(vmCfg.Name))
+            {
+                return vmCfg.Name;
+            }
+
+            return $"Inspection {index}";
+        }
+
+        private static bool LabelMatchesDifferentInspection(string? label, int index)
+        {
+            if (string.IsNullOrWhiteSpace(label))
+            {
+                return true;
+            }
+
+            if (!label.StartsWith("Inspection", StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            var parts = label.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length == 1)
+            {
+                return true;
+            }
+
+            if (int.TryParse(parts[^1], NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed))
+            {
+                return parsed != index;
+            }
+
+            return true;
+        }
+
+        private static int? TryParseInspectionIndex(RoiModel? roi)
+        {
+            if (roi == null)
+            {
+                return null;
+            }
+
+            if (!string.IsNullOrWhiteSpace(roi.Id))
+            {
+                var parts = roi.Id.Split('_');
+                if (parts.Length > 1 && int.TryParse(parts[^1], NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsedId))
+                {
+                    return parsedId;
+                }
+            }
+
+            if (!string.IsNullOrWhiteSpace(roi.Label))
+            {
+                var parts = roi.Label.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                if (parts.Length > 1 && int.TryParse(parts[^1], NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsedLabel))
+                {
+                    return parsedLabel;
+                }
+            }
+
+            return null;
+        }
+
+        private static string BuildOverlayTag(RoiModel? roi)
+        {
+            if (roi == null)
+            {
+                return "roi:unknown";
+            }
+
+            var id = roi.Id;
+            if (string.IsNullOrWhiteSpace(id))
+            {
+                var index = TryParseInspectionIndex(roi);
+                id = index.HasValue ? $"Inspection_{index.Value}" : roi.Role.ToString();
+            }
+
+            return $"roi:{id}";
+        }
+
+        private void SyncActiveInspectionToLayout()
+        {
+            if (_layout == null)
+            {
+                return;
+            }
+
+            var slot = GetInspectionSlotModel(_activeInspectionIndex);
+            _layout.Inspection = slot?.Clone();
+            if (_layout.Inspection != null)
+            {
+                NormalizeInspectionRoi(_layout.Inspection, _activeInspectionIndex);
+            }
+        }
+
+        private void SetActiveInspectionIndex(int index)
+        {
+            if (!Dispatcher.CheckAccess())
+            {
+                Dispatcher.Invoke(() => SetActiveInspectionIndex(index));
+                return;
+            }
+
+            int clamped = Math.Max(1, Math.Min(4, index));
+            if (_activeInspectionIndex == clamped && !_updatingActiveInspection)
+            {
+                SyncActiveInspectionToLayout();
+                return;
+            }
+
+            _activeInspectionIndex = clamped;
+            SyncActiveInspectionToLayout();
+
+            if (!_updatingActiveInspection && ViewModel?.SelectedInspectionRoi?.Index != _activeInspectionIndex)
+            {
+                try
+                {
+                    _updatingActiveInspection = true;
+                    var target = ViewModel?.InspectionRois?.FirstOrDefault(r => r.Index == _activeInspectionIndex);
+                    if (target != null)
+                    {
+                        ViewModel.SelectedInspectionRoi = target;
+                    }
+                }
+                finally
+                {
+                    _updatingActiveInspection = false;
+                }
+            }
+
+            RequestRoiVisibilityRefresh();
+            UpdateRoiHud();
+            RedrawOverlaySafe();
+        }
+
         private enum MasterState { DrawM1_Pattern, DrawM1_Search, DrawM2_Pattern, DrawM2_Search, DrawInspection, Ready }
         private enum RoiCorner { TopLeft, TopRight, BottomRight, BottomLeft }
         private MasterState _state = MasterState.DrawM1_Pattern;
@@ -111,6 +350,9 @@ namespace BrakeDiscInspector_GUI_ROI
         private BackendClient? _backendClient;
         private string? _dataRoot;
         private double _heatmapOverlayOpacity = 0.6;
+
+        private int _activeInspectionIndex = 1;
+        private bool _updatingActiveInspection;
 
         private RoiModel? _inspectionSlot1;
         private RoiModel? _inspectionSlot2;
@@ -833,8 +1075,14 @@ namespace BrakeDiscInspector_GUI_ROI
                 if (_layout.Master2Search != null && _showMaster2SearchOverlay)
                     yield return _layout.Master2Search;
 
-                if (_layout.Inspection != null)
-                    yield return _layout.Inspection;
+                for (int index = 1; index <= 4; index++)
+                {
+                    var inspection = GetInspectionSlotModel(index);
+                    if (inspection != null && IsRoiSaved(inspection))
+                    {
+                        yield return inspection;
+                    }
+                }
             }
         }
 
@@ -1291,6 +1539,20 @@ namespace BrakeDiscInspector_GUI_ROI
                 }
             }
 
+            var overlayTag = BuildOverlayTag(roi as RoiModel);
+            if (overlayTag == "roi:unknown" && !string.IsNullOrWhiteSpace(_lbl))
+            {
+                var sanitized = new string(_lbl.Where(char.IsLetterOrDigit).ToArray());
+                if (string.IsNullOrWhiteSpace(sanitized))
+                {
+                    sanitized = Guid.NewGuid().ToString("N");
+                }
+
+                overlayTag = $"roi:{sanitized}";
+            }
+
+            label.Tag = overlayTag;
+
             EnsureRoiCheckbox(_lbl);
 
             if (existing == null)
@@ -1685,7 +1947,8 @@ namespace BrakeDiscInspector_GUI_ROI
                     AppendLog,
                     ShowHeatmapOverlayAsync,
                     ClearHeatmapOverlay,
-                    UpdateGlobalBadge);
+                    UpdateGlobalBadge,
+                    SetActiveInspectionIndex);
 
                 _workflowViewModel.PropertyChanged += WorkflowViewModelOnPropertyChanged;
                 _workflowViewModel.OverlayVisibilityChanged += WorkflowViewModelOnOverlayVisibilityChanged;
@@ -1838,7 +2101,7 @@ namespace BrakeDiscInspector_GUI_ROI
             UpdateRoiVisibilityState(RoiRole.Master1Search, _layout.Master1Search);
             UpdateRoiVisibilityState(RoiRole.Master2Pattern, _layout.Master2Pattern);
             UpdateRoiVisibilityState(RoiRole.Master2Search, _layout.Master2Search);
-            UpdateRoiVisibilityState(RoiRole.Inspection, _layout.Inspection);
+            UpdateRoiVisibilityState(RoiRole.Inspection, GetFirstInspectionRoi());
 
             RequestRoiVisibilityRefresh();
             UpdateRoiHud();
@@ -1910,16 +2173,22 @@ namespace BrakeDiscInspector_GUI_ROI
                 {
                     shape.Visibility = Visibility.Collapsed;
 
-                    if (_roiLabels.TryGetValue(shape, out var label) && label != null)
+                    if (shape.Tag is RoiModel hiddenRoi)
+                    {
+                        var roiId = hiddenRoi.Id ?? hiddenRoi.Role.ToString();
+                        OverlayCleanup.RemoveForRoi(CanvasROI, shape, roiId);
+                        _roiLabels.Remove(shape);
+                    }
+                    else if (_roiLabels.TryGetValue(shape, out var label) && label != null)
                     {
                         label.Visibility = Visibility.Collapsed;
                         if (CanvasROI.Children.Contains(label))
                         {
                             CanvasROI.Children.Remove(label);
                         }
+                        _roiLabels.Remove(shape);
+                        RemoveRoiAdorners(shape);
                     }
-
-                    RemoveRoiAdorners(shape);
                 }
             }
         }
@@ -2050,19 +2319,23 @@ namespace BrakeDiscInspector_GUI_ROI
                     break;
 
                 case MasterState.DrawInspection:
-                    if (_layout.Inspection != null)
+                    if (GetInspectionSlotModel(_activeInspectionIndex) != null)
                     {
+                        SetInspectionSlotModel(_activeInspectionIndex, null);
                         _layout.Inspection = null;
                         SetInspectionBaseline(null);
+                        RefreshInspectionRoiSlots();
                         return true;
                     }
                     break;
 
                 case MasterState.Ready:
-                    if (_layout.Inspection != null)
+                    if (GetInspectionSlotModel(_activeInspectionIndex) != null)
                     {
+                        SetInspectionSlotModel(_activeInspectionIndex, null);
                         _layout.Inspection = null;
                         SetInspectionBaseline(null);
+                        RefreshInspectionRoiSlots();
                         _state = MasterState.DrawInspection;
                         return true;
                     }
@@ -2290,8 +2563,18 @@ namespace BrakeDiscInspector_GUI_ROI
             if (CanvasROI == null)
                 return;
 
-            RemoveRoiAdorners(shape);
-            RemoveRoiLabel(shape);
+            if (shape.Tag is RoiModel roiModel)
+            {
+                var roiId = roiModel.Id ?? roiModel.Role.ToString();
+                OverlayCleanup.RemoveForRoi(CanvasROI, shape, roiId);
+                _roiLabels.Remove(shape);
+            }
+            else
+            {
+                RemoveRoiLabel(shape);
+                RemoveRoiAdorners(shape);
+            }
+
             CanvasROI.Children.Remove(shape);
         }
 
@@ -3611,8 +3894,15 @@ namespace BrakeDiscInspector_GUI_ROI
             if (roi == null)
                 return null;
 
-            if (!string.IsNullOrWhiteSpace(roi.Label))
+            if (!string.IsNullOrWhiteSpace(roi.Label)
+                && !string.Equals(roi.Label, "Inspection", StringComparison.OrdinalIgnoreCase))
                 return roi.Label;
+
+            if (roi.Role == RoiRole.Inspection)
+            {
+                var index = TryParseInspectionIndex(roi) ?? _activeInspectionIndex;
+                return GetInspectionDisplayName(index);
+            }
 
             return roi.Role switch
             {
@@ -3620,7 +3910,6 @@ namespace BrakeDiscInspector_GUI_ROI
                 RoiRole.Master1Search => "Master 1 search",
                 RoiRole.Master2Pattern => "Master 2",
                 RoiRole.Master2Search => "Master 2 search",
-                RoiRole.Inspection => "Inspection",
                 _ => null
             };
         }
@@ -3628,35 +3917,15 @@ namespace BrakeDiscInspector_GUI_ROI
         private IReadOnlyList<RoiModel> CollectSavedInspectionRois()
         {
             var results = new List<RoiModel>();
-            var seen = new HashSet<string>(StringComparer.Ordinal);
+            var seen = new HashSet<RoiModel>();
 
-            void AddIfValid(RoiModel? roi)
+            for (int index = 1; index <= 4; index++)
             {
-                if (roi == null)
-                    return;
-                if (!IsRoiSaved(roi))
-                    return;
-
-                var key = roi.Id;
-                if (string.IsNullOrEmpty(key))
-                    key = $"roi-{roi.GetHashCode():X}";
-
-                if (seen.Add(key))
-                    results.Add(roi);
-            }
-
-            if (_layout != null)
-            {
-                AddIfValid(_layout.Inspection);
-
-                // Include any additional inspection ROIs persisted on the layout
-                foreach (var prop in _layout.GetType().GetProperties(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance))
+                var slot = GetInspectionSlotModel(index);
+                if (slot != null && IsRoiSaved(slot) && seen.Add(slot))
                 {
-                    if (!typeof(RoiModel).IsAssignableFrom(prop.PropertyType))
-                        continue;
-
-                    if (prop.GetValue(_layout) is RoiModel roi && roi.Role == RoiRole.Inspection)
-                        AddIfValid(roi);
+                    NormalizeInspectionRoi(slot, index);
+                    results.Add(slot);
                 }
             }
 
@@ -3664,28 +3933,15 @@ namespace BrakeDiscInspector_GUI_ROI
             {
                 foreach (var roi in _preset.Rois)
                 {
-                    if (roi?.Role == RoiRole.Inspection)
-                        AddIfValid(roi);
-                }
-            }
+                    if (roi?.Role != RoiRole.Inspection || !IsRoiSaved(roi) || !seen.Add(roi))
+                    {
+                        continue;
+                    }
 
-            int inspectionIndex = 1;
-            foreach (var roi in results.Where(r => r.Role == RoiRole.Inspection))
-            {
-                string fallback = $"Inspection {inspectionIndex}";
-                string label = fallback;
-                if (_layout?.InspectionRois != null && _layout.InspectionRois.Count >= inspectionIndex)
-                {
-                    label = _layout.InspectionRois[inspectionIndex - 1].DisplayName;
+                    var index = TryParseInspectionIndex(roi) ?? (results.Count + 1);
+                    NormalizeInspectionRoi(roi, Math.Max(1, Math.Min(4, index)));
+                    results.Add(roi);
                 }
-                roi.Label = label;
-                if (_layout?.InspectionRois != null && _layout.InspectionRois.Count >= inspectionIndex)
-                {
-                    var config = _layout.InspectionRois[inspectionIndex - 1];
-                    roi.Id = !string.IsNullOrWhiteSpace(config.DatasetPath) ?
-                             Path.GetFileName(config.DatasetPath) : $"Inspection_{inspectionIndex}";
-                }
-                inspectionIndex++;
             }
 
             return results;
@@ -3733,7 +3989,6 @@ namespace BrakeDiscInspector_GUI_ROI
 
             // Inspection ROIs (saved only)
             var savedInspectionRois = CollectSavedInspectionRois();
-            RefreshInspectionRoiSlots(savedInspectionRois);
             foreach (var roi in savedInspectionRois)
             {
                 RoiHudStack.Children.Add(CreateRoiHudItem(roi));
@@ -3859,14 +4114,21 @@ namespace BrakeDiscInspector_GUI_ROI
 
         private void RefreshInspectionRoiSlots(IReadOnlyList<RoiModel>? rois = null)
         {
-            IReadOnlyList<RoiModel> source = rois ?? CollectSavedInspectionRois();
+            var source = rois ?? CollectSavedInspectionRois();
 
-            Inspection1 = source.Count > 0 ? source[0] : null;
-            Inspection2 = source.Count > 1 ? source[1] : null;
-            Inspection3 = source.Count > 2 ? source[2] : null;
-            Inspection4 = source.Count > 3 ? source[3] : null;
+            for (int i = 0; i < 4; i++)
+            {
+                var model = source.Count > i ? source[i] : null;
+                SetInspectionSlotModel(i + 1, model, updateActive: false);
+            }
+
+            Inspection1 = GetInspectionSlotModel(1);
+            Inspection2 = GetInspectionSlotModel(2);
+            Inspection3 = GetInspectionSlotModel(3);
+            Inspection4 = GetInspectionSlotModel(4);
 
             _workflowViewModel?.SetInspectionRoiModels(Inspection1, Inspection2, Inspection3, Inspection4);
+            SetActiveInspectionIndex(_activeInspectionIndex);
         }
 
         private void ToggleInspectionFrozen(RoiModel? roi)
@@ -3970,7 +4232,15 @@ namespace BrakeDiscInspector_GUI_ROI
             else if (string.Equals(e.PropertyName, nameof(Workflow.WorkflowViewModel.SelectedInspectionRoi), StringComparison.Ordinal)
                      || string.Equals(e.PropertyName, nameof(Workflow.WorkflowViewModel.SelectedInspectionShape), StringComparison.Ordinal))
             {
-                Dispatcher.Invoke(SyncDrawToolFromViewModel);
+                Dispatcher.Invoke(() =>
+                {
+                    if (!_updatingActiveInspection && ViewModel?.SelectedInspectionRoi != null)
+                    {
+                        SetActiveInspectionIndex(ViewModel.SelectedInspectionRoi.Index);
+                    }
+
+                    SyncDrawToolFromViewModel();
+                });
             }
         }
 
@@ -5069,13 +5339,18 @@ namespace BrakeDiscInspector_GUI_ROI
                     AppendLog($"[wizard] save state={_state} role={savedRole} source={bufferSource} roi={DescribeRoi(_tmpBuffer)}");
                     _tmpBuffer.Role = savedRole.Value;
 
-                    _layout.Inspection = _tmpBuffer.Clone();
+                    var savedClone = _tmpBuffer.Clone();
+                    SetInspectionSlotModel(_activeInspectionIndex, savedClone, updateActive: false);
+                    RefreshInspectionRoiSlots();
+                    savedRoi = GetInspectionSlotModel(_activeInspectionIndex);
                     SetInspectionBaseline(_layout.Inspection);
-                    savedRoi = _layout.Inspection;
                     SyncCurrentRoiFromInspection(_layout.Inspection);
 
                     // (Opcional) también puedes guardar un preview de la inspección inicial:
-                    SaveRoiCropPreview(_layout.Inspection, "INS_init");
+                    if (_layout.Inspection != null)
+                    {
+                        SaveRoiCropPreview(_layout.Inspection, "INS_init");
+                    }
 
                     _tmpBuffer = null;
                     _state = MasterState.Ready;

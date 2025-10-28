@@ -1,11 +1,11 @@
 using System;
 using System.IO;
 
-namespace BrakeDiscInspector_GUI_ROI
+namespace BrakeDiscInspector_GUI_ROI.Util
 {
     internal static class GuiLog
     {
-        private static readonly object _sync = new();
+        private static readonly object Sync = new();
         private static readonly string LogDirectory = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             "BrakeDiscInspector",
@@ -31,7 +31,7 @@ namespace BrakeDiscInspector_GUI_ROI
 
             try
             {
-                lock (_sync)
+                lock (Sync)
                 {
                     Directory.CreateDirectory(LogDirectory);
                     var line = $"{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff} [{level}] {message}{Environment.NewLine}";
@@ -45,4 +45,3 @@ namespace BrakeDiscInspector_GUI_ROI
         }
     }
 }
-

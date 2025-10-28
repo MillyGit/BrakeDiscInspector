@@ -98,9 +98,12 @@
                         SelectionChanged="InspectionShape_SelectionChanged"/>
               <Button x:Name="BtnToggleInspection1"
                       Margin="8,0,0,0"
+                      MinWidth="120"
+                      MinHeight="28"
                       Click="BtnToggleInspection1_Click">
                 <Button.Content>
                   <StackPanel Orientation="Horizontal" Style="{StaticResource ForegroundWhiteStyle}">
+                    <TextBlock Text="Inspection 1" FontWeight="SemiBold" Margin="0,0,6,0"/>
                     <TextBlock Text="{Binding Inspection1.IsFrozen, Converter={StaticResource BoolToEditSaveText}}"/>
                   </StackPanel>
                 </Button.Content>
@@ -127,9 +130,12 @@
                         SelectionChanged="InspectionShape_SelectionChanged"/>
               <Button x:Name="BtnToggleInspection2"
                       Margin="8,0,0,0"
+                      MinWidth="120"
+                      MinHeight="28"
                       Click="BtnToggleInspection2_Click">
                 <Button.Content>
                   <StackPanel Orientation="Horizontal" Style="{StaticResource ForegroundWhiteStyle}">
+                    <TextBlock Text="Inspection 2" FontWeight="SemiBold" Margin="0,0,6,0"/>
                     <TextBlock Text="{Binding Inspection2.IsFrozen, Converter={StaticResource BoolToEditSaveText}}"/>
                   </StackPanel>
                 </Button.Content>
@@ -156,9 +162,12 @@
                         SelectionChanged="InspectionShape_SelectionChanged"/>
               <Button x:Name="BtnToggleInspection3"
                       Margin="8,0,0,0"
+                      MinWidth="120"
+                      MinHeight="28"
                       Click="BtnToggleInspection3_Click">
                 <Button.Content>
                   <StackPanel Orientation="Horizontal" Style="{StaticResource ForegroundWhiteStyle}">
+                    <TextBlock Text="Inspection 3" FontWeight="SemiBold" Margin="0,0,6,0"/>
                     <TextBlock Text="{Binding Inspection3.IsFrozen, Converter={StaticResource BoolToEditSaveText}}"/>
                   </StackPanel>
                 </Button.Content>
@@ -185,9 +194,12 @@
                         SelectionChanged="InspectionShape_SelectionChanged"/>
               <Button x:Name="BtnToggleInspection4"
                       Margin="8,0,0,0"
+                      MinWidth="120"
+                      MinHeight="28"
                       Click="BtnToggleInspection4_Click">
                 <Button.Content>
                   <StackPanel Orientation="Horizontal" Style="{StaticResource ForegroundWhiteStyle}">
+                    <TextBlock Text="Inspection 4" FontWeight="SemiBold" Margin="0,0,6,0"/>
                     <TextBlock Text="{Binding Inspection4.IsFrozen, Converter={StaticResource BoolToEditSaveText}}"/>
                   </StackPanel>
                 </Button.Content>
