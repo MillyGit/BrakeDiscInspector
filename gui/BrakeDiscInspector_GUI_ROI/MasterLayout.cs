@@ -18,6 +18,11 @@ namespace BrakeDiscInspector_GUI_ROI
         public RoiModel? Inspection { get; set; }
         public RoiModel? InspectionBaseline { get; set; }
 
+        public RoiModel? Inspection1 { get; set; }
+        public RoiModel? Inspection2 { get; set; }
+        public RoiModel? Inspection3 { get; set; }
+        public RoiModel? Inspection4 { get; set; }
+
         public AnalyzeOptions Analyze { get; set; } = new();
         public UiOptions Ui { get; set; } = new();
         public Dictionary<string, List<RoiModel>> InspectionBaselinesByImage { get; set; }
@@ -92,6 +97,13 @@ namespace BrakeDiscInspector_GUI_ROI
                     roi.ModelKey = $"inspection-{i + 1}";
                 }
             }
+
+            layout.Inspection1 ??= layout.Inspection;
+            layout.Inspection ??= layout.Inspection1;
+
+            layout.Inspection2 ??= null;
+            layout.Inspection3 ??= null;
+            layout.Inspection4 ??= null;
         }
 
         private static void EnsureOptionDefaults(MasterLayout layout)
