@@ -3862,8 +3862,6 @@ namespace BrakeDiscInspector_GUI_ROI
             => new SWPoint((a.X + b.X) / 2.0, (a.Y + b.Y) / 2.0);
 
 
-        }
-
         private void RedrawAnalysisCrosses()
         {
             if (CanvasROI == null)
