@@ -876,7 +876,7 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
                 await RefreshRoiDatasetStateAsync(roi).ConfigureAwait(false);
                 await RefreshDatasetPreviewsForRoiAsync(roi).ConfigureAwait(false);
 
-                await ShowTransientToastAsync($"{roi.DisplayName}: added to {(isOk ? "OK" : "NG")} dataset");
+                await ShowDatasetSavedAsync(roi.DisplayName, fullPath, isOk).ConfigureAwait(false);
             }
             catch (Exception ex)
             {
@@ -924,16 +924,8 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
                     _getSourceImagePath() ?? string.Empty, export.RoiImage.AngleDeg).ConfigureAwait(false);
 
                 await RefreshRoiDatasetStateAsync(roi).ConfigureAwait(false);
-                if (positive)
-                {
-                    GuiLog.Info($"AddToDataset (direct) saved OK -> '{sample.ImagePath}'");
-                    await ShowMessageAsync($"Guardado en OK:\n{sample.ImagePath}", "Add to OK");
-                }
-                else
-                {
-                    GuiLog.Info($"AddToDataset (direct) saved NG -> '{sample.ImagePath}'");
-                    await ShowTransientToastAsync($"{(roi.Label ?? roi.Role.ToString())}: added to NG dataset");
-                }
+                GuiLog.Info($"AddToDataset (direct) saved {(positive ? "OK" : "NG")} -> '{sample.ImagePath}'");
+                await ShowDatasetSavedAsync(roi.Label ?? roi.Role.ToString(), sample.ImagePath, positive).ConfigureAwait(false);
             }
             catch (Exception ex)
             {
@@ -1483,11 +1475,15 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
             encoder.Save(fs);
         }
 
-        private static async Task ShowTransientToastAsync(string message)
+        private static async Task ShowDatasetSavedAsync(string? roiName, string path, bool isOk)
         {
             await Application.Current.Dispatcher.InvokeAsync(() =>
             {
-                MessageBox.Show(message, "Dataset", MessageBoxButton.OK, MessageBoxImage.Information);
+                var caption = isOk ? "Add to OK" : "Add to NG";
+                var prefix = string.IsNullOrWhiteSpace(roiName) ? string.Empty : $"{roiName}: ";
+                var label = isOk ? "OK" : "NG";
+                var message = prefix + "guardado en " + label + ":" + Environment.NewLine + path;
+                MessageBox.Show(message, caption, MessageBoxButton.OK, MessageBoxImage.Information);
             });
         }
 
