@@ -3846,6 +3846,8 @@ namespace BrakeDiscInspector_GUI_ROI
             {
                 DrawCross(canvasPoint.X, canvasPoint.Y, size, brush, thickness);
             }
+        }
+
         private void DrawMasterCenters(SWPoint c1Canvas, SWPoint c2Canvas, SWPoint midCanvas)
         {
             DrawCross(c1Canvas.X, c1Canvas.Y, 20, Brushes.LimeGreen, 2);
@@ -3859,8 +3861,6 @@ namespace BrakeDiscInspector_GUI_ROI
         private static SWPoint Mid(SWPoint a, SWPoint b)
             => new SWPoint((a.X + b.X) / 2.0, (a.Y + b.Y) / 2.0);
 
-
-        }
 
         private void RedrawAnalysisCrosses()
         {
