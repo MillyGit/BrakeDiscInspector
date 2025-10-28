@@ -3846,6 +3846,7 @@ namespace BrakeDiscInspector_GUI_ROI
             {
                 DrawCross(canvasPoint.X, canvasPoint.Y, size, brush, thickness);
             }
+        }
         private void DrawMasterCenters(SWPoint c1Canvas, SWPoint c2Canvas, SWPoint midCanvas)
         {
             DrawCross(c1Canvas.X, c1Canvas.Y, 20, Brushes.LimeGreen, 2);
