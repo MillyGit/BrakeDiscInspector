@@ -3846,6 +3846,20 @@ namespace BrakeDiscInspector_GUI_ROI
             {
                 DrawCross(canvasPoint.X, canvasPoint.Y, size, brush, thickness);
             }
+        private void DrawMasterCenters(SWPoint c1Canvas, SWPoint c2Canvas, SWPoint midCanvas)
+        {
+            DrawCross(c1Canvas.X, c1Canvas.Y, 20, Brushes.LimeGreen, 2);
+            DrawCross(c2Canvas.X, c2Canvas.Y, 20, Brushes.Orange, 2);
+            DrawCross(midCanvas.X, midCanvas.Y, 24, Brushes.Red, 2);
+        }
+
+        private SWPoint ImageToCanvasPoint(SWPoint imagePoint)
+            => ImagePxToCanvasPt(imagePoint.X, imagePoint.Y);
+
+        private static SWPoint Mid(SWPoint a, SWPoint b)
+            => new SWPoint((a.X + b.X) / 2.0, (a.Y + b.Y) / 2.0);
+
+
         }
 
         private void RedrawAnalysisCrosses()
@@ -3855,22 +3869,34 @@ namespace BrakeDiscInspector_GUI_ROI
 
             RemoveAnalysisMarks();
 
-            if (_lastM1CenterPx.HasValue && _layout?.Master1Pattern != null)
-            {
-                var m1Point = new SWPoint(_lastM1CenterPx.Value.X, _lastM1CenterPx.Value.Y);
-                DrawMasterMatch(_layout.Master1Pattern, m1Point, "M1", Brushes.LimeGreen, false);
-            }
+            SWPoint? m1Canvas = _lastM1CenterPx.HasValue ? ImagePxToCanvasPt(_lastM1CenterPx.Value) : (SWPoint?)null;
+            SWPoint? m2Canvas = _lastM2CenterPx.HasValue ? ImagePxToCanvasPt(_lastM2CenterPx.Value) : (SWPoint?)null;
 
-            if (_lastM2CenterPx.HasValue && _layout?.Master2Pattern != null)
+            if (m1Canvas.HasValue && m2Canvas.HasValue)
             {
-                var m2Point = new SWPoint(_lastM2CenterPx.Value.X, _lastM2CenterPx.Value.Y);
-                DrawMasterMatch(_layout.Master2Pattern, m2Point, "M2", Brushes.Orange, false);
-            }
+                var midCanvas = _lastMidCenterPx.HasValue
+                    ? ImagePxToCanvasPt(_lastMidCenterPx.Value)
+                    : Mid(m1Canvas.Value, m2Canvas.Value);
 
-            if (_lastMidCenterPx.HasValue)
+                DrawMasterCenters(m1Canvas.Value, m2Canvas.Value, midCanvas);
+            }
+            else
             {
-                var midCanvas = ImagePxToCanvasPt(_lastMidCenterPx.Value);
-                DrawCross(midCanvas.X, midCanvas.Y, 24, Brushes.OrangeRed, 3);
+                if (m1Canvas.HasValue)
+                {
+                    DrawCross(m1Canvas.Value.X, m1Canvas.Value.Y, 20, Brushes.LimeGreen, 2);
+                }
+
+                if (m2Canvas.HasValue)
+                {
+                    DrawCross(m2Canvas.Value.X, m2Canvas.Value.Y, 20, Brushes.Orange, 2);
+                }
+
+                if (_lastMidCenterPx.HasValue)
+                {
+                    var midCanvas = ImagePxToCanvasPt(_lastMidCenterPx.Value);
+                    DrawCross(midCanvas.X, midCanvas.Y, 24, Brushes.Red, 2);
+                }
             }
         }
 
@@ -4131,39 +4157,61 @@ namespace BrakeDiscInspector_GUI_ROI
             SetActiveInspectionIndex(_activeInspectionIndex);
         }
 
-        private void ToggleInspectionFrozen(RoiModel? roi)
+        private void SaveCurrentInspectionToSlot(int index)
         {
-            if (roi == null)
+            if (_layout == null)
             {
+                MessageBox.Show("No hay layout cargado.", $"Inspection {index}", MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
             }
 
-            roi.IsFrozen = !roi.IsFrozen;
-
-            SetRoiAdornersVisible(roi.Id, visible: !roi.IsFrozen);
-            SetRoiInteractive(roi.Id, interactive: !roi.IsFrozen);
-
-            if (int.TryParse(roi.Id, NumberStyles.Integer, CultureInfo.InvariantCulture, out var numericId))
+            var roiModel = BuildCurrentRoiModel(RoiRole.Inspection);
+            if (!IsRoiSaved(roiModel))
             {
-                _workflowViewModel?.SetInspectionAutoRepositionEnabled(numericId, enable: !roi.IsFrozen);
+                MessageBox.Show($"Dibuja un ROI válido antes de guardar (Inspection {index}).",
+                                $"Inspection {index}",
+                                MessageBoxButton.OK,
+                                MessageBoxImage.Information);
+                return;
             }
-            else
+
+            roiModel.IsFrozen = false;
+            NormalizeInspectionRoi(roiModel, index);
+
+            var config = GetInspectionConfigByIndex(index);
+            if (config != null)
             {
-                _workflowViewModel?.SetInspectionAutoRepositionEnabled(roi.Id, enable: !roi.IsFrozen);
+                config.Shape = roiModel.Shape;
+                if (!string.IsNullOrWhiteSpace(roiModel.Label)
+                    && (string.IsNullOrWhiteSpace(config.Name)
+                        || config.Name.StartsWith("Inspection", StringComparison.OrdinalIgnoreCase)))
+                {
+                    config.Name = roiModel.Label;
+                }
             }
+
+            GuiLog.Info($"[inspection] save slot={index} roi={roiModel.Label ?? roiModel.Id} shape={roiModel.Shape}");
+
+            var savedClone = roiModel.Clone();
+            SetInspectionSlotModel(index, savedClone);
+            RefreshInspectionRoiSlots();
+            SetActiveInspectionIndex(index);
+            EnsureInspectionDatasetStructure();
+            TryPersistLayout();
+
+            MessageBox.Show($"Inspection {index} guardada",
+                            $"Inspection {index}",
+                            MessageBoxButton.OK,
+                            MessageBoxImage.Information);
         }
 
-        private void BtnToggleInspection1_Click(object sender, RoutedEventArgs e)
-            => ToggleInspectionFrozen(Inspection1);
+        private void BtnSaveInspection1_Click(object sender, RoutedEventArgs e) => SaveCurrentInspectionToSlot(1);
 
-        private void BtnToggleInspection2_Click(object sender, RoutedEventArgs e)
-            => ToggleInspectionFrozen(Inspection2);
+        private void BtnSaveInspection2_Click(object sender, RoutedEventArgs e) => SaveCurrentInspectionToSlot(2);
 
-        private void BtnToggleInspection3_Click(object sender, RoutedEventArgs e)
-            => ToggleInspectionFrozen(Inspection3);
+        private void BtnSaveInspection3_Click(object sender, RoutedEventArgs e) => SaveCurrentInspectionToSlot(3);
 
-        private void BtnToggleInspection4_Click(object sender, RoutedEventArgs e)
-            => ToggleInspectionFrozen(Inspection4);
+        private void BtnSaveInspection4_Click(object sender, RoutedEventArgs e) => SaveCurrentInspectionToSlot(4);
 
         private void SetRoiAdornersVisible(string? roiId, bool visible)
         {
