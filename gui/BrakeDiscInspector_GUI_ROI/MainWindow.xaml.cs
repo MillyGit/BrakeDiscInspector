@@ -8251,6 +8251,14 @@ namespace BrakeDiscInspector_GUI_ROI
             SyncOverlayToImage(scheduleResync: true);
         }
 
+        // Overload mínima para compatibilidad con llamadas que pasan 'force: ...'
+        private void SyncOverlayToImage(bool force, bool scheduleResync = true)
+        {
+            // Por ahora preserva el comportamiento actual, ignorando el valor de 'force'.
+            // En el futuro, si se desea, se podrá usar para forzar el refresco.
+            SyncOverlayToImage(scheduleResync: scheduleResync);
+        }
+
         private void SyncOverlayToImage(bool scheduleResync)
         {
             if (ImgMain == null || CanvasROI == null) return;
