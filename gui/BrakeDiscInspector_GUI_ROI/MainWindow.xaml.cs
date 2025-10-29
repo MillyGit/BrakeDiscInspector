@@ -3387,25 +3387,35 @@ namespace BrakeDiscInspector_GUI_ROI
             LogHeatmap("---- UpdateHeatmapOverlayLayoutAndClip: END ----");
         }
 
-        private async Task ShowHeatmapOverlayAsync(Workflow.RoiExportResult export, byte[] heatmapBytes, double opacity)
+        private async Task EnsureOverlayAlignedForHeatmapAsync()
         {
-            // --- BEGIN minimal sync prologue ---
-            if (!Dispatcher.CheckAccess())
+            if (ImgMain == null || CanvasROI == null)
             {
-                await (await Dispatcher.InvokeAsync(async () =>
-                {
-                    await System.Threading.Tasks.Task.Yield();
-                    SyncOverlayToImage(scheduleResync: true);
-                    await System.Threading.Tasks.Task.Yield();
-                }));
+                return;
+            }
+
+            if (Dispatcher.CheckAccess())
+            {
+                await Dispatcher.Yield(DispatcherPriority.Loaded);
+                SyncOverlayToImage(scheduleResync: false);
+                ScheduleSyncOverlay(force: true);
+                await Dispatcher.Yield(DispatcherPriority.Render);
             }
             else
             {
-                await Dispatcher.Yield(System.Windows.Threading.DispatcherPriority.Loaded);
-                SyncOverlayToImage(scheduleResync: true);
-                await Dispatcher.Yield(System.Windows.Threading.DispatcherPriority.Render);
+                await Dispatcher.InvokeAsync(() =>
+                {
+                    SyncOverlayToImage(scheduleResync: false);
+                    ScheduleSyncOverlay(force: true);
+                }, DispatcherPriority.Loaded);
+
+                await Dispatcher.InvokeAsync(() => { }, DispatcherPriority.Render);
             }
-            // --- END minimal sync prologue ---
+        }
+
+        private async Task ShowHeatmapOverlayAsync(Workflow.RoiExportResult export, byte[] heatmapBytes, double opacity)
+        {
+            await EnsureOverlayAlignedForHeatmapAsync().ConfigureAwait(false);
 
             if (export == null || heatmapBytes == null || heatmapBytes.Length == 0)
                 return;
