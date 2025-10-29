@@ -2497,17 +2497,24 @@ namespace BrakeDiscInspector_GUI_ROI
             ClearHeatmapOverlay();
             RestoreInspectionBaselineForCurrentImage();
 
-            if (HasAllMastersAndInspectionsDefined())
+            Dispatcher.InvokeAsync(async () =>
             {
-                try
+                await Dispatcher.Yield(DispatcherPriority.Loaded);
+                SyncOverlayToImage(force: true);
+                await Dispatcher.Yield(DispatcherPriority.Render);
+
+                if (HasAllMastersAndInspectionsDefined())
                 {
-                    _ = AnalyzeMastersAsync();
+                    try
+                    {
+                        await AnalyzeMastersAsync();
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.WriteLine($"[AutoAnalyze] Failed: {ex.Message}");
+                    }
                 }
-                catch (Exception ex)
-                {
-                    Debug.WriteLine($"[AutoAnalyze] Failed: {ex.Message}");
-                }
-            }
+            }, DispatcherPriority.Loaded);
 
             UpdateRoiHud();
 
@@ -3382,6 +3389,24 @@ namespace BrakeDiscInspector_GUI_ROI
 
         private async Task ShowHeatmapOverlayAsync(Workflow.RoiExportResult export, byte[] heatmapBytes, double opacity)
         {
+            // --- BEGIN minimal sync prologue ---
+            if (!Dispatcher.CheckAccess())
+            {
+                await Dispatcher.InvokeAsync(async () =>
+                {
+                    await System.Threading.Tasks.Task.Yield();
+                    SyncOverlayToImage(force: true);
+                    await System.Threading.Tasks.Task.Yield();
+                });
+            }
+            else
+            {
+                await Dispatcher.Yield(System.Windows.Threading.DispatcherPriority.Loaded);
+                SyncOverlayToImage(force: true);
+                await Dispatcher.Yield(System.Windows.Threading.DispatcherPriority.Render);
+            }
+            // --- END minimal sync prologue ---
+
             if (export == null || heatmapBytes == null || heatmapBytes.Length == 0)
                 return;
 
@@ -4496,7 +4521,8 @@ namespace BrakeDiscInspector_GUI_ROI
         private void MainWindow_SizeChanged(object sender, SizeChangedEventArgs e)
         {
             AppendResizeLog($"[window] SizeChanged: window={ActualWidth:0}x{ActualHeight:0} ImgMain={ImgMain.ActualWidth:0}x{ImgMain.ActualHeight:0}");
-            ScheduleSyncOverlay(force: true);
+            SyncOverlayToImage(force: true);
+            RoiOverlay?.InvalidateVisual();
             UpdateHeatmapOverlayLayoutAndClip();
             RedrawAnalysisCrosses();
         }
