@@ -4213,6 +4213,38 @@ namespace BrakeDiscInspector_GUI_ROI
 
         private void BtnSaveInspection4_Click(object sender, RoutedEventArgs e) => SaveCurrentInspectionToSlot(4);
 
+        private void BtnRemoveInspection1_Click(object sender, RoutedEventArgs e) => RemoveInspectionRoi(1);
+
+        private void BtnRemoveInspection2_Click(object sender, RoutedEventArgs e) => RemoveInspectionRoi(2);
+
+        private void BtnRemoveInspection3_Click(object sender, RoutedEventArgs e) => RemoveInspectionRoi(3);
+
+        private void BtnRemoveInspection4_Click(object sender, RoutedEventArgs e) => RemoveInspectionRoi(4);
+
+        private void RemoveInspectionRoi(int index)
+        {
+            if (_layout == null)
+                return;
+
+            var roiModel = GetInspectionSlotModel(index);
+            if (roiModel == null)
+                return;
+
+            SetInspectionSlotModel(index, null);
+
+            if (index == 1 || _activeInspectionIndex == index)
+            {
+                _layout.Inspection = null;
+                SetInspectionBaseline(null);
+
+                if (_state == MasterState.Ready && _activeInspectionIndex == index)
+                    _state = MasterState.DrawInspection;
+            }
+
+            RefreshInspectionRoiSlots();
+            RedrawAllRois();
+        }
+
         private void SetRoiAdornersVisible(string? roiId, bool visible)
         {
             if (string.IsNullOrWhiteSpace(roiId))
