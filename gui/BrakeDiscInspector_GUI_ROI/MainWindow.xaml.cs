@@ -84,7 +84,7 @@ namespace BrakeDiscInspector_GUI_ROI
             }
 
             slot = value;
-            if (slot != null)
+            if (slot is not null)
             {
                 slot.IsFrozen = false; // Allow ROI to move and rotate during Analyze Master
             }
@@ -848,6 +848,7 @@ namespace BrakeDiscInspector_GUI_ROI
                     return;
                 }
 
+                // Always reposition active inspection ROIs during Analyze Master runs.
                 roisToMove.Add((roi, roi.Clone()));
             }
 
