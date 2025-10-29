@@ -84,6 +84,11 @@ namespace BrakeDiscInspector_GUI_ROI
             }
 
             slot = value;
+            if (slot != null)
+            {
+                slot.IsFrozen = false; // Allow ROI to move and rotate during Analyze Master
+            }
+
             OnPropertyChanged(propertyName);
         }
 
@@ -838,7 +843,7 @@ namespace BrakeDiscInspector_GUI_ROI
 
             void EnqueueInspection(RoiModel? roi)
             {
-                if (roi == null || roi.IsFrozen || !IsRoiSaved(roi) || !seen.Add(roi))
+                if (roi == null || roi.IsFrozen || !seen.Add(roi))
                 {
                     return;
                 }
