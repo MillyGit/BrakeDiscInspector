@@ -547,6 +547,7 @@ namespace BrakeDiscInspector_GUI_ROI
         // --- Last accepted detections on this image (for idempotence) ---
         private double _lastAccM1X = double.NaN, _lastAccM1Y = double.NaN;
         private double _lastAccM2X = double.NaN, _lastAccM2Y = double.NaN;
+        private bool _lastDetectionAccepted = false;
 
         // Tolerances (pixels / degrees). Tune if needed.
         private double _analyzePosTolPx = 1.0;    // <=1 px considered the same
@@ -833,8 +834,23 @@ namespace BrakeDiscInspector_GUI_ROI
             double angleDelta = DeltaAngleFromFrames(m1Base, m2Base, m1Cross, m2Cross);
 
             var roisToMove = new List<(RoiModel target, RoiModel baseline)>();
-            if (_layout.Inspection != null && !_layout.Inspection.IsFrozen)
-                roisToMove.Add((_layout.Inspection, _layout.Inspection.Clone()));
+            var seen = new HashSet<RoiModel>();
+
+            void EnqueueInspection(RoiModel? roi)
+            {
+                if (roi == null || roi.IsFrozen || !IsRoiSaved(roi) || !seen.Add(roi))
+                {
+                    return;
+                }
+
+                roisToMove.Add((roi, roi.Clone()));
+            }
+
+            EnqueueInspection(_layout.Inspection1);
+            EnqueueInspection(_layout.Inspection2);
+            EnqueueInspection(_layout.Inspection3);
+            EnqueueInspection(_layout.Inspection4);
+            EnqueueInspection(_layout.Inspection);
 
             foreach (var (target, baseline) in roisToMove)
             {
@@ -868,6 +884,61 @@ namespace BrakeDiscInspector_GUI_ROI
 
                 target.AngleDeg = baseline.AngleDeg + angleDelta * (180.0 / Math.PI);
             }
+        }
+
+        private bool AcceptNewDetectionIfDifferent(SWPoint newM1, SWPoint newM2, bool scaleLock,
+                                                   RoiModel? master1Baseline = null, RoiModel? master2Baseline = null)
+        {
+            if (_layout == null)
+            {
+                _lastDetectionAccepted = false;
+                return false;
+            }
+
+            var baselineM1 = master1Baseline ?? _layout.Master1Pattern?.Clone();
+            var baselineM2 = master2Baseline ?? _layout.Master2Pattern?.Clone();
+
+            bool hasLast = !double.IsNaN(_lastAccM1X) && !double.IsNaN(_lastAccM2X);
+            double posTol = _layout?.Analyze?.PosTolPx ?? _analyzePosTolPx;
+            double angTol = _layout?.Analyze?.AngTolDeg ?? _analyzeAngTolDeg;
+
+            bool accept = !hasLast;
+
+            if (hasLast)
+            {
+                double dM1 = Dist(newM1.X, newM1.Y, _lastAccM1X, _lastAccM1Y);
+                double dM2 = Dist(newM2.X, newM2.Y, _lastAccM2X, _lastAccM2Y);
+                double angOld = AngleDeg(_lastAccM2Y - _lastAccM1Y, _lastAccM2X - _lastAccM1X);
+                double angNew = AngleDeg(newM2.Y - newM1.Y, newM2.X - newM1.X);
+                double dAng = Math.Abs(angNew - angOld);
+                if (dAng > 180.0)
+                    dAng = 360.0 - dAng;
+
+                bool acceptByPos = posTol <= 0 || dM1 > posTol || dM2 > posTol;
+                bool acceptByAng = angTol <= 0 || dAng > angTol;
+
+                accept = acceptByPos || acceptByAng;
+            }
+
+            var m1ToApply = (!hasLast || accept) ? newM1 : new SWPoint(_lastAccM1X, _lastAccM1Y);
+            var m2ToApply = (!hasLast || accept) ? newM2 : new SWPoint(_lastAccM2X, _lastAccM2Y);
+
+            RepositionMastersToCrosses(m1ToApply, m2ToApply, scaleLock, baselineM1, baselineM2);
+            RepositionInspectionUsingSt(m1ToApply, m2ToApply, scaleLock, baselineM1, baselineM2);
+
+            RedrawAllRois();
+            UpdateRoiHud();
+            try { RedrawAnalysisCrosses(); }
+            catch { }
+
+            if (accept || !hasLast)
+            {
+                _lastAccM1X = newM1.X; _lastAccM1Y = newM1.Y;
+                _lastAccM2X = newM2.X; _lastAccM2Y = newM2.Y;
+            }
+
+            _lastDetectionAccepted = accept;
+            return accept;
         }
 
         private static bool IsRoiSaved(RoiModel? r)
@@ -2468,6 +2539,7 @@ namespace BrakeDiscInspector_GUI_ROI
                     _imageKeyForMasters = key;
                     _mastersSeededForImage = false;
                     _lastAccM1X = _lastAccM1Y = _lastAccM2X = _lastAccM2Y = double.NaN;
+                    _lastDetectionAccepted = false;
                     InspLog("[Analyze] Reset last-accepted M1/M2 for new image.");
                 }
                 else
@@ -5830,11 +5902,7 @@ namespace BrakeDiscInspector_GUI_ROI
                 var master2Baseline = _layout?.Master2Pattern?.Clone();
                 bool scaleLock = ScaleLock;
 
-                RepositionMastersToCrosses(crossM1, crossM2, scaleLock, master1Baseline, master2Baseline);
-                RepositionInspectionUsingSt(crossM1, crossM2, scaleLock, master1Baseline, master2Baseline);
-
-                RedrawAllRois();
-                UpdateRoiHud();
+                AcceptNewDetectionIfDifferent(crossM1, crossM2, scaleLock, master1Baseline, master2Baseline);
             }
             catch (Exception ex)
             {
@@ -6209,6 +6277,9 @@ namespace BrakeDiscInspector_GUI_ROI
 
         private void MoveInspectionTo(RoiModel insp, SWPoint master1, SWPoint master2)
         {
+            bool detectionAccepted = _lastDetectionAccepted;
+            _lastDetectionAccepted = false;
+
             if (insp?.IsFrozen == true)
             {
                 AppendLog("[Analyze] Inspection ROI frozen; skipping MoveInspectionTo.");
@@ -6290,7 +6361,7 @@ namespace BrakeDiscInspector_GUI_ROI
                 double dAng = System.Math.Abs(angNew - angOld);
                 if (dAng > 180.0) dAng = 360.0 - dAng;
 
-                if (dM1 <= _analyzePosTolPx && dM2 <= _analyzePosTolPx && dAng <= _analyzeAngTolDeg)
+                if (!detectionAccepted && dM1 <= _analyzePosTolPx && dM2 <= _analyzePosTolPx && dAng <= _analyzeAngTolDeg)
                 {
                     InspLog($"[Analyze] NO-OP: detection within tolerance (dM1={dM1:F3}px, dM2={dM2:F3}px, dAng={dAng:F3}°).");
                     return;
