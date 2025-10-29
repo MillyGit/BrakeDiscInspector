@@ -2500,7 +2500,7 @@ namespace BrakeDiscInspector_GUI_ROI
             Dispatcher.InvokeAsync(async () =>
             {
                 await Dispatcher.Yield(DispatcherPriority.Loaded);
-                SyncOverlayToImage(force: true);
+                SyncOverlayToImage(scheduleResync: true);
                 await Dispatcher.Yield(DispatcherPriority.Render);
 
                 if (HasAllMastersAndInspectionsDefined())
@@ -3392,17 +3392,17 @@ namespace BrakeDiscInspector_GUI_ROI
             // --- BEGIN minimal sync prologue ---
             if (!Dispatcher.CheckAccess())
             {
-                await Dispatcher.InvokeAsync(async () =>
+                await (await Dispatcher.InvokeAsync(async () =>
                 {
                     await System.Threading.Tasks.Task.Yield();
-                    SyncOverlayToImage(force: true);
+                    SyncOverlayToImage(scheduleResync: true);
                     await System.Threading.Tasks.Task.Yield();
-                });
+                }));
             }
             else
             {
                 await Dispatcher.Yield(System.Windows.Threading.DispatcherPriority.Loaded);
-                SyncOverlayToImage(force: true);
+                SyncOverlayToImage(scheduleResync: true);
                 await Dispatcher.Yield(System.Windows.Threading.DispatcherPriority.Render);
             }
             // --- END minimal sync prologue ---
@@ -4521,7 +4521,7 @@ namespace BrakeDiscInspector_GUI_ROI
         private void MainWindow_SizeChanged(object sender, SizeChangedEventArgs e)
         {
             AppendResizeLog($"[window] SizeChanged: window={ActualWidth:0}x{ActualHeight:0} ImgMain={ImgMain.ActualWidth:0}x{ImgMain.ActualHeight:0}");
-            SyncOverlayToImage(force: true);
+            SyncOverlayToImage(scheduleResync: true);
             RoiOverlay?.InvalidateVisual();
             UpdateHeatmapOverlayLayoutAndClip();
             RedrawAnalysisCrosses();
