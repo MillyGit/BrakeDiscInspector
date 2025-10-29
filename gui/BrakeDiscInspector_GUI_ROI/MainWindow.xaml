@@ -117,6 +117,21 @@
                       Content="Add to NG"
                       Command="{Binding DataContext.AddRoiToNgCommand, ElementName=WorkflowHost}"
                       CommandParameter="{Binding Inspection1}"/>
+              <Button x:Name="BtnRemoveInspection1"
+                      Margin="8,0,0,0"
+                      Content="Remove 1"
+                      Click="BtnRemoveInspection1_Click">
+                <Button.Style>
+                  <Style TargetType="Button">
+                    <Setter Property="IsEnabled" Value="True"/>
+                    <Style.Triggers>
+                      <DataTrigger Binding="{Binding DataContext.Inspection1, ElementName=WorkflowHost}" Value="{x:Null}">
+                        <Setter Property="IsEnabled" Value="False"/>
+                      </DataTrigger>
+                    </Style.Triggers>
+                  </Style>
+                </Button.Style>
+              </Button>
             </StackPanel>
 
             <StackPanel Orientation="Horizontal" Margin="8,4,8,0">
@@ -148,6 +163,21 @@
                       Content="Add to NG"
                       Command="{Binding DataContext.AddRoiToNgCommand, ElementName=WorkflowHost}"
                       CommandParameter="{Binding Inspection2}"/>
+              <Button x:Name="BtnRemoveInspection2"
+                      Margin="8,0,0,0"
+                      Content="Remove 2"
+                      Click="BtnRemoveInspection2_Click">
+                <Button.Style>
+                  <Style TargetType="Button">
+                    <Setter Property="IsEnabled" Value="True"/>
+                    <Style.Triggers>
+                      <DataTrigger Binding="{Binding DataContext.Inspection2, ElementName=WorkflowHost}" Value="{x:Null}">
+                        <Setter Property="IsEnabled" Value="False"/>
+                      </DataTrigger>
+                    </Style.Triggers>
+                  </Style>
+                </Button.Style>
+              </Button>
             </StackPanel>
 
             <StackPanel Orientation="Horizontal" Margin="8,4,8,0">
@@ -179,6 +209,21 @@
                       Content="Add to NG"
                       Command="{Binding DataContext.AddRoiToNgCommand, ElementName=WorkflowHost}"
                       CommandParameter="{Binding Inspection3}"/>
+              <Button x:Name="BtnRemoveInspection3"
+                      Margin="8,0,0,0"
+                      Content="Remove 3"
+                      Click="BtnRemoveInspection3_Click">
+                <Button.Style>
+                  <Style TargetType="Button">
+                    <Setter Property="IsEnabled" Value="True"/>
+                    <Style.Triggers>
+                      <DataTrigger Binding="{Binding DataContext.Inspection3, ElementName=WorkflowHost}" Value="{x:Null}">
+                        <Setter Property="IsEnabled" Value="False"/>
+                      </DataTrigger>
+                    </Style.Triggers>
+                  </Style>
+                </Button.Style>
+              </Button>
             </StackPanel>
 
             <StackPanel Orientation="Horizontal" Margin="8,4,8,0">
@@ -210,6 +255,21 @@
                       Content="Add to NG"
                       Command="{Binding DataContext.AddRoiToNgCommand, ElementName=WorkflowHost}"
                       CommandParameter="{Binding Inspection4}"/>
+              <Button x:Name="BtnRemoveInspection4"
+                      Margin="8,0,0,0"
+                      Content="Remove 4"
+                      Click="BtnRemoveInspection4_Click">
+                <Button.Style>
+                  <Style TargetType="Button">
+                    <Setter Property="IsEnabled" Value="True"/>
+                    <Style.Triggers>
+                      <DataTrigger Binding="{Binding DataContext.Inspection4, ElementName=WorkflowHost}" Value="{x:Null}">
+                        <Setter Property="IsEnabled" Value="False"/>
+                      </DataTrigger>
+                    </Style.Triggers>
+                  </Style>
+                </Button.Style>
+              </Button>
             </StackPanel>
 
             <Separator Margin="0,12,0,12"/>
