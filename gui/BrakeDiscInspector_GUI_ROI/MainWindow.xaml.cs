@@ -3222,6 +3222,7 @@ namespace BrakeDiscInspector_GUI_ROI
                 HeatmapOverlay.Source = null;
                 HeatmapOverlay.Visibility = Visibility.Collapsed;
                 HeatmapOverlay.Clip = null;
+                HeatmapOverlay.RenderTransform = Transform.Identity;
                 LogHeatmap("Clip = null");
                 LogHeatmap("---- UpdateHeatmapOverlayLayoutAndClip: END ----");
                 return;
@@ -3281,6 +3282,8 @@ namespace BrakeDiscInspector_GUI_ROI
             }
 
             LogHeatmap($"Heatmap by Margin with CanvasROI.Margin sum: finalMargin=({HeatmapOverlay.Margin.Left},{HeatmapOverlay.Margin.Top})");
+
+            ApplyHeatmapOverlayRotation(rc.Width, rc.Height);
 
             HeatmapOverlay.Visibility = System.Windows.Visibility.Visible;
 
@@ -3385,6 +3388,43 @@ namespace BrakeDiscInspector_GUI_ROI
             }
 
             LogHeatmap("---- UpdateHeatmapOverlayLayoutAndClip: END ----");
+        }
+
+        private void ApplyHeatmapOverlayRotation(double width, double height)
+        {
+            if (HeatmapOverlay == null)
+            {
+                return;
+            }
+
+            if (_lastHeatmapRoi == null || width <= 0 || height <= 0)
+            {
+                HeatmapOverlay.RenderTransform = Transform.Identity;
+                LogHeatmap("Heatmap rotation reset (no ROI or empty size).");
+                return;
+            }
+
+            double angle = _lastHeatmapRoi.AngleDeg;
+            if (double.IsNaN(angle))
+            {
+                angle = 0.0;
+            }
+
+            var pivotLocal = RoiAdorner.GetRotationPivotLocalPoint(_lastHeatmapRoi, width, height);
+
+            if (HeatmapOverlay.RenderTransform is RotateTransform rotate)
+            {
+                rotate.Angle = angle;
+                rotate.CenterX = pivotLocal.X;
+                rotate.CenterY = pivotLocal.Y;
+            }
+            else
+            {
+                rotate = new RotateTransform(angle, pivotLocal.X, pivotLocal.Y);
+                HeatmapOverlay.RenderTransform = rotate;
+            }
+
+            LogHeatmap($"Heatmap rotation applied: angle={angle:F2}, pivot=({pivotLocal.X:F2},{pivotLocal.Y:F2}).");
         }
 
         private async Task EnsureOverlayAlignedForHeatmapAsync()
