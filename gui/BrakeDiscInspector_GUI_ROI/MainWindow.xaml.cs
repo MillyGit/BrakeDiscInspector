@@ -900,15 +900,21 @@ namespace BrakeDiscInspector_GUI_ROI
 
                 moved++;
                 if (!string.IsNullOrEmpty(target?.Label))
+                {
                     movedLabels.Add(target.Label!);
-                else if (!string.IsNullOrEmpty(target?.Name))
-                    movedLabels.Add(target.Name!);
+                }
+                else if (target != null)
+                {
+                    movedLabels.Add(target.Role.ToString());
+                }
                 else
+                {
                     movedLabels.Add("Inspection");
+                }
             }
 
             System.Diagnostics.Debug.WriteLine(
-                $"[AnalyzeMaster] moved={moved} skipped_frozen={skippedFrozen} moved_labels={string.Join(\", \", movedLabels)}");
+                $"[AnalyzeMaster] moved={moved} skipped_frozen={skippedFrozen} moved_labels={string.Join(", ", movedLabels)}");
             AppendLog($"[AnalyzeMaster] moved={moved} skipped_frozen={skippedFrozen} moved_labels={string.Join(", ", movedLabels)}");
         }
 
