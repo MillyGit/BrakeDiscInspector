@@ -8646,6 +8646,7 @@ namespace BrakeDiscInspector_GUI_ROI
             catch
             {
                 _state = prev;
+                UpdateWizardState();
                 throw;
             }
         }
