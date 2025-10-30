@@ -8602,5 +8602,131 @@ namespace BrakeDiscInspector_GUI_ROI
 
 
 
+        private RoiShape ReadShapeFrom(ComboBox combo)
+        {
+            string t = (combo?.SelectedItem?.ToString() ?? "").ToLowerInvariant();
+            if (t.Contains("círculo") || t.Contains("circulo")) return RoiShape.Circle;
+            return RoiShape.Rectangle;
+        }
+
+        private void SetDrawToolFromShape(RoiShape shape)
+        {
+            // Mantén las herramientas existentes sin tocarlas: activa el toggle según la forma
+            if (shape == RoiShape.Circle)
+            {
+                CircleToolButton.IsChecked = true;
+                RectToolButton.IsChecked = false;
+            }
+            else
+            {
+                RectToolButton.IsChecked = true;
+                CircleToolButton.IsChecked = false;
+            }
+            // Annulus se gestiona desde la pestaña de Inspección; aquí solo Rect/Circ para masters.
+        }
+
+        private void StartDrawingFor(MasterState state, ComboBox shapeCombo)
+        {
+            _state = state;
+            var shape = ReadShapeFrom(shapeCombo);
+            SetDrawToolFromShape(shape);
+            UpdateWizardState();
+            Snack("Dibuja el ROI en el canvas y pulsa Guardar.");
+        }
+
+        private void SaveFor(MasterState state)
+        {
+            // Reutiliza la ruta ya probada por BtnSaveMaster_Click (usa _state actual internamente)
+            var prev = _state;
+            _state = state;
+            try
+            {
+                BtnSaveMaster_Click(this, new RoutedEventArgs());
+            }
+            finally
+            {
+                _state = prev; // restaura por seguridad
+            }
+        }
+
+        private void RemoveFor(MasterState state)
+        {
+            var prev = _state;
+            _state = state;
+            try
+            {
+                var cleared = TryClearCurrentStatePersistedRoi(out var role);
+                if (cleared)
+                {
+                    AppendLog($"[align] cleared {role}");
+                    RedrawOverlaySafe();
+                    UpdateWizardState();
+                    Snack($"{role} eliminado.");
+                }
+                else
+                {
+                    Snack("No hay ROI que eliminar para este slot.");
+                }
+            }
+            finally
+            {
+                _state = prev;
+            }
+        }
+
+        private void BtnM1_Create_Click(object sender, RoutedEventArgs e) => StartDrawingFor(MasterState.DrawM1_Pattern, ComboM1Shape_Align);
+        private void BtnM1_Save_Click  (object sender, RoutedEventArgs e) => SaveFor(MasterState.DrawM1_Pattern);
+        private void BtnM1_Remove_Click(object sender, RoutedEventArgs e) => RemoveFor(MasterState.DrawM1_Pattern);
+
+        private void BtnM1S_Create_Click(object sender, RoutedEventArgs e) => StartDrawingFor(MasterState.DrawM1_Search, ComboM1SShape_Align);
+        private void BtnM1S_Save_Click  (object sender, RoutedEventArgs e) => SaveFor(MasterState.DrawM1_Search);
+        private void BtnM1S_Remove_Click(object sender, RoutedEventArgs e) => RemoveFor(MasterState.DrawM1_Search);
+
+        private void BtnM2_Create_Click(object sender, RoutedEventArgs e) => StartDrawingFor(MasterState.DrawM2_Pattern, ComboM2Shape_Align);
+        private void BtnM2_Save_Click  (object sender, RoutedEventArgs e) => SaveFor(MasterState.DrawM2_Pattern);
+        private void BtnM2_Remove_Click(object sender, RoutedEventArgs e) => RemoveFor(MasterState.DrawM2_Pattern);
+
+        private void BtnM2S_Create_Click(object sender, RoutedEventArgs e) => StartDrawingFor(MasterState.DrawM2_Search, ComboM2SShape_Align);
+        private void BtnM2S_Save_Click  (object sender, RoutedEventArgs e) => SaveFor(MasterState.DrawM2_Search);
+        private void BtnM2S_Remove_Click(object sender, RoutedEventArgs e) => RemoveFor(MasterState.DrawM2_Search);
+
+        private void BtnClearCanvas_Click(object sender, RoutedEventArgs e)
+        {
+            // Limpia visual y modelo de forma controlada, SIN tocar render/resize críticos
+            try
+            {
+                // 1) Limpia shapes del Canvas
+                CanvasROI.Children.Clear();
+                RoiOverlay.Visibility = Visibility.Collapsed;
+
+                // 2) Resetea el layout mínimo necesario
+                if (_layout != null)
+                {
+                    _layout.Master1Pattern = null;
+                    _layout.Master1Search  = null;
+                    _layout.Master2Pattern = null;
+                    _layout.Master2Search  = null;
+                    _layout.Inspection     = null;
+                    _layout.Inspection1    = null;
+                    _layout.Inspection2    = null;
+                    _layout.Inspection3    = null;
+                    _layout.Inspection4    = null;
+                }
+
+                // 3) Refrescos standard ya usados en el flujo
+                RequestRoiVisibilityRefresh();
+                RedrawOverlaySafe();
+                UpdateRoiHud();
+
+                AppendLog("[align] Canvas limpio (todos los ROI eliminados).");
+                Snack("Canvas borrado.");
+            }
+            catch (Exception ex)
+            {
+                AppendLog("[align] Error al limpiar canvas: " + ex.Message);
+                Snack("Error al limpiar canvas.");
+            }
+        }
+
     }
 }
