@@ -286,6 +286,7 @@ namespace BrakeDiscInspector_GUI_ROI
             if (_layout.Inspection != null)
             {
                 NormalizeInspectionRoi(_layout.Inspection, _activeInspectionIndex);
+                _layout.Inspection.IsFrozen = false;
             }
         }
 
@@ -841,14 +842,21 @@ namespace BrakeDiscInspector_GUI_ROI
             var roisToMove = new List<(RoiModel target, RoiModel baseline)>();
             var seen = new HashSet<RoiModel>();
 
-            void EnqueueInspection(RoiModel? roi)
+            int moved = 0;
+            int skippedFrozen = 0;
+            var movedLabels = new List<string>();
+
+            void EnqueueInspection(RoiModel? roi, bool always = false)
             {
-                if (roi == null || roi.IsFrozen || !seen.Add(roi))
+                if (roi == null || !seen.Add(roi))
+                    return;
+
+                if (!always && roi.IsFrozen)
                 {
+                    skippedFrozen++;
                     return;
                 }
 
-                // Always reposition active inspection ROIs during Analyze Master runs.
                 roisToMove.Add((roi, roi.Clone()));
             }
 
@@ -856,7 +864,7 @@ namespace BrakeDiscInspector_GUI_ROI
             EnqueueInspection(_layout.Inspection2);
             EnqueueInspection(_layout.Inspection3);
             EnqueueInspection(_layout.Inspection4);
-            EnqueueInspection(_layout.Inspection);
+            EnqueueInspection(_layout.Inspection, always: true);
 
             foreach (var (target, baseline) in roisToMove)
             {
@@ -889,7 +897,19 @@ namespace BrakeDiscInspector_GUI_ROI
                 SetRoiCenterImg(target, mapped.X, mapped.Y);
 
                 target.AngleDeg = baseline.AngleDeg + angleDelta * (180.0 / Math.PI);
+
+                moved++;
+                if (!string.IsNullOrEmpty(target?.Label))
+                    movedLabels.Add(target.Label!);
+                else if (!string.IsNullOrEmpty(target?.Name))
+                    movedLabels.Add(target.Name!);
+                else
+                    movedLabels.Add("Inspection");
             }
+
+            System.Diagnostics.Debug.WriteLine(
+                $"[AnalyzeMaster] moved={moved} skipped_frozen={skippedFrozen} moved_labels={string.Join(\", \", movedLabels)}");
+            AppendLog($"[AnalyzeMaster] moved={moved} skipped_frozen={skippedFrozen} moved_labels={string.Join(", ", movedLabels)}");
         }
 
         private bool AcceptNewDetectionIfDifferent(SWPoint newM1, SWPoint newM2, bool scaleLock,
