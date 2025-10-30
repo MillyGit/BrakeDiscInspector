@@ -8643,9 +8643,11 @@ namespace BrakeDiscInspector_GUI_ROI
             {
                 BtnSaveMaster_Click(this, new RoutedEventArgs());
             }
-            finally
+            catch
             {
-                _state = prev; // restaura por seguridad
+                _state = prev;
+                UpdateWizardState();
+                throw;
             }
         }
 
