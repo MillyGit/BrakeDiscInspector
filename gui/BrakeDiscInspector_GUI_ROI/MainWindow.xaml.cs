@@ -4531,9 +4531,9 @@ namespace BrakeDiscInspector_GUI_ROI
                 Master1EditorGroup.Visibility = Visibility.Collapsed;
             }
 
-            if (Master2EditorGroup != null)
+            if (FindName("Master2EditorGroup") is System.Windows.FrameworkElement master2EditorGroupElem)
             {
-                Master2EditorGroup.Visibility = Visibility.Collapsed;
+                master2EditorGroupElem.Visibility = Visibility.Collapsed;
             }
         }
 
