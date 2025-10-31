@@ -1,0 +1,46 @@
+# Guía para Codex: Adelgazar el repositorio backend
+
+## Objetivo
+Eliminar o aislar código heredado basado en TensorFlow/Flask para reducir peso del repositorio y dependencias innecesarias para el backend PatchCore/DINOv2 actual.
+
+## Contexto
+- `backend/app.py` implementa el servicio FastAPI moderno con PatchCore/DINOv2.
+- El código legado TensorFlow+Flask permanece en archivos no referenciados por `app.py`.
+- Eliminar estos archivos permite:
+  - Reducir LOC (~2.1k líneas) que ya no se usan.
+  - Evitar dependencias pesadas (TensorFlow, Matplotlib, Tkinter) en despliegues del backend actual.
+
+## Alcance sugerido
+1. **Servicios Flask antiguos**
+   - `backend/app_old.py`
+   - `backend/status_utils.py`
+2. **Pipeline de preprocesado TensorFlow**
+   - `backend/preprocess.py`
+   - Scripts de verificación (`Check_pre_process.py`, `CheckImage.py`, `CheckPixel.py`).
+3. **Scripts de entrenamiento/validación TensorFlow**
+   - `backend/train_model.py`
+   - `backend/validate_f1.py`
+   - `backend/ConvertToJpeg.py`
+   - `backend/TestPY.py`
+   - `backend/export_snippets.py`
+   - `backend/CompareImages.py`
+
+## Plan de acción recomendado
+1. **Respaldar antes de borrar**
+   - Crear rama de archivo muerto `git checkout -b chore/remove-legacy-tf`.
+   - Confirmar que ninguna ruta anterior se utiliza en pipelines CI/CD.
+2. **Eliminar archivos**
+   - Borrar archivos listados arriba.
+   - Actualizar `backend/requirements.txt` retirando dependencias exclusivas de TensorFlow si no se usan en otro lugar.
+3. **Actualizar documentación**
+   - Revisar `README_backend.md` y otros docs para remover referencias a TensorFlow/Flask.
+4. **Verificación**
+   - Ejecutar `uvicorn backend.app:app --reload` (o tests existentes) para validar que FastAPI sigue funcionando sin dependencias legadas.
+5. **Commit & PR**
+   - Mensaje sugerido: `chore: remove legacy tensorflow backend`
+   - Incluir notas sobre reducción de dependencias y LOC.
+
+## Consideraciones
+- Si se requiere preservar el código antiguo, moverlo a carpeta `legacy/` o a un repositorio separado.
+- Coordinar con equipo QA antes de eliminar pipelines de entrenamiento si aún se necesitan para reproducibilidad histórica.
+- Documentar en CHANGELOG o wiki la decisión de retirar el backend antiguo.
