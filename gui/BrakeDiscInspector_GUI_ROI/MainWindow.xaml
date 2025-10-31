@@ -84,7 +84,7 @@
             </GroupBox>
 
             <!-- ====== Sección: Master 2 ====== -->
-            <GroupBox Header="Master 2" Margin="0,10,0,0">
+            <GroupBox x:Name="Master2EditorGroup" Header="Master 2" Margin="0,10,0,0">
               <StackPanel Margin="0,8,0,0">
                 <WrapPanel VerticalAlignment="Center">
                   <TextBlock Text="Forma:" Margin="0,0,8,0" VerticalAlignment="Center"/>
