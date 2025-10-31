@@ -1,1 +1,1 @@
-# empty package marker for test discovery
+"""Backend test suite for the FastAPI PatchCore service."""

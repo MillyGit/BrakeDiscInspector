@@ -14,12 +14,12 @@
   ```
 - Reinicia la sesión para asegurarte de que el loader encuentre la librería.
 
-### Error `tensorflow.__spec__ is None` al importar `torchvision`
-- En runners CI o entornos compartidos, desinstala TensorFlow antes de instalar Torch CPU:
+### Conflictos con instalaciones previas de TensorFlow
+- Si compartes entorno con otros proyectos que aún usan TensorFlow, desinstálalo antes de instalar Torch CPU:
   ```bash
   pip uninstall -y tensorflow tensorflow-cpu tensorflow-intel || true
   ```
-- Reinstala `torchvision` usando la misma index URL que `torch`.
+- El backend actual no requiere TensorFlow, pero su presencia puede interferir con `torchvision`.
 
 ### Botones de la GUI no visibles / toolbars superpuestas
 - Verifica que el `ToolBarTray` tenga `Band` distintos para cada toolbar.
@@ -33,7 +33,7 @@
 
 ### `pytest` no encuentra módulos del backend
 - Ejecuta las pruebas desde la raíz o exporta `PYTHONPATH=backend`.
-- Usa `python -m pytest backend/tests -k train_status` para aislar casos.
+- Usa `python -m pytest backend/tests -k app_fastapi` para aislar casos de los endpoints actuales.
 
 ### Los archivos guardados no aparecen en el explorador
 - Usa el botón **Open Folder** en la GUI para abrir el directorio actual.
@@ -41,10 +41,9 @@
 - Si trabajas en WSL, confirma la ruta compartida entre Windows y Linux.
 
 ## Pasos de diagnóstico rápido
-1. `curl http://localhost:8000/` para asegurar que el backend está activo.
-2. `curl http://localhost:8000/train/status` para revisar estado de entrenamiento.
-3. Ejecutar `python -m pytest backend/tests/test_app_train_status.py`.
-4. Revisar el panel de logs de la GUI para mensajes recientes.
+1. `curl http://localhost:8000/health` para asegurar que el backend está activo.
+2. Ejecutar `python -m pytest backend/tests` para validar la capa FastAPI sin cargar modelos pesados.
+3. Revisar el panel de logs de la GUI para mensajes recientes.
 
 ## Recursos adicionales
 - [docs/SETUP.md](SETUP.md) para instalación detallada.

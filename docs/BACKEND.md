@@ -3,33 +3,39 @@
 ## Estructura del backend
 El backend reside en `backend/` y está construido sobre FastAPI. Los módulos principales son:
 
-- `app.py`: crea la instancia FastAPI, define los endpoints (`/`, `/train/status`, `/fit_ok`, `/send_ng`, `/predict`), valida campos de formularios `multipart/form-data`, serializa respuestas JSON y coordina workers de entrenamiento. Respeta la variable `memory_fit` para decidir si se actualiza un coreset en memoria.
-- `features.py`: encapsula la inicialización del modelo (DINOv2 ViT-S/14 vía `timm`). Implementa **lazy import** de dependencias pesadas (`timm`, `torchvision`) cuando la variable de entorno `BDI_LIGHT_IMPORT=1` está activa, lo cual mantiene el CI ligero. En ejecución real, detecta GPU (`torch.cuda.is_available()`) y desplaza el modelo al dispositivo adecuado.
-- `dataset_manager.py`: organiza las muestras OK/NG en disco utilizando carpetas por `(role_id, roi_id)`. Genera nombres de archivo únicos con timestamp y guarda un JSON de metadatos con información como `mm_per_px`, `source`, `timestamp_utc` y el identificador de la ROI. Gestiona también la lectura y conteo de muestras para reportar tamaños de datasets.
-- `tests/`: contiene pruebas unitarias, entre ellas `test_app_train_status.py`, que valida que `/train/status` responde correctamente sin inicializar modelos pesados (se apoya en `BDI_LIGHT_IMPORT`).
+- `app.py`: instancia FastAPI y define los endpoints `/health`, `/fit_ok`, `/calibrate_ng` y `/infer`. Orquesta el extractor DinoV2, la memoria PatchCore y la persistencia en disco.
+- `features.py`: inicializa el extractor DINOv2 ViT-S/14 (vía `timm` + `torch`). Implementa carga perezosa cuando `BDI_LIGHT_IMPORT=1` para mantener el CI ligero.
+- `patchcore.py`: funciones auxiliares para coreset k-center greedy y búsqueda kNN (FAISS o sklearn).
+- `infer.py`: lógica de inferencia PatchCore (distancias → heatmap → score/regions).
+- `calib.py`: selección de umbral a partir de puntuaciones OK/NG.
+- `roi_mask.py`: utilidades para generar máscaras de ROI (rect, circle, annulus) en espacio canónico.
+- `storage.py`: gestiona archivos persistentes en `models/` (`*.npz`, `*_index.faiss`, `*_calib.json`).
+- `utils.py`: funciones de soporte (normalización, manejo de base64, serialización JSON).
+- `tests/`: pruebas unitarias ligeras para `/health`, `/fit_ok` y `/calibrate_ng` usando `fastapi.testclient`.
 
 ## Dependencias y configuración
-- Las dependencias están fijadas en `backend/requirements.txt` (FastAPI, Uvicorn, PyTorch, OpenCV, NumPy, etc.).
-- Para entornos sin GPU o pipelines CI se recomienda exportar `BDI_LIGHT_IMPORT=1` y fijar Torch CPU (`torch==2.5.1+cpu`).
-- El backend respeta variables como `BDI_DATA_ROOT` para personalizar el directorio raíz de datasets (por defecto `data/`).
+- Las dependencias están fijadas en `backend/requirements.txt` (FastAPI, Uvicorn, PyTorch CPU, OpenCV, NumPy, scikit-learn, etc.).
+- Variables relevantes:
+  - `BDI_MODELS_DIR`: ruta donde se guardan memorias/calibraciones (por defecto `models/`).
+  - `BDI_LIGHT_IMPORT=1`: evita cargar `timm/torchvision` durante importaciones en CI.
+  - `DEVICE`, `INPUT_SIZE`, `CORESET_RATE` se pueden ajustar vía `backend/config.py`.
 
 ## Modos de comunicación
 Las peticiones hacia el backend combinan JSON y archivos binarios según el endpoint:
 
-- **REST JSON** para respuestas y consultas (`GET /train/status`).
-- **Multipart/form-data** para subir imágenes (`POST /fit_ok`, `POST /send_ng`, `POST /predict`).
-- Los campos clave esperados en formularios son: `role_id`, `roi_id`, `mm_per_px`, `memory_fit` (opcional, bool textual), `images` (una o varias), y en el caso de predicción `image` singular.
+- **`GET /health`** — JSON simple para estado del servicio.
+- **`POST /fit_ok`** — `multipart/form-data` con múltiples imágenes OK (ROI canónico) para construir memoria PatchCore.
+- **`POST /calibrate_ng`** — `application/json` con puntuaciones OK/NG para fijar umbral.
+- **`POST /infer`** — `multipart/form-data` con imagen ROI + máscara opcional (`shape` JSON) para obtener score, threshold y heatmap.
 
 ## Esquemas de JSON de referencia
-### `GET /train/status`
+### `GET /health`
 ```json
 {
-  "status": "idle|running",
-  "last_train_ts": "2025-10-20T10:21:45Z",
-  "queue_size": 0,
-  "model": "dino_v2",
-  "device": "cuda:0|cpu",
-  "coreset_size": 2048
+  "status": "ok",
+  "device": "cpu",
+  "model": "vit_small_patch14_dinov2.lvd142m",
+  "version": "0.1.0"
 }
 ```
 
@@ -38,56 +44,57 @@ Campos del formulario:
 - `role_id` (`str`)
 - `roi_id` (`str`)
 - `mm_per_px` (`float`)
-- `memory_fit` (`bool` textual: `"true"|"false"`)
-- `images` (`1..N` archivos PNG/JPG del ROI)
+- `memory_fit` (`bool` textual: `"true"|"false"`, opcional)
+- `images` (`1..N` archivos PNG/JPG del ROI canónico)
 
 Respuesta típica:
 ```json
 {
-  "ok_added": 3,
-  "target_dir": "data/rois/Inspection_1/ok",
-  "samples": [
-    {
-      "file": "data/rois/Inspection_1/ok/OK_20251026_121212345.png",
-      "meta": "data/rois/Inspection_1/ok/OK_20251026_121212345.json"
-    }
-  ]
+  "n_embeddings": 34992,
+  "coreset_size": 700,
+  "token_shape": [32, 32],
+  "coreset_rate_requested": 0.02,
+  "coreset_rate_applied": 0.018
 }
 ```
 
-### `POST /send_ng`
+### `POST /calibrate_ng`
 ```json
 {
-  "ng_added": 1,
-  "target_dir": "data/rois/Inspection_1/ng",
-  "samples": [
-    {
-      "file": "data/rois/Inspection_1/ng/NG_20251026_121342000.png",
-      "meta": "data/rois/Inspection_1/ng/NG_20251026_121342000.json"
-    }
-  ]
+  "threshold": 20.0,
+  "p99_ok": 12.0,
+  "p5_ng": 28.0,
+  "mm_per_px": 0.2,
+  "area_mm2_thr": 1.0,
+  "score_percentile": 99
 }
 ```
 
-### `POST /predict`
+### `POST /infer`
 ```json
 {
-  "role_id": "Inspection",
-  "roi_id": "Inspection_1",
-  "scores": [
-    {"roi": "Inspection_1", "score": 0.12, "is_anomaly": false}
+  "role_id": "Master1",
+  "roi_id": "Pattern",
+  "score": 18.7,
+  "threshold": 20.0,
+  "heatmap_png_base64": "iVBORw0K...",
+  "regions": [
+    {"bbox": [x, y, w, h], "area_px": 250.0, "area_mm2": 10.0, "contour": [[x1, y1], ...] }
   ],
-  "inference_ms": 22.7,
-  "image_resized": [2048, 2048]
+  "token_shape": [32, 32],
+  "params": {
+    "extractor": "vit_small_patch14_dinov2.lvd142m",
+    "input_size": 448,
+    "coreset_rate": 0.02,
+    "score_percentile": 99
+  }
 }
 ```
-
-Los campos `scores` pueden incluir información adicional como `threshold`, `percentile` o regiones destacadas cuando se habilitan heatmaps.
 
 ## Rutas de guardado
-- **Ruta principal**: `data/rois/Inspection_<n>/{ok|ng}` para ROIs definidas en inspección. Cada imagen guarda su JSON contiguo (`.json`).
-- **Ruta secundaria (fallback)**: `data/datasets/<roiId>/{ok|ng}` para casos sin `DatasetPath` asignado desde la GUI.
-- El backend crea las carpetas de forma perezosa (`os.makedirs(exist_ok=True)`) y evita sobrescribir archivos existentes generando sufijos únicos.
+- **Memorias**: `models/<encoded-role>__<encoded-roi>.npz` con embeddings y token grid.
+- **Índices**: `models/<encoded-role>__<encoded-roi>_index.faiss` (opcional si FAISS está disponible).
+- **Calibraciones**: `models/<encoded-role>__<encoded-roi>_calib.json` con umbrales y metadatos.
 
 ## Ejecución local
 ```bash
@@ -98,6 +105,6 @@ Esto expone la documentación interactiva en `http://localhost:8000/docs`.
 
 ## Buenas prácticas
 - Mantener los endpoints y campos alineados con `agents.md` para evitar regresiones.
-- Utilizar `async`/`await` en funciones que realizan I/O (lectura de disco, escritura, inferencia) para aprovechar el event loop.
-- Registrar eventos relevantes (inicio/fin de entrenamiento, tamaño de datasets) usando el logger configurado en `app.py`.
-- En entornos con GPU, verificar `torch.backends.cudnn.benchmark = True` para acelerar inferencia en tamaños fijos, sin romper determinismo cuando no se requiera.
+- Ejecutar `pytest backend/tests` en CI antes de desplegar cambios.
+- Registrar tiempos clave (extracción, coreset, inferencia) usando el logger configurado en `app.py`.
+- Validar siempre que la GUI envíe ROIs canónicas (recortadas + rotadas); el backend no modifica geometría.

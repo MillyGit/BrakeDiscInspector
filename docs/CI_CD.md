@@ -25,10 +25,6 @@ jobs:
           pip install --index-url https://download.pytorch.org/whl/cpu \
             torch==2.5.1+cpu torchvision==0.20.1+cpu
           pip install -r backend/requirements.txt
-      - name: Limpiar TensorFlow
-        run: |
-          source .venv/bin/activate
-          pip uninstall -y tensorflow tensorflow-cpu tensorflow-intel || true
       - name: Ejecutar tests backend
         env:
           PYTHONPATH: ${{ github.workspace }}/backend
@@ -40,7 +36,7 @@ jobs:
 
 ## Notas importantes
 - **Torch CPU**: usar ruedas CPU evita dependencias CUDA en runners sin GPU.
-- **Desinstalar TensorFlow**: previene conflictos (`tensorflow.__spec__ is None`) con `torchvision` al importar.
+- **TensorFlow (opcional)**: si el runner tiene TensorFlow preinstalado por otros proyectos, desinstálalo para evitar conflictos con `torchvision`. El backend ya no depende de TensorFlow.
 - **BDI_LIGHT_IMPORT**: desactiva imports pesados y hace que los tests se ejecuten en segundos.
 - **PYTHONPATH**: apuntar a `backend/` simplifica los imports relativos en pruebas.
 
