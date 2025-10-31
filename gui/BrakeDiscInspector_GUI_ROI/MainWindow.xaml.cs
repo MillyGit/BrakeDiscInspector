@@ -2320,18 +2320,22 @@ namespace BrakeDiscInspector_GUI_ROI
 
             // Habilitación de tabs por etapas
             TabMaster1.IsEnabled = true;
-            TabMaster2.IsEnabled = m1Ready;           // puedes definir M2 cuando M1 está completo
             EnablePresetsTab(mastersReady || _hasLoadedImage);     // permite la pestaña de inspección tras cargar imagen o completar masters
 
             // Selección de tab acorde a estado
-            if (_state == MasterState.DrawM1_Pattern || _state == MasterState.DrawM1_Search)
+            if (_state == MasterState.DrawM1_Pattern || _state == MasterState.DrawM1_Search
+                || _state == MasterState.DrawM2_Pattern || _state == MasterState.DrawM2_Search)
+            {
                 MainTabs.SelectedItem = TabMaster1;
-            else if (_state == MasterState.DrawM2_Pattern || _state == MasterState.DrawM2_Search)
-                MainTabs.SelectedItem = TabMaster2;
+            }
             else if (_state == MasterState.DrawInspection)
+            {
                 MainTabs.SelectedItem = TabInspection;
+            }
             else
+            {
                 MainTabs.SelectedItem = TabInspection;
+            }
 
             if (_analysisViewActive && _state != MasterState.Ready)
             {
@@ -4531,10 +4535,6 @@ namespace BrakeDiscInspector_GUI_ROI
                 Master1EditorGroup.Visibility = Visibility.Collapsed;
             }
 
-            if (FindName("Master2EditorGroup") is System.Windows.FrameworkElement master2EditorGroupElem)
-            {
-                master2EditorGroupElem.Visibility = Visibility.Collapsed;
-            }
         }
 
         private void GoToInspectionTab()
@@ -8683,14 +8683,6 @@ namespace BrakeDiscInspector_GUI_ROI
         private void BtnM1S_Create_Click(object sender, RoutedEventArgs e) => StartDrawingFor(MasterState.DrawM1_Search, ComboMasterRoiShape);
         private void BtnM1S_Save_Click  (object sender, RoutedEventArgs e) => SaveFor(MasterState.DrawM1_Search);
         private void BtnM1S_Remove_Click(object sender, RoutedEventArgs e) => RemoveFor(MasterState.DrawM1_Search);
-
-        private void BtnM2_Create_Click(object sender, RoutedEventArgs e) => StartDrawingFor(MasterState.DrawM2_Pattern, ComboM2Shape);
-        private void BtnM2_Save_Click  (object sender, RoutedEventArgs e) => SaveFor(MasterState.DrawM2_Pattern);
-        private void BtnM2_Remove_Click(object sender, RoutedEventArgs e) => RemoveFor(MasterState.DrawM2_Pattern);
-
-        private void BtnM2S_Create_Click(object sender, RoutedEventArgs e) => StartDrawingFor(MasterState.DrawM2_Search, ComboM2Shape);
-        private void BtnM2S_Save_Click  (object sender, RoutedEventArgs e) => SaveFor(MasterState.DrawM2_Search);
-        private void BtnM2S_Remove_Click(object sender, RoutedEventArgs e) => RemoveFor(MasterState.DrawM2_Search);
 
         private void BtnClearCanvas_Click(object sender, RoutedEventArgs e)
         {
