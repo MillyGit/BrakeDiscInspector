@@ -22,7 +22,7 @@
 - **Miniaturas reales**: las colecciones observables mantienen rutas a los recortes generados; se crean thumbnails con el recorte exacto (incluyendo forma circular/annular mediante máscaras).
 
 ## Integración con backend
-- El ViewModel utiliza `HttpClient` con métodos `async/await` para invocar `/fit_ok`, `/send_ng`, `/predict` y `/train/status`.
+- El ViewModel utiliza `HttpClient` con métodos `async/await` para invocar `/fit_ok`, `/calibrate_ng`, `/infer` y `/health`.
 - Los errores HTTP se capturan y se registran en el panel de logs, mostrando mensajes amigables.
 - La URL base del backend se puede configurar (campo en la UI o archivo de configuración).
 

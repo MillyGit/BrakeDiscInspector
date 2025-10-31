@@ -68,15 +68,19 @@ Esta guía cubre la instalación del backend y la preparación de la GUI en ento
 
 ## Variables de entorno útiles
 - `BDI_LIGHT_IMPORT=1`: evita cargar `timm/torchvision` en CI o máquinas sin GPU (lazy import).
-- `BDI_DATA_ROOT=/ruta/custom`: cambia la carpeta base donde se guardan datasets.
+- `BDI_MODELS_DIR=/ruta/custom`: cambia la carpeta base donde se guardan memorias/calibraciones PatchCore.
 - `UVICORN_RELOAD_DIRS=backend`: restringe los watchers de recarga.
 
 ## Verificación rápida
 ```bash
 # Desde backend/
-python -m pytest tests/test_app_train_status.py
-curl http://localhost:8000/
-curl http://localhost:8000/train/status
+python -m pytest tests
+curl http://localhost:8000/health
+curl -X POST "http://localhost:8000/fit_ok" \
+  -F role_id=Sample \
+  -F roi_id=ROI1 \
+  -F mm_per_px=0.25 \
+  -F images=@roi.png
 ```
 
 ## Solución de problemas

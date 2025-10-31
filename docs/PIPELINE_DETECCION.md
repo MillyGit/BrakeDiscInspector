@@ -6,9 +6,9 @@ El pipeline PatchCore+DINOv2 procesa cada ROI canónica enviada por la GUI sigui
 1. **Recepción de imagen**: FastAPI recibe la imagen vía `multipart/form-data`, la valida (extensión, tamaño, modo de color) y la convierte en tensor `torch.FloatTensor` normalizado en `[0, 1]` manteniendo la relación `mm_per_px`.
 2. **Normalización / resizing**: si la resolución excede los límites soportados (p.ej., >12 MP), se aplica un reescalado controlado que preserva la escala física (ajustando `mm_per_px`). Para resoluciones estándar (2–4 MP) no se modifica.
 3. **Extracción de features**: `features.py` inicializa el backbone DINOv2 (ViT-S/14) y genera embeddings por token. Se soporta ejecución en GPU (`cuda`) o CPU según disponibilidad. Los embeddings se normalizan (`L2`) para facilitar comparaciones.
-4. **Selección / actualización de coreset**: cuando se realiza `fit_ok`, los embeddings se almacenan en la memoria de PatchCore. Con `memory_fit=true`, se aplica k-center greedy incremental para mantener un subconjunto representativo sin consumir toda la RAM.
-5. **Scoring**: durante `predict`, se calcula la distancia de cada token al coreset. Se obtiene un mapa de anomalía y se agregan estadísticas (percentil, máximo) dentro de la máscara de ROI.
-6. **Decisión**: se compara el score con el umbral vigente (derivado de calibraciones NG u opciones por defecto). Se devuelve `is_anomaly` junto con `score`, `threshold` y metadatos de inferencia (`inference_ms`).
+4. **Selección / actualización de coreset**: cuando se realiza `fit_ok`, los embeddings se almacenan y se construye el coreset PatchCore (k-center greedy). Con `memory_fit=true`, se conserva la muestra completa para escenarios de recalibración offline.
+5. **Scoring**: durante `infer`, se calcula la distancia de cada token al coreset. Se obtiene un mapa de anomalía y se agregan estadísticas (percentil p99 por defecto) dentro de la máscara de ROI.
+6. **Decisión**: se compara el score con el umbral vigente (derivado de `/calibrate_ng` o valores por defecto). Se devuelven `score`, `threshold`, `heatmap` y regiones destacadas.
 7. **Salida opcional**: si está habilitado, se genera un heatmap coloreado (`PNG` en base64) recortado a la ROI canónica para visualizar zonas calientes.
 
 ## Consideraciones de rendimiento
@@ -23,8 +23,9 @@ El pipeline PatchCore+DINOv2 procesa cada ROI canónica enviada por la GUI sigui
 - `mm_per_px` se utiliza para convertir áreas de heatmap a mm² cuando se requiere reporte físico.
 
 ## Persistencia
-- Cada `fit_ok`/`send_ng` almacena la imagen y un JSON con metadatos (`role_id`, `roi_id`, `mm_per_px`, `timestamp_utc`, `source`).
-- Se mantiene un índice de embeddings para acelerar reinicios. Durante el arranque, el backend puede reconstruir el coreset leyendo los archivos almacenados.
+- Cada `fit_ok` guarda `models/<role,roi>.npz` con embeddings y metadatos (`coreset_rate`, `token_shape`).
+- `/calibrate_ng` genera `models/<role,roi>_calib.json` con umbrales y parámetros (`mm_per_px`, percentil, área mínima).
+- Se mantiene un índice FAISS opcional para acelerar reinicios. Durante el arranque, el backend puede reconstruir el coreset leyendo los archivos almacenados.
 
 ## Debug y logging
 - El backend registra tiempos de inferencia, tamaño de lotes y dispositivo (`cuda`/`cpu`).
