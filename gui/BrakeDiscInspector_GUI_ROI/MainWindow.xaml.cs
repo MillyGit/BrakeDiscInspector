@@ -8604,24 +8604,8 @@ namespace BrakeDiscInspector_GUI_ROI
 
         private RoiShape ReadShapeFrom(ComboBox combo)
         {
-            if (combo == null) return RoiShape.Rectangle;
-
-            if (combo.SelectedIndex < 0 && combo.Items.Count > 0)
-                combo.SelectedIndex = 0;
-
-            if (combo.SelectedItem is ComboBoxItem item)
-            {
-                var content = item.Content?.ToString() ?? string.Empty;
-                var normalized = content.ToLowerInvariant();
-                if (normalized.Contains("círculo") || normalized.Contains("circulo"))
-                    return RoiShape.Circle;
-                return RoiShape.Rectangle;
-            }
-
-            var text = (combo.Text ?? string.Empty).ToLowerInvariant();
-            if (text.Contains("círculo") || text.Contains("circulo"))
-                return RoiShape.Circle;
-
+            string t = (combo?.SelectedItem?.ToString() ?? "").ToLowerInvariant();
+            if (t.Contains("círculo") || t.Contains("circulo")) return RoiShape.Circle;
             return RoiShape.Rectangle;
         }
 
@@ -8643,9 +8627,6 @@ namespace BrakeDiscInspector_GUI_ROI
 
         private void StartDrawingFor(MasterState state, ComboBox shapeCombo)
         {
-            if (shapeCombo != null && shapeCombo.SelectedIndex < 0 && shapeCombo.Items.Count > 0)
-                shapeCombo.SelectedIndex = 0;
-
             _state = state;
             var shape = ReadShapeFrom(shapeCombo);
             SetDrawToolFromShape(shape);
@@ -8656,22 +8637,23 @@ namespace BrakeDiscInspector_GUI_ROI
         private void SaveFor(MasterState state)
         {
             // Reutiliza la ruta ya probada por BtnSaveMaster_Click (usa _state actual internamente)
-            var restoreState = _state;
+            var prev = _state;
             _state = state;
             try
             {
                 BtnSaveMaster_Click(this, new RoutedEventArgs());
-                restoreState = _state;
             }
-            finally
+            catch
             {
-                _state = restoreState;
+                _state = prev;
+                UpdateWizardState();
+                throw;
             }
         }
 
         private void RemoveFor(MasterState state)
         {
-            var restoreState = _state;
+            var prev = _state;
             _state = state;
             try
             {
@@ -8687,12 +8669,10 @@ namespace BrakeDiscInspector_GUI_ROI
                 {
                     Snack("No hay ROI que eliminar para este slot.");
                 }
-
-                restoreState = _state;
             }
             finally
             {
-                _state = restoreState;
+                _state = prev;
             }
         }
 
@@ -8735,14 +8715,10 @@ namespace BrakeDiscInspector_GUI_ROI
                     _layout.Inspection4    = null;
                 }
 
-                _tmpBuffer = null;
-                ClearPreview();
-
                 // 3) Refrescos standard ya usados en el flujo
                 RequestRoiVisibilityRefresh();
                 RedrawOverlaySafe();
                 UpdateRoiHud();
-                UpdateWizardState();
 
                 AppendLog("[align] Canvas limpio (todos los ROI eliminados).");
                 Snack("Canvas borrado.");

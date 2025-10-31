@@ -68,26 +68,17 @@
             <!-- ====== Sección: Master 1 ====== -->
             <GroupBox Header="Master 1">
               <StackPanel Margin="0,8,0,0">
-                <WrapPanel VerticalAlignment="Center">
-                  <TextBlock Text="Forma:" Margin="0,0,8,0" VerticalAlignment="Center"/>
-                  <ComboBox x:Name="ComboM1Shape_Align" Width="130" Margin="0,0,12,0" SelectedIndex="0">
-                    <ComboBoxItem Content="Rectángulo"/>
-                    <ComboBoxItem Content="Círculo"/>
-                  </ComboBox>
-                  <Button x:Name="BtnM1_Create" Content="Crear" Margin="0,0,8,0" MinWidth="90" Click="BtnM1_Create_Click"/>
-                  <Button x:Name="BtnM1_Save"   Content="Guardar" Margin="0,0,8,0" MinWidth="90" Click="BtnM1_Save_Click"/>
-                  <Button x:Name="BtnM1_Remove" Content="Borrar" Margin="0,0,0,0"  MinWidth="90" Click="BtnM1_Remove_Click"/>
-                </WrapPanel>
-
-                <WrapPanel Margin="0,8,0,0" VerticalAlignment="Center">
-                  <TextBlock Text="Master search 1 - Forma:" Margin="0,0,8,0" VerticalAlignment="Center"/>
-                  <ComboBox x:Name="ComboM1SShape_Align" Width="130" Margin="0,0,12,0" SelectedIndex="0">
-                    <ComboBoxItem Content="Rectángulo"/>
-                    <ComboBoxItem Content="Círculo"/>
-                  </ComboBox>
-                  <Button x:Name="BtnM1S_Create" Content="Crear"  Margin="0,0,8,0" MinWidth="90" Click="BtnM1S_Create_Click"/>
-                  <Button x:Name="BtnM1S_Save"   Content="Guardar" Margin="0,0,8,0" MinWidth="90" Click="BtnM1S_Save_Click"/>
-                  <Button x:Name="BtnM1S_Remove" Content="Borrar"  Margin="0,0,0,0"  MinWidth="90" Click="BtnM1S_Remove_Click"/>
+                <TextBlock Text="Tipo:"/>
+                <ComboBox x:Name="ComboM2Role" Margin="0,4,0,8"/>
+                <TextBlock Text="Forma:"/>
+                <ComboBox x:Name="ComboM2Shape" Margin="0,4,0,8">
+                  <ComboBoxItem Content="Rectángulo"/>
+                  <ComboBoxItem Content="Círculo"/>
+                </ComboBox>
+                <WrapPanel>
+                  <!-- Keep using the same handler that is already implemented -->
+                  <Button Content="Save Master 2" Click="BtnSaveMaster_Click" Margin="0,0,8,0"/>
+                  <Button x:Name="BtnValidateM2" Content="Validar Master 2" Click="BtnValidateM2_Click"/>
                 </WrapPanel>
               </StackPanel>
             </GroupBox>
