@@ -70,7 +70,7 @@
               <StackPanel Margin="0,8,0,0">
                 <WrapPanel VerticalAlignment="Center">
                   <TextBlock Text="Forma:" Margin="0,0,8,0" VerticalAlignment="Center"/>
-                  <ComboBox x:Name="ComboM1Shape_Align" Width="130" Margin="0,0,12,0" SelectedIndex="0">
+                  <ComboBox x:Name="ComboM1Shape_Align" Width="130" Margin="0,0,12,0">
                     <ComboBoxItem Content="Rectángulo"/>
                     <ComboBoxItem Content="Círculo"/>
                   </ComboBox>
@@ -81,7 +81,7 @@
 
                 <WrapPanel Margin="0,8,0,0" VerticalAlignment="Center">
                   <TextBlock Text="Master search 1 - Forma:" Margin="0,0,8,0" VerticalAlignment="Center"/>
-                  <ComboBox x:Name="ComboM1SShape_Align" Width="130" Margin="0,0,12,0" SelectedIndex="0">
+                  <ComboBox x:Name="ComboM1SShape_Align" Width="130" Margin="0,0,12,0">
                     <ComboBoxItem Content="Rectángulo"/>
                     <ComboBoxItem Content="Círculo"/>
                   </ComboBox>
@@ -100,7 +100,7 @@
 
                 <WrapPanel VerticalAlignment="Center">
                   <TextBlock Text="Forma:" Margin="0,0,8,0" VerticalAlignment="Center"/>
-                  <ComboBox x:Name="ComboM2Shape" Width="130" Margin="0,0,12,0" SelectedIndex="0">
+                  <ComboBox x:Name="ComboM2Shape" Width="130" Margin="0,0,12,0">
                     <ComboBoxItem Content="Rectángulo"/>
                     <ComboBoxItem Content="Círculo"/>
                   </ComboBox>
@@ -111,7 +111,7 @@
 
                 <WrapPanel Margin="0,8,0,0" VerticalAlignment="Center">
                   <TextBlock Text="Master search 2 - Forma:" Margin="0,0,8,0" VerticalAlignment="Center"/>
-                  <ComboBox x:Name="ComboM2SShape_Align" Width="130" Margin="0,0,12,0" SelectedIndex="0">
+                  <ComboBox x:Name="ComboM2SShape_Align" Width="130" Margin="0,0,12,0">
                     <ComboBoxItem Content="Rectángulo"/>
                     <ComboBoxItem Content="Círculo"/>
                   </ComboBox>
