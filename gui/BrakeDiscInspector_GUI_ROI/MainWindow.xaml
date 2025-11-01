@@ -35,20 +35,47 @@
       <TabItem x:Name="TabMaster1" Header="Preparación/Alineación">
         <ScrollViewer VerticalScrollBarVisibility="Auto">
           <StackPanel Margin="10">
-            <Button x:Name="BtnLoadLayout" Content="Load Layout" Margin="0,0,0,8" Click="BtnLoadLayout_Click"/>
+            <!-- Layout -->
+            <Button x:Name="BtnLoadLayout"
+                    Content="Load Layout"
+                    Margin="0,0,0,8"
+                    MinWidth="120"
+                    Click="BtnLoadLayout_Click"/>
 
+            <!-- ===== Master 1 ===== -->
             <GroupBox x:Name="Master1EditorGroup" Header="Master 1">
               <StackPanel Margin="0,8,0,0">
-                <TextBlock Text="Tipo:"/>
-                <ComboBox x:Name="ComboMasterRoiRole" Margin="0,4,0,8"/>
-                <TextBlock Text="Forma:"/>
-                <ComboBox x:Name="ComboMasterRoiShape" Margin="0,4,0,8">
-                  <ComboBoxItem Content="Rectángulo"/>
-                  <ComboBoxItem Content="Círculo"/>
-                </ComboBox>
+                <Grid Margin="0,0,0,8">
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="120"/>
+                    <ColumnDefinition Width="*"/>
+                  </Grid.ColumnDefinitions>
+                  <TextBlock Text="Tipo:" Grid.Column="0" VerticalAlignment="Center"/>
+                  <ComboBox x:Name="ComboMasterRoiRole" Grid.Column="1" Margin="0,4,0,0"/>
+                </Grid>
+
+                <Grid Margin="0,0,0,8">
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="120"/>
+                    <ColumnDefinition Width="*"/>
+                  </Grid.ColumnDefinitions>
+                  <TextBlock Text="Forma:" Grid.Column="0" VerticalAlignment="Center"/>
+                  <ComboBox x:Name="ComboMasterRoiShape" Grid.Column="1" Margin="0,4,0,0">
+                    <ComboBoxItem Content="Rectángulo"/>
+                    <ComboBoxItem Content="Círculo"/>
+                  </ComboBox>
+                </Grid>
+
                 <WrapPanel>
-                  <Button x:Name="BtnSaveMaster" Content="Save Master 1" Click="BtnSaveMaster_Click" Margin="0,0,8,0"/>
-                  <Button x:Name="BtnValidateM1" Content="Validar Master 1" Click="BtnValidateM1_Click"/>
+                  <Button x:Name="BtnSaveMaster"
+                          Content="Save Master 1"
+                          Margin="0,0,8,0"
+                          MinWidth="120"
+                          Click="BtnSaveMaster_Click"/>
+                  <Button x:Name="BtnValidateM1"
+                          Content="Validar Master 1"
+                          MinWidth="120"
+                          Click="BtnValidateM1_Click"/>
                 </WrapPanel>
 
                 <Border Margin="0,12,0,0" Background="#11000000" Padding="8">
@@ -57,25 +84,49 @@
               </StackPanel>
             </GroupBox>
 
-            <GroupBox Header="Master 1" Margin="0,10,0,0">
+            <!-- ===== Master 2 (header fixed) ===== -->
+            <GroupBox Header="Master 2" Margin="0,10,0,0">
               <StackPanel Margin="0,8,0,0">
-                <TextBlock Text="Tipo:"/>
-                <ComboBox x:Name="ComboM2Role" Margin="0,4,0,8"/>
-                <TextBlock Text="Forma:"/>
-                <ComboBox x:Name="ComboM2Shape" Margin="0,4,0,8">
-                  <ComboBoxItem Content="Rectángulo"/>
-                  <ComboBoxItem Content="Círculo"/>
-                </ComboBox>
+                <Grid Margin="0,0,0,8">
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="120"/>
+                    <ColumnDefinition Width="*"/>
+                  </Grid.ColumnDefinitions>
+                  <TextBlock Text="Tipo:" Grid.Column="0" VerticalAlignment="Center"/>
+                  <ComboBox x:Name="ComboM2Role" Grid.Column="1" Margin="0,4,0,0"/>
+                </Grid>
+
+                <Grid Margin="0,0,0,8">
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="120"/>
+                    <ColumnDefinition Width="*"/>
+                  </Grid.ColumnDefinitions>
+                  <TextBlock Text="Forma:" Grid.Column="0" VerticalAlignment="Center"/>
+                  <ComboBox x:Name="ComboM2Shape" Grid.Column="1" Margin="0,4,0,0">
+                    <ComboBoxItem Content="Rectángulo"/>
+                    <ComboBoxItem Content="Círculo"/>
+                  </ComboBox>
+                </Grid>
+
                 <WrapPanel>
-                  <!-- Keep using the same handler that is already implemented -->
-                  <Button Content="Save Master 2" Click="BtnSaveMaster_Click" Margin="0,0,8,0"/>
-                  <Button x:Name="BtnValidateM2" Content="Validar Master 2" Click="BtnValidateM2_Click"/>
+                  <!-- keep existing handlers and names -->
+                  <Button Content="Save Master 2"
+                          Margin="0,0,8,0"
+                          MinWidth="120"
+                          Click="BtnSaveMaster_Click"/>
+                  <Button x:Name="BtnValidateM2"
+                          Content="Validar Master 2"
+                          MinWidth="120"
+                          Click="BtnValidateM2_Click"/>
                 </WrapPanel>
               </StackPanel>
             </GroupBox>
 
             <WrapPanel Margin="0,12,0,0">
-              <Button x:Name="BtnClearCanvas" Content="Borrar Canvas" MinWidth="150" Click="BtnClearCanvas_Click"/>
+              <Button x:Name="BtnClearCanvas"
+                      Content="Borrar Canvas"
+                      MinWidth="150"
+                      Click="BtnClearCanvas_Click"/>
             </WrapPanel>
           </StackPanel>
         </ScrollViewer>
