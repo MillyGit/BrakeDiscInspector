@@ -289,6 +289,12 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
                     OnPropertyChanged(nameof(SelectedInspectionShape));
                     UpdateSelectedRoiState();
                     OpenDatasetFolderCommand.RaiseCanExecuteChanged();
+
+                    if (value != null)
+                    {
+                        _log($"[ui] activate ROI {value.Index} from SelectedInspectionRoi setter");
+                        _activateInspectionIndex?.Invoke(value.Index);
+                    }
                 }
             }
         }
@@ -1982,7 +1988,9 @@ namespace BrakeDiscInspector_GUI_ROI.Workflow
                 return;
             }
 
-            _log($"[eval] export ROI for {roi.Name}");
+            _activateInspectionIndex?.Invoke(roi.Index);
+            _log($"[eval] export ROI for {roi.Name} (index={roi.Index})");
+
             var export = await _exportRoiAsync().ConfigureAwait(false);
             if (export == null)
             {
